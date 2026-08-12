@@ -19,6 +19,6 @@ public interface ITaskRepository
 
     IReadOnlyList<TaskItem> GetAll();
 
-    /// <summary>Open (incomplete) tasks in capture order — the universal Inbox queue.</summary>
-    IReadOnlyList<TaskItem> GetInbox();
+    /// <summary>Open (incomplete) tasks in capture order.</summary>
+    IReadOnlyList<TaskItem> GetOpen();
 }

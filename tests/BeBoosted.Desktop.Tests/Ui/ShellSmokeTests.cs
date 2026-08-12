@@ -88,6 +88,33 @@ public sealed class ShellSmokeTests
         Assert.Equal(5, shell.Inbox.OpenCount);
     }
 
+    [AvaloniaFact]
+    public void Calendar_RendersSeededBlocks_TodayAndWeek()
+    {
+        var clock = new FakeClock(TestShell.DesignDate);
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        TestShell.SeedDesignCalendar(tasks, blocks, clock);
+        var shell = TestShell.Create(tasks: tasks, blocks: blocks);
+        var window = new MainWindow { DataContext = shell, Width = 1440, Height = 960 };
+        window.Show();
+        window.CaptureRenderedFrame();
+
+        var todayBlocks = window.GetVisualDescendants().OfType<CalendarBlockView>().ToList();
+        Assert.Equal(5, todayBlocks.Count);
+
+        var fixedBlock = todayBlocks.First(v =>
+            (v.DataContext as CalendarBlockViewModel)?.Title == "AP Economics");
+        Assert.False(((CalendarBlockViewModel)fixedBlock.DataContext!).IsInteractive);
+
+        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
+        window.CaptureRenderedFrame();
+        var weekBlocks = window.GetVisualDescendants().OfType<CalendarBlockView>().ToList();
+        // Mon–Fri classes (5) + Lunch + DECA meeting + SAT + dinner + 3 task blocks = 12
+        Assert.Equal(12, weekBlocks.Count);
+        Assert.NotNull(FindText(window, "TUE 11"));
+    }
+
     private static T? FindDescendant<T>(Window window)
         where T : class
         => window.GetVisualDescendants().OfType<T>().FirstOrDefault();

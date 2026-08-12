@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             xmlns:views="using:BeBoosted.Desktop.Views"
              x:Class="BeBoosted.Desktop.Views.CalendarView"
              x:DataType="vm:CalendarViewModel">
 
@@ -35,32 +36,127 @@
           <TextBlock Classes="meta" Text="{Binding HeaderMeta}" VerticalAlignment="Center" />
         </StackPanel>
 
-        <Border DockPanel.Dock="Right" Classes="segmentGroup" HorizontalAlignment="Right"
-                VerticalAlignment="Center">
-          <StackPanel Orientation="Horizontal">
-            <RadioButton Classes="segment" GroupName="calendarView" Content="Today"
-                         IsChecked="{Binding IsTodayView}"
-                         AutomationProperties.Name="Today view" />
-            <Border Width="1" Background="{StaticResource BrushBorderEmphasis}" />
-            <RadioButton Classes="segment" GroupName="calendarView" Content="Week"
-                         IsChecked="{Binding IsWeekView}"
-                         AutomationProperties.Name="Week view" />
-          </StackPanel>
-        </Border>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="10"
+                    HorizontalAlignment="Right" VerticalAlignment="Center">
+          <Button Name="NewCommitmentButton" Height="28" Padding="12,0"
+                  Content="New commitment"
+                  Command="{Binding PrepareCommitmentEditorCommand}"
+                  AutomationProperties.Name="New fixed commitment">
+            <Button.Flyout>
+              <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+                <StackPanel Width="288" Spacing="10" Margin="4">
+                  <TextBlock Text="New commitment" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding CommitmentTitle}" PlaceholderText="Title"
+                           AutomationProperties.Name="Commitment title" />
+                  <DockPanel>
+                    <TextBlock Classes="metaLabel" Text="DATE" Width="64" VerticalAlignment="Center" />
+                    <DatePicker SelectedDate="{Binding CommitmentDate}"
+                                AutomationProperties.Name="Commitment date" />
+                  </DockPanel>
+                  <DockPanel>
+                    <TextBlock Classes="metaLabel" Text="START" Width="64" VerticalAlignment="Center" />
+                    <TimePicker SelectedTime="{Binding CommitmentStart}" ClockIdentifier="12HourClock"
+                                AutomationProperties.Name="Start time" />
+                  </DockPanel>
+                  <DockPanel>
+                    <TextBlock Classes="metaLabel" Text="END" Width="64" VerticalAlignment="Center" />
+                    <TimePicker SelectedTime="{Binding CommitmentEnd}" ClockIdentifier="12HourClock"
+                                AutomationProperties.Name="End time" />
+                  </DockPanel>
+                  <CheckBox IsChecked="{Binding CommitmentRepeatsWeekly}" Content="Repeats weekly" />
+                  <ItemsControl ItemsSource="{Binding CommitmentDays}"
+                                IsVisible="{Binding CommitmentRepeatsWeekly}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="4" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:DayToggleViewModel">
+                        <ToggleButton Classes="rail" Width="32" Height="26" CornerRadius="4"
+                                      IsChecked="{Binding IsSelected}"
+                                      AutomationProperties.Name="{Binding Day}">
+                          <TextBlock Classes="meta" Text="{Binding Label}"
+                                     Foreground="{StaticResource BrushGraphite}" />
+                        </ToggleButton>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock Foreground="{StaticResource BrushInkHover}"
+                             FontSize="{StaticResource TextSizeSmall}"
+                             Text="{Binding CommitmentError}"
+                             IsVisible="{Binding CommitmentError, Converter={x:Static ObjectConverters.IsNotNull}}"
+                             TextWrapping="Wrap" />
+                  <DockPanel Margin="0,4,0,0">
+                    <Button DockPanel.Dock="Right" Classes="primary" Content="Add to calendar"
+                            Click="OnSaveCommitmentClick" />
+                    <TextBlock Classes="meta" Text="shown cream-gray · locked"
+                               VerticalAlignment="Center" />
+                  </DockPanel>
+                </StackPanel>
+              </Flyout>
+            </Button.Flyout>
+          </Button>
+
+          <Border Classes="segmentGroup" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal">
+              <RadioButton Classes="segment" GroupName="calendarView" Content="Today"
+                           IsChecked="{Binding IsTodayView}"
+                           AutomationProperties.Name="Today view" />
+              <Border Width="1" Background="{StaticResource BrushBorderEmphasis}" />
+              <RadioButton Classes="segment" GroupName="calendarView" Content="Week"
+                           IsChecked="{Binding IsWeekView}"
+                           AutomationProperties.Name="Week view" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
       </DockPanel>
     </Border>
 
-    <!-- Calendar canvas (timeline engine lands in Phase 3) -->
-    <Border Background="{StaticResource BrushPaperWhite}">
-      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
-        <TextBlock Text="Nothing scheduled yet"
-                   FontSize="{StaticResource TextSizeHeading}" FontWeight="SemiBold"
-                   HorizontalAlignment="Center" />
-        <TextBlock Classes="secondary"
-                   Text="The timeline is coming in a later build phase."
-                   HorizontalAlignment="Center" />
+    <!-- Quiet review notice -->
+    <Border DockPanel.Dock="Top"
+            IsVisible="{Binding HasReviewNotice}"
+            Background="{StaticResource BrushWorkbenchCream}"
+            BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="0,0,0,1"
+            Padding="18,7">
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <TextBlock Text="{Binding ReviewNoticeText}" VerticalAlignment="Center"
+                   FontSize="{StaticResource TextSizeSmall}" />
+        <Button Height="26" Padding="10,0" Content="Review" FontWeight="SemiBold"
+                AutomationProperties.Name="Review blocks needing an outcome">
+          <Button.Flyout>
+            <Flyout Placement="BottomEdgeAlignedLeft" ShowMode="Standard">
+              <ItemsControl ItemsSource="{Binding ReviewBlocks}" Width="316" Margin="2">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:CalendarBlockViewModel">
+                    <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
+                            Padding="4,8">
+                      <StackPanel Spacing="6">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <TextBlock Text="{Binding Title}" FontWeight="Medium" />
+                          <TextBlock Classes="meta" Text="{Binding TimeText}" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                          <Button Classes="primary" Height="26" Padding="10,0" Content="Done"
+                                  Command="{Binding RecordDoneCommand}" />
+                          <Button Height="26" Padding="10,0" Content="Needs more time"
+                                  Command="{Binding RecordNeedsMoreTimeCommand}" />
+                          <Button Height="26" Padding="10,0" Content="Didn't happen"
+                                  Command="{Binding RecordDidntHappenCommand}" />
+                        </StackPanel>
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </Flyout>
+          </Button.Flyout>
+        </Button>
       </StackPanel>
     </Border>
+
+    <!-- Timeline surface (Today: one lane, Week: seven) -->
+    <views:TimelineSurfaceView />
 
   </DockPanel>
 

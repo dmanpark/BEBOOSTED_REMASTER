@@ -1,4 +1,5 @@
 using System.Globalization;
+using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Settings;
 using BeBoosted.Desktop.Tests.Support;
 using BeBoosted.Desktop.ViewModels;
@@ -8,7 +9,16 @@ namespace BeBoosted.Desktop.Tests.ViewModels;
 public sealed class CalendarViewModelTests
 {
     private static CalendarViewModel Create(InMemorySettingsStore? store = null)
-        => new(new AppSettings(store ?? new InMemorySettingsStore()), new FakeClock(TestShell.DesignDate));
+    {
+        var clock = new FakeClock(TestShell.DesignDate);
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        return new CalendarViewModel(
+            new AppSettings(store ?? new InMemorySettingsStore()),
+            clock,
+            new CalendarService(blocks, tasks, clock),
+            tasks);
+    }
 
     [Fact]
     public void FirstRun_DefaultsToTodayViewOnCurrentDate()

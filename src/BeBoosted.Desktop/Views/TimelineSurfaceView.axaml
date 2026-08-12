@@ -1,0 +1,95 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             xmlns:views="using:BeBoosted.Desktop.Views"
+             xmlns:controls="using:BeBoosted.Desktop.Controls"
+             x:Class="BeBoosted.Desktop.Views.TimelineSurfaceView"
+             x:DataType="vm:CalendarViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="Border.dayHeaderChip">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Padding" Value="6,1" />
+      <Setter Property="CornerRadius" Value="2" />
+    </Style>
+    <Style Selector="Border.dayHeaderChip.today">
+      <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
+    </Style>
+    <Style Selector="Border.dayHeaderChip.today TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource BrushGraphite}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </UserControl.Styles>
+
+  <DockPanel>
+
+    <!-- Day headers (Week view) -->
+    <Border DockPanel.Dock="Top"
+            IsVisible="{Binding IsWeekView}"
+            Background="{StaticResource BrushPaperWhite}"
+            BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="56,*">
+        <ItemsControl Grid.Column="1" ItemsSource="{Binding Days}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Rows="1" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:DayColumnViewModel">
+              <Border Padding="10,8" BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="1,0,0,0">
+                <Border Classes="dayHeaderChip" Classes.today="{Binding IsToday}" HorizontalAlignment="Left">
+                  <TextBlock Classes="meta" Text="{Binding Header}" />
+                </Border>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Grid>
+    </Border>
+
+    <!-- Timeline -->
+    <ScrollViewer Name="Scroller" Background="{StaticResource BrushPaperWhite}">
+      <Grid ColumnDefinitions="56,*">
+        <controls:TimeGutter Name="Gutter" Grid.Column="0" />
+        <ItemsControl Name="DaysArea" Grid.Column="1" ItemsSource="{Binding Days}"
+                      DragDrop.AllowDrop="True">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Rows="1" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:DayColumnViewModel">
+              <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="1,0,0,0">
+                <Grid>
+                  <controls:TimelineDecorations NowMinutes="{Binding NowMinutes}" />
+                  <ItemsControl ItemsSource="{Binding Blocks}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <controls:TimelinePanel Background="Transparent" />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.Styles>
+                    <Style Selector="ItemsControl > ContentPresenter" x:DataType="vm:CalendarBlockViewModel">
+                      <Setter Property="(controls:TimelinePanel.StartMinutes)" Value="{Binding StartMinutes}" />
+                      <Setter Property="(controls:TimelinePanel.DurationMinutes)" Value="{Binding DurationMinutes}" />
+                    </Style>
+                  </ItemsControl.Styles>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:CalendarBlockViewModel">
+                      <views:CalendarBlockView />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Grid>
+    </ScrollViewer>
+
+  </DockPanel>
+
+</UserControl>

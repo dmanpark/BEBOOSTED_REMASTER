@@ -1,0 +1,91 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             xmlns:controls="using:BeBoosted.Desktop.Controls"
+             x:Class="BeBoosted.Desktop.Views.CalendarBlockView"
+             x:DataType="vm:CalendarBlockViewModel"
+             Focusable="True"
+             AutomationProperties.Name="{Binding AccessibleName}">
+
+  <Border Name="BlockBorder"
+          Classes="calendarBlock"
+          Classes.fixed="{Binding IsFixed}"
+          Classes.done="{Binding IsDone}"
+          Classes.conflict="{Binding IsConflicted}">
+    <Grid>
+      <DockPanel Margin="0">
+        <!-- project-accent edge (task blocks only) -->
+        <Border DockPanel.Dock="Left" Width="3"
+                Background="{StaticResource BrushAccentSlate}"
+                IsVisible="{Binding IsTaskBlock}" />
+        <Grid Margin="8,5,8,5" RowDefinitions="Auto,*" ColumnDefinitions="Auto,*">
+          <Button Grid.Row="0" Grid.Column="0" Grid.RowSpan="2"
+                  Name="CompleteButton"
+                  Classes="icon" Width="20" Height="20" CornerRadius="10"
+                  Margin="0,1,8,0" VerticalAlignment="Top"
+                  BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1.5"
+                  IsVisible="{Binding ShowCompletionControl}"
+                  AutomationProperties.Name="{Binding Title, StringFormat='Record outcome for {0}'}"
+                  ToolTip.Tip="Record outcome">
+            <Button.Flyout>
+              <Flyout Placement="BottomEdgeAlignedLeft" ShowMode="Standard">
+                <StackPanel Width="228" Spacing="6" Margin="2">
+                  <Button Classes="primary" HorizontalAlignment="Stretch"
+                          Content="Done"
+                          Command="{Binding RecordDoneCommand}"
+                          Click="OnOutcomeActionClick" />
+                  <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                          CornerRadius="{StaticResource RadiusControl}" Padding="8,7">
+                    <StackPanel Spacing="6">
+                      <TextBlock Text="Needs more time" FontWeight="Medium" />
+                      <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Save" Margin="6,0,0,0"
+                                Command="{Binding RecordNeedsMoreTimeCommand}"
+                                Click="OnOutcomeActionClick" />
+                        <NumericUpDown Value="{Binding RemainingMinutes}" Minimum="5" Maximum="720"
+                                       Increment="5" FormatString="0"
+                                       AutomationProperties.Name="Remaining minutes" />
+                      </DockPanel>
+                      <TextBlock Classes="meta" Text="returns to Inbox with the time left" />
+                    </StackPanel>
+                  </Border>
+                  <Button HorizontalAlignment="Stretch" Content="Didn't happen"
+                          Command="{Binding RecordDidntHappenCommand}"
+                          Click="OnOutcomeActionClick" />
+                  <Button HorizontalAlignment="Stretch" Content="Remove from calendar"
+                          Command="{Binding UnscheduleCommand}"
+                          Click="OnOutcomeActionClick" />
+                </StackPanel>
+              </Flyout>
+            </Button.Flyout>
+          </Button>
+
+          <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="6">
+            <TextBlock Name="TitleText" Text="{Binding Title}"
+                       FontSize="{StaticResource TextSizeSmall}" FontWeight="SemiBold"
+                       TextTrimming="CharacterEllipsis" />
+            <Path Classes="icon" Data="{StaticResource IconLock}" Width="11" Height="11"
+                  StrokeThickness="1.2" Stroke="{StaticResource BrushPencilGray}"
+                  IsVisible="{Binding IsFixed}" VerticalAlignment="Center" />
+            <Border Background="{StaticResource BrushWorkbenchCream}"
+                    BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                    CornerRadius="3" Padding="4,0"
+                    IsVisible="{Binding NeedsOutcome}">
+              <TextBlock Classes="meta" Text="outcome?" />
+            </Border>
+          </StackPanel>
+          <TextBlock Grid.Row="1" Grid.Column="1" Classes="meta"
+                     Text="{Binding TimeText}" Margin="0,1,0,0" />
+        </Grid>
+      </DockPanel>
+
+      <controls:HatchOverlay IsVisible="{Binding IsConflicted}" IsHitTestVisible="False" />
+
+      <!-- resize grip (task blocks) -->
+      <Border Name="ResizeGrip" Height="7" VerticalAlignment="Bottom"
+              Background="Transparent" Cursor="SizeNorthSouth"
+              IsVisible="{Binding IsInteractive}" />
+    </Grid>
+  </Border>
+
+</UserControl>

@@ -1,6 +1,8 @@
 using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
+using BeBoosted.Infrastructure.Calendar;
 using BeBoosted.Infrastructure.Persistence;
 using BeBoosted.Infrastructure.Settings;
 using BeBoosted.Infrastructure.Tasks;
@@ -20,6 +22,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AppSettings>();
         services.AddSingleton<ITaskRepository, SqliteTaskRepository>();
         services.AddSingleton<TaskService>();
+        services.AddSingleton<ICalendarBlockRepository, SqliteCalendarBlockRepository>();
+        services.AddSingleton<CalendarService>();
+        services.AddSingleton<InboxQueryService>();
         return services;
     }
 }

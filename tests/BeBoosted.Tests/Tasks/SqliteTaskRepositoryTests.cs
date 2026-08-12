@@ -87,7 +87,7 @@ public sealed class SqliteTaskRepositoryTests : IDisposable
     }
 
     [Fact]
-    public void GetInbox_ReturnsOpenTasksInCaptureOrder()
+    public void GetOpen_ReturnsOpenTasksInCaptureOrder()
     {
         var first = TaskItem.Create("First", Now);
         var second = TaskItem.Create("Second", Now.AddMinutes(1));
@@ -97,7 +97,7 @@ public sealed class SqliteTaskRepositoryTests : IDisposable
         _repository.Add(first);
         _repository.Add(done);
 
-        var inbox = _repository.GetInbox();
+        var inbox = _repository.GetOpen();
 
         Assert.Equal([first.Id, second.Id], inbox.Select(t => t.Id));
     }

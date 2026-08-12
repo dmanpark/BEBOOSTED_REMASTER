@@ -72,7 +72,7 @@ public sealed class SqliteTaskRepository(SqliteConnectionFactory connectionFacto
 
     public IReadOnlyList<TaskItem> GetAll() => Query($"SELECT {Columns} FROM tasks ORDER BY created_at;");
 
-    public IReadOnlyList<TaskItem> GetInbox()
+    public IReadOnlyList<TaskItem> GetOpen()
         => Query($"SELECT {Columns} FROM tasks WHERE is_completed = 0 ORDER BY created_at;");
 
     private List<TaskItem> Query(string sql)

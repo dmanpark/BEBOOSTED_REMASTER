@@ -16,6 +16,9 @@ public sealed partial class ShellViewModel : ViewModelBase
         Projects = projects;
         Settings = settings;
         CurrentSection = calendar;
+
+        // Scheduling and outcomes change what belongs in the Inbox queue.
+        Calendar.DataChanged += Inbox.Reload;
     }
 
     public CalendarViewModel Calendar { get; }

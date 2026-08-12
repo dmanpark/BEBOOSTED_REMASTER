@@ -45,7 +45,10 @@
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:TaskRowViewModel">
               <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
-                      Padding="16,11" Background="Transparent">
+                      Padding="16,11" Background="Transparent"
+                      PointerPressed="OnRowPointerPressed"
+                      PointerMoved="OnRowPointerMoved"
+                      PointerReleased="OnRowPointerReleased">
                 <DockPanel>
                   <Button DockPanel.Dock="Left" Classes="icon"
                           Width="22" Height="22" CornerRadius="11"

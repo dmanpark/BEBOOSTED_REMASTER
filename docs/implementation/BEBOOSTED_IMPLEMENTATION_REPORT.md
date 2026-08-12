@@ -240,4 +240,99 @@ set at 1440×960 and 1280×800; capture field focus is graphite (accent override
 - Capture accepts a bare title only; structured quick-parse belongs to the AI phase.
 
 ### Local commit
+`9c37281` — phase 2: implement task inbox
+
+---
+
+## Phase 3 — Calendar
+
+### Intended scope
+Timeline layout engine, Today and Week views, local calendar blocks (including fixed and
+recurring commitments), drag, resize, conflicts, and keyboard movement.
+
+### Work completed
+- **Domain:** `CalendarBlock` (fixed commitments with own titles + optional weekly/daily
+  recurrence; task blocks; wall-clock date+times that never cross midnight; reserved
+  provider/external-id/sync-state fields; outcome recording restricted to task blocks;
+  external events refuse edits), `BlockOccurrence`, `ConflictDetector` (same-date overlap
+  scan; touching blocks don't conflict).
+- **Application:** `ICalendarBlockRepository`, `CalendarService` (fixed commitments,
+  `ScheduleTask` with estimate-or-30-min default, move/resize with midnight clamping,
+  `RecordOutcome` — Done completes the task, Needs-more-time re-estimates and returns it
+  to the Inbox, Didn't-happen leaves it open; recurrence expansion in `GetOccurrences`;
+  elapsed-without-outcome query), `InboxQueryService` (Inbox = open tasks with no pending
+  block — elapsed-unresolved blocks route through the review notice, never auto-complete).
+- **Infrastructure:** migration `0003_calendar_blocks` (STRICT, task FK with cascade,
+  date/task indexes), `SqliteCalendarBlockRepository` with candidate-range, elapsed, and
+  pending-task queries.
+- **Layout engine (pure, no Avalonia):** `TimelineGeometry` (time↔Y, snap+clamp,
+  hour marks) and `OverlapLayout` (cluster detection, greedy column reuse).
+- **Desktop:** `TimelinePanel` (custom panel arranging blocks by attached time props with
+  live re-arrange during drags), `TimelineDecorations` (hour rules, current-time
+  indicator with lime dot, dashed lime drop-preview slot with mono time label),
+  `TimeGutter`, `HatchOverlay` (conflict hatching), `TimelineSurfaceView` (shared
+  Today/Week surface: initial scroll, drop-from-Inbox with snapped preview, focus
+  restoration), `CalendarBlockView` (state-classed visuals: cream/locked fixed, paper
+  task block with accent edge, done strikethrough, conflict hatch + emphasis; pointer
+  drag with 15-min snap / Alt = 5-min; bottom-grip resize; keyboard: ↑/↓ move,
+  Shift+↑/↓ resize, ←/→ change day, Enter/Space outcome menu, Delete unschedule),
+  outcome flyout (Done / Needs more time with remaining minutes / Didn't happen /
+  Remove), review-notice bar with per-block resolution, "New commitment" editor
+  (date, start/end, weekly weekday toggles, validation errors), capacity summary in the
+  top bar, non-destructive 60-second current-time refresh, Inbox rows as drag sources.
+
+### Architecture and behavior decisions
+- Proposals (Phase 5) will render from PlanningProposal state, not calendar_blocks —
+  the calendar store holds only approved/fixed items, matching the spec.
+- Recurring fixed commitments edit as a series and are locked on the surface; task
+  blocks never recur (recurring *tasks* spawn instances later, not habit UI).
+- Visible range 6:00–23:00 at a constant 56px hour height with scrolling at both target
+  resolutions (the mockup's 48px compact rows were unnecessary once scrolling exists).
+- Time metadata renders "1 h 30 min" instead of the mockup's "90 min" for consistency
+  with Inbox durations.
+- Avalonia 12 changes handled: sealed `Panel.Render` (decorations split into a sibling
+  control), `DataObject`→`DataTransfer` drag API, `DoDragDropAsync` requiring the press
+  args, class-handler replacement for `AffectsParentArrange`.
+
+### Tests added (53 new; totals 67 + 65)
+CalendarBlock rules (validation, outcomes, external lock, recurrence expansion, rename),
+ConflictDetector (overlap/touch/cross-day/chains), CalendarService (schedule defaults,
+move/resize persistence, all three outcomes incl. Inbox round-trip, weekly recurrence
+expansion, elapsed-needing-outcome boundary), SqliteCalendarBlockRepository (full-field
+round-trip, outcome update, candidate ranges, elapsed boundary at end==now, pending task
+ids, task-delete cascade), TimelineGeometry (linear mapping, snap/clamp, marks),
+OverlapLayout (disjoint/touching/pair/chain-reuse/triple/cluster-independence),
+CalendarViewModel (day counts, block placement incl. recurrence, conflicts, DataChanged,
+review notice lifecycle, capacity summary, commitment editor validation+creation,
+keyboard move/resize/day ops, non-destructive RefreshNow), headless seeded-calendar
+render (5 Today blocks, 12 Week occurrences, fixed-block lock).
+
+### Verification
+```
+dotnet format --verify-no-changes   # clean (after one auto-format pass)
+dotnet build -warnaserror           # 0 warnings
+dotnet test                         # 67 + 64 passed (1 screenshot skip by design)
+# clean-profile launch              # alive; migrations 1–3 applied
+```
+
+### Screenshots
+`docs/implementation/screenshots/phase3/` — Today and Week with the frame-01/02 content
+at 1440×960 and 1280×800. Matches the design's calendar state language: cream locked
+commitments with lock glyphs, paper task blocks with slate accent edge and completion
+circles, lime current-time dot, lime TUE 11 chip, mono gutter.
+
+### Problems discovered during self-review
+- `Panel.Render` is sealed in Avalonia 12 → introduced `TimelineDecorations`.
+- Avalonia 12's new DataTransfer drag API (typed `DataFormat<string>`, `DoDragDropAsync`).
+- Timer-driven reload would have closed open flyouts — `RefreshNow` now mutates
+  `NowMinutes` in place.
+
+### Known remaining limitations
+- Pointer drags commit on release with live snapping; cross-day drag shows a snapped
+  column ghost rather than full free-floating preview.
+- Recurring commitments have no per-occurrence exceptions (series-level edits only).
+- The mockup's wide right margin on the Today lane is not reproduced; blocks span the
+  lane (consistent with Week).
+
+### Local commit
 Recorded below after commit.

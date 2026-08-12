@@ -12,20 +12,30 @@ public sealed partial class InboxViewModel : ViewModelBase
     private readonly TaskService _service;
     private readonly IClock _clock;
 
-    public InboxViewModel(TaskService service, ITaskRepository repository, IClock clock)
+    private readonly InboxQueryService _query;
+
+    public InboxViewModel(TaskService service, InboxQueryService query, IClock clock)
     {
         _service = service;
+        _query = query;
         _clock = clock;
-        foreach (var task in repository.GetInbox())
-        {
-            Tasks.Add(new TaskRowViewModel(task, _service, _clock, RemoveRow));
-        }
+        Reload();
 
         Tasks.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(OpenCount));
             OnPropertyChanged(nameof(HasTasks));
         };
+    }
+
+    /// <summary>Rebuilds the queue from storage — called after scheduling or outcomes change it.</summary>
+    public void Reload()
+    {
+        Tasks.Clear();
+        foreach (var task in _query.GetInboxTasks())
+        {
+            Tasks.Add(new TaskRowViewModel(task, _service, _clock, RemoveRow));
+        }
     }
 
     public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];

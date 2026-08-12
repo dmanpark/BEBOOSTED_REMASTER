@@ -11,7 +11,8 @@ public sealed class InboxViewModelTests
     {
         var clock = new FakeClock(TestShell.DesignDate);
         var repo = repository ?? new InMemoryTaskRepository();
-        return (new InboxViewModel(new TaskService(repo, clock), repo, clock), repo);
+        var query = new InboxQueryService(repo, new InMemoryCalendarBlockRepository());
+        return (new InboxViewModel(new TaskService(repo, clock), query, clock), repo);
     }
 
     [Fact]
@@ -36,7 +37,7 @@ public sealed class InboxViewModelTests
         Assert.Single(inbox.Tasks);
         Assert.Equal("Email recommendation request", inbox.Tasks[0].Title);
         Assert.Equal(string.Empty, inbox.CaptureText);
-        Assert.Single(repository.GetInbox());
+        Assert.Single(repository.GetOpen());
     }
 
     [Fact]
@@ -48,7 +49,7 @@ public sealed class InboxViewModelTests
         inbox.CaptureCommand.Execute(null);
 
         Assert.Empty(inbox.Tasks);
-        Assert.Empty(repository.GetInbox());
+        Assert.Empty(repository.GetOpen());
     }
 
     [Fact]

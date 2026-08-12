@@ -24,7 +24,10 @@ public sealed class ScreenshotCaptureTests
         foreach (var (width, height) in new[] { (1440, 960), (1280, 800) })
         {
             var clock = new FakeClock(TestShell.DesignDate);
-            var shell = TestShell.Create(tasks: TestShell.SeededTasks(clock));
+            var tasks = TestShell.SeededTasks(clock);
+            var blocks = new InMemoryCalendarBlockRepository();
+            TestShell.SeedDesignCalendar(tasks, blocks, clock);
+            var shell = TestShell.Create(tasks: tasks, blocks: blocks);
             var window = new MainWindow
             {
                 DataContext = shell,
