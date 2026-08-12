@@ -748,7 +748,7 @@ dotnet publish src/BeBoosted.Desktop -c Release -r osx-arm64 --self-contained -o
 ```
 
 ### Local commit
-Recorded in "Git history" below.
+`46a4a06` — phase 8: package Windows build and document macOS readiness
 
 ---
 
@@ -956,7 +956,8 @@ BEBOOSTED_DATA_DIR=<temp-dir> ./publish/win-x64/BeBoosted.exe
 6. `bf2c919` phase 5: implement plan drafts
 7. `e7bc35d` phase 6: implement projects and files
 8. `4e18e61` phase 7: implement AI architecture
-9. *(phase 8 commit — recorded post-commit below)*
+9. `46a4a06` phase 8: package Windows build and document macOS readiness
+10. docs: finalize implementation report *(the commit carrying this hash update)*
 
 ## Final acceptance checklist
 
