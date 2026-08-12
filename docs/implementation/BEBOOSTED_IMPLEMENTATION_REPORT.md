@@ -587,4 +587,89 @@ driving the real creation flows.
   a polish candidate; creation, the primary flow, is complete).
 
 ### Local commit
+`e7bc35d` — phase 6: implement projects and files
+
+---
+
+## Phase 7 — AI
+
+### Intended scope
+Deterministic mock provider, review list, project-scoped retrieval, provider interface
+for later real AI connections.
+
+### Work completed
+- **Domain:** `AiProvenance` (operation kind, exact source-resource ids, Needs-review
+  state) and `AiAnswer` (persisted project answers keyed to their provenance).
+- **Application:** `IAiProvider` port with the four typed operations (extract tasks,
+  suggest metadata, produce planning input — planning itself reuses the deterministic
+  scheduler — and project-scoped Q&A returning exact citations); `IAiProvenanceRepository`;
+  `AiPermissionSettings` (task capture and calendar planning as *separate* persisted
+  permissions, both defaulting to review-first); `AiService` (review-first extraction,
+  `AcceptDrafts` creating AI-origin tasks with shared provenance, auto-add honoring the
+  permission while always labeling and keeping provenance, `AskProjectAsync` persisting
+  answers + citations, `InvalidateForResource` implementing `IProvenanceInvalidator`,
+  `TaskNeedsReview`, and `GetDerivations` for the File provenance panel).
+  `ProjectService` now invalidates provenance on resource delete and note edits.
+- **Infrastructure:** migration `0007_ai` (provenance + source junction + answers),
+  `SqliteAiProvenanceRepository`, and `LocalHeuristicAiProvider` — the deterministic
+  local provider: honorific-aware sentence splitting, duration parsing ("45 min",
+  "2 hours", "two focused sessions"), relative-deadline parsing (today/tomorrow/weekday),
+  keyword-verb duration heuristics, project-name matching, and keyword retrieval strictly
+  over the active project's index with a template answer citing at most three resources.
+- **Desktop:** the composer is now real — collapsed strip with the platform shortcut
+  chip (Ctrl+J/⌘J focuses it), Enter submits, and the frame-07 expanded panel overlays
+  the current surface: user bubbles, assistant messages, the reviewable task list
+  (lime-wash rows, "AI suggested" chips, in-place title editing, per-row dismiss,
+  Add all N / Dismiss all, the settings note), citation chips that navigate to the exact
+  resource in its File, plan requests ("plan my week") that draft on the calendar —
+  or apply automatically under that separate permission, still labeled and Ctrl+Z-undoable.
+  "Ask BeBoosted about this project" is live and scopes the composer; frame-08 Settings
+  ships real radio groups for both permissions plus the disabled External events card;
+  Inbox rows show **AI added** and **Needs review** chips; the File provenance panel lists
+  "Used by …" / "Cited in …" with Needs-review flags.
+
+### Architecture and behavior decisions
+- Retrieval cannot leave the active project by construction: the provider's only search
+  surface is `IResourceRepository.SearchInProject`.
+- Answers persist so citations survive restarts and invalidation is retroactive.
+- The deterministic extractor is intentionally naive (it can propose a noise row like
+  "It probably needs two focused sessions") — the review-first workflow exists exactly
+  to dismiss such rows, and the provider interface lets a real model replace it without
+  touching any workflow.
+
+### Tests added (35 new; totals 131 + 104)
+LocalHeuristicAiProvider (frame-07-style extraction with titles/deadlines/durations,
+explicit duration/deadline parsing tables, project-name matching, project-scoped
+citations with a decoy project, no-match fallback, determinism), AiService on SQLite
+(review-first default, shared provenance on accept, auto-add labeling, persisted answers
+with exact citations, note-edit and resource-delete invalidation flowing to Needs review,
+task-level review flags), Chat ViewModel (plan/question intent tables, review flow
+end-to-end incl. edit + dismiss, auto-add path, project Q&A with citation navigation
+to the selected resource, scope placeholder, unscoped-question guidance, plan drafting
+and auto-apply with undo, Escape layering), Settings permissions independence +
+persistence round-trip.
+
+### Verification
+```
+dotnet format --verify-no-changes   # clean
+dotnet build -warnaserror           # 0 warnings
+dotnet test                         # 131 + 103 passed (1 screenshot skip by design)
+# clean-profile launch              # migrations 1–7 applied
+```
+
+### Screenshots
+`docs/implementation/screenshots/phase7/` — frame-07 chat review over the calendar and
+frame-08 AI permissions, plus refreshed shell/plan/sort/project screens, both resolutions.
+
+### Problems discovered during self-review
+- The sentence splitter broke on "Ms. Rivera" (honorific periods) — fixed with a
+  lookbehind; caught by the frame-07 message test.
+
+### Known remaining limitations
+- The heuristic provider does not link extracted tasks to mentioned resources (task
+  provenance from extraction carries no sources), so Needs-review on tasks arises via
+  answer-style provenance or future providers; the invalidation plumbing is fully tested.
+- Chat history is session-only (not persisted) — answers and provenance are persisted.
+
+### Local commit
 Recorded below after commit.

@@ -19,22 +19,48 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     private readonly ProjectService _service;
     private readonly IProjectRepository _projects;
     private readonly IProjectFileRepository _files;
+    private readonly IResourceRepository _resources;
     private readonly TaskService _taskService;
     private readonly IFileRevealService _opener;
+    private readonly Application.Ai.AiService _ai;
 
     public ProjectsViewModel(
         ProjectService service,
         IProjectRepository projects,
         IProjectFileRepository files,
+        IResourceRepository resources,
         TaskService taskService,
-        IFileRevealService opener)
+        IFileRevealService opener,
+        Application.Ai.AiService ai)
     {
         _service = service;
         _projects = projects;
         _files = files;
+        _resources = resources;
         _taskService = taskService;
         _opener = opener;
+        _ai = ai;
         ReloadList();
+    }
+
+    /// <summary>Wired by the shell: "Ask BeBoosted about this project" expands the composer.</summary>
+    public Action? AskRequested { get; set; }
+
+    public string? GetProjectName(Domain.ProjectId? id)
+        => id is { } projectId ? _projects.GetById(projectId)?.Name : null;
+
+    /// <summary>Navigates to the File containing the resource and selects it (citation click).</summary>
+    public void ShowResource(Domain.ResourceId resourceId)
+    {
+        if (_resources.GetById(resourceId) is not { } resource
+            || _files.GetById(resource.FileId) is not { } file)
+        {
+            return;
+        }
+
+        OpenProject(file.ProjectId);
+        OpenFile(file.Id);
+        FileDetail?.SelectResource(resourceId);
     }
 
     public ObservableCollection<ProjectCardViewModel> Projects { get; } = [];
@@ -101,7 +127,7 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     {
         if (_files.GetById(id) is { } file && Detail is { } detail)
         {
-            FileDetail = new FileDetailViewModel(this, detail.Project, file, _service, _opener);
+            FileDetail = new FileDetailViewModel(this, detail.Project, file, _service, _opener, _ai);
         }
     }
 

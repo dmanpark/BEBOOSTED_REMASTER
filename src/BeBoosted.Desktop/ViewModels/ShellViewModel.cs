@@ -1,6 +1,8 @@
 using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Ai;
 using BeBoosted.Application.Prioritization;
 using BeBoosted.Application.Settings;
+using BeBoosted.Domain;
 using BeBoosted.Domain.Prioritization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -10,6 +12,7 @@ namespace BeBoosted.Desktop.ViewModels;
 public sealed partial class ShellViewModel : ViewModelBase
 {
     private readonly PrioritySortService _prioritySort;
+    private readonly AiPermissionSettings _aiPermissions;
     private readonly IClock _clock;
 
     public ShellViewModel(
@@ -17,16 +20,41 @@ public sealed partial class ShellViewModel : ViewModelBase
         InboxViewModel inbox,
         ProjectsViewModel projects,
         SettingsViewModel settings,
+        ChatViewModel chat,
         PrioritySortService prioritySort,
+        AiPermissionSettings aiPermissions,
+        Platform.IKeymapService keymap,
         IClock clock)
     {
+        ComposerShortcutText = keymap.DisplayString(keymap.ComposerGesture);
         Calendar = calendar;
         Inbox = inbox;
         Projects = projects;
         Settings = settings;
+        Chat = chat;
         _prioritySort = prioritySort;
+        _aiPermissions = aiPermissions;
         _clock = clock;
         CurrentSection = calendar;
+
+        Chat.Attach(
+            contextProvider: () => new AiContext(ActiveChatProjectId, _clock.Today),
+            projectNameLookup: Projects.GetProjectName,
+            requestPlan: PlanFromChat,
+            onTasksChanged: () =>
+            {
+                Inbox.Reload();
+                Projects.RefreshActive();
+            },
+            openResource: OpenResourceInFiles);
+        Projects.AskRequested = OpenProjectChat;
+        Projects.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ProjectsViewModel.Detail) or nameof(ProjectsViewModel.FileDetail))
+            {
+                RefreshChatScope();
+            }
+        };
 
         // Scheduling and outcomes change what belongs in the Inbox queue and project views.
         Calendar.DataChanged += Inbox.Reload;
@@ -58,6 +86,11 @@ public sealed partial class ShellViewModel : ViewModelBase
 
     public SettingsViewModel Settings { get; }
 
+    public ChatViewModel Chat { get; }
+
+    /// <summary>"Ctrl+J" on Windows, "⌘J" on macOS — shown on the composer chip.</summary>
+    public string ComposerShortcutText { get; }
+
     [ObservableProperty]
     public partial ViewModelBase CurrentSection { get; private set; }
 
@@ -87,6 +120,7 @@ public sealed partial class ShellViewModel : ViewModelBase
             AppSection.Settings => Settings,
             _ => Calendar,
         };
+        RefreshChatScope();
     }
 
     [RelayCommand]
@@ -123,7 +157,7 @@ public sealed partial class ShellViewModel : ViewModelBase
             onSaved: _ => RefreshInboxRanks());
     }
 
-    /// <summary>Escape closes the topmost temporary surface: sort overlay, then drawer.</summary>
+    /// <summary>Escape closes the topmost temporary surface: sort, expanded chat, then drawer.</summary>
     [RelayCommand]
     private void EscapePressed()
     {
@@ -133,7 +167,62 @@ public sealed partial class ShellViewModel : ViewModelBase
             return;
         }
 
+        if (Chat.IsExpanded)
+        {
+            Chat.IsExpanded = false;
+            return;
+        }
+
         IsInboxOpen = false;
+    }
+
+    // ---- Chatbot composer ----
+
+    /// <summary>Raised when the composer input should take keyboard focus (Ctrl+J / ⌘J).</summary>
+    public event Action? ComposerFocusRequested;
+
+    [RelayCommand]
+    private void FocusComposer() => ComposerFocusRequested?.Invoke();
+
+    /// <summary>"Ask BeBoosted about this project": expands the composer scoped to it.</summary>
+    private void OpenProjectChat()
+    {
+        Chat.IsExpanded = true;
+        ComposerFocusRequested?.Invoke();
+    }
+
+    private ProjectId? ActiveChatProjectId
+        => ActiveSection == AppSection.Projects
+            ? Projects.FileDetail?.Project.Id ?? Projects.Detail?.Project.Id
+            : null;
+
+    private void RefreshChatScope()
+        => Chat.SetScope(Projects.GetProjectName(ActiveChatProjectId));
+
+    private string PlanFromChat(PlanningPeriod period)
+    {
+        Navigate(AppSection.Calendar);
+        Calendar.CreateDraft(period);
+        if (!Calendar.HasDraft)
+        {
+            return "Nothing in your Inbox fits that period right now, so there's nothing to plan.";
+        }
+
+        if (_aiPermissions.CalendarPlanning == CalendarPlanningPermission.ApplyAutomatically)
+        {
+            Calendar.ApproveDraftCommand.Execute(null);
+            return "Planned and applied to your calendar — every block stays labeled and undoable (Ctrl+Z).";
+        }
+
+        return $"I've drafted a plan on your calendar ({Calendar.DraftSummaryText}). "
+            + "Review the lime blocks and approve what fits.";
+    }
+
+    private void OpenResourceInFiles(ResourceId resourceId)
+    {
+        Chat.IsExpanded = false;
+        Navigate(AppSection.Projects);
+        Projects.ShowResource(resourceId);
     }
 
     private void RefreshInboxRanks()

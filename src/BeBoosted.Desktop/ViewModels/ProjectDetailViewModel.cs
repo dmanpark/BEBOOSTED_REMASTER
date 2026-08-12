@@ -95,6 +95,10 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasFiles));
     }
 
+    /// <summary>Opens the composer scoped to this project.</summary>
+    [RelayCommand]
+    private void AskBeBoosted() => _owner.AskRequested?.Invoke();
+
     /// <summary>Returns true when the File was created (the view closes its flyout).</summary>
     public bool TryCreateFile()
     {

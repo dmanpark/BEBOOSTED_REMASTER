@@ -120,6 +120,21 @@
                         <TextBlock Classes="mono" Text="{Binding RankText}"
                                    FontSize="{StaticResource TextSizeMeta}" FontWeight="SemiBold" />
                       </Border>
+                      <Border Background="{StaticResource BrushLimeWash}"
+                              BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                              CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
+                              IsVisible="{Binding IsAiOrigin}"
+                              ToolTip.Tip="Created by BeBoosted — provenance retained">
+                        <TextBlock Classes="meta" Text="AI added"
+                                   Foreground="{StaticResource BrushGraphite}" />
+                      </Border>
+                      <Border Background="{StaticResource BrushWorkbenchCream}"
+                              BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
+                              CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
+                              IsVisible="{Binding NeedsReview}"
+                              ToolTip.Tip="A source this task was based on changed or was removed">
+                        <TextBlock Classes="meta" Text="Needs review" />
+                      </Border>
                     </StackPanel>
                     <TextBlock Classes="meta" Text="{Binding MetaText}"
                                IsVisible="{Binding HasMeta}" />

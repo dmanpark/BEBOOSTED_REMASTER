@@ -96,7 +96,21 @@ public sealed class ScreenshotCaptureTests
             Capture(window, directory!, $"projects-list-{width}x{height}.png");
             shell.Inbox.Reload();
 
+            // Frame 07: AI task review inside the expanded composer.
             shell.NavigateCommand.Execute(AppSection.Calendar);
+            shell.Chat.InputText =
+                "Finish my DECA presentation before Friday. It probably needs two focused sessions. "
+                + "Also I still owe Ms. Rivera the rec request email.";
+            shell.Chat.SubmitCommand.Execute(null);
+            Capture(window, directory!, $"chat-task-review-{width}x{height}.png");
+            if (shell.Chat.Items[^1] is ChatReviewItemViewModel review)
+            {
+                review.DismissAllCommand.Execute(null);
+            }
+
+            shell.Chat.CollapseCommand.Execute(null);
+            shell.Chat.Items.Clear();
+
             shell.PlanCommand.Execute(null);
             Capture(window, directory!, $"plan-draft-{width}x{height}.png");
             shell.Calendar.ApproveDraftCommand.Execute(null);

@@ -1,10 +1,12 @@
 using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Ai;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Planning;
 using BeBoosted.Application.Prioritization;
 using BeBoosted.Application.Projects;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
+using BeBoosted.Infrastructure.Ai;
 using BeBoosted.Infrastructure.Calendar;
 using BeBoosted.Infrastructure.Persistence;
 using BeBoosted.Infrastructure.Planning;
@@ -41,6 +43,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IResourceStorage, LocalResourceStorage>();
         services.AddSingleton<IResourceIndexer, SimpleLocalIndexer>();
         services.AddSingleton<ProjectService>();
+        services.AddSingleton<IAiProvider, LocalHeuristicAiProvider>();
+        services.AddSingleton<IAiProvenanceRepository, SqliteAiProvenanceRepository>();
+        services.AddSingleton<AiPermissionSettings>();
+        services.AddSingleton<AiService>();
+        services.AddSingleton<IProvenanceInvalidator>(sp => sp.GetRequiredService<AiService>());
         return services;
     }
 }

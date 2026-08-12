@@ -49,6 +49,9 @@ public sealed partial class TaskRowViewModel : ViewModelBase
 
     public bool IsAiOrigin => Task.Origin == TaskOrigin.Ai;
 
+    /// <summary>An AI source behind this task changed or disappeared.</summary>
+    public bool NeedsReview { get; init; }
+
     /// <summary>Only the useful metadata: project, deadline, and estimated duration.</summary>
     public string MetaText
     {

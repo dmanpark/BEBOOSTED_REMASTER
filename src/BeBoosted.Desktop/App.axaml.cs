@@ -46,6 +46,7 @@ public partial class App : Avalonia.Application
             services.AddSingleton<WindowStateService>();
             services.AddSingleton<CalendarViewModel>();
             services.AddSingleton<InboxViewModel>();
+            services.AddSingleton<ChatViewModel>();
             services.AddSingleton<ProjectsViewModel>();
             services.AddSingleton<SettingsViewModel>();
             services.AddSingleton<ShellViewModel>();

@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             xmlns:ai="using:BeBoosted.Application.Ai"
              x:Class="BeBoosted.Desktop.Views.ProjectsView"
              x:DataType="vm:ProjectsViewModel">
 
@@ -98,9 +99,8 @@
             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" />
           </StackPanel>
           <Button DockPanel.Dock="Right" Height="30" Padding="14,0" HorizontalAlignment="Right"
-                  IsEnabled="False"
-                  ToolTip.Tip="The assistant arrives in a later build phase"
-                  AutomationProperties.Name="Ask BeBoosted about this project (not yet available)">
+                  Command="{Binding AskBeBoostedCommand}"
+                  AutomationProperties.Name="Ask BeBoosted about this project">
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Border Width="14" Height="14" Background="{StaticResource BrushHighlighterLime}"
                       CornerRadius="3">
@@ -506,7 +506,33 @@
                     <TextBlock Classes="metaLabel" Text="PROVENANCE" />
                   </Border>
                   <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
-                             Text="No tasks or answers cite this yet." TextWrapping="Wrap" />
+                             Text="No tasks or answers cite this yet." TextWrapping="Wrap"
+                             IsVisible="{Binding !HasDerivations}" />
+                  <ItemsControl ItemsSource="{Binding Derivations}" IsVisible="{Binding HasDerivations}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Spacing="7" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate DataType="ai:ResourceDerivation">
+                        <StackPanel Orientation="Horizontal" Spacing="9">
+                          <Border BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                                  CornerRadius="3" Padding="5,1" VerticalAlignment="Center">
+                            <TextBlock Classes="meta" Text="{Binding Kind}" />
+                          </Border>
+                          <TextBlock Text="{Binding Title}" FontSize="{StaticResource TextSizeSmall}"
+                                     VerticalAlignment="Center" TextWrapping="Wrap" />
+                          <Border Background="{StaticResource BrushWorkbenchCream}"
+                                  BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
+                                  CornerRadius="3" Padding="5,1" VerticalAlignment="Center"
+                                  IsVisible="{Binding NeedsReview}">
+                            <TextBlock Classes="meta" Text="Needs review" />
+                          </Border>
+                        </StackPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
                 </StackPanel>
 
                 <Button Content="Remove from File" HorizontalAlignment="Left" Margin="0,6,0,0"

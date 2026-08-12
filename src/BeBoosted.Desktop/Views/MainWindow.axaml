@@ -15,6 +15,8 @@
     <KeyBinding Gesture="Escape" Command="{Binding EscapePressedCommand}" />
     <KeyBinding Gesture="Ctrl+Z" Command="{Binding UndoApprovalCommand}" />
     <KeyBinding Gesture="Meta+Z" Command="{Binding UndoApprovalCommand}" />
+    <KeyBinding Gesture="Ctrl+J" Command="{Binding FocusComposerCommand}" />
+    <KeyBinding Gesture="Meta+J" Command="{Binding FocusComposerCommand}" />
   </Window.KeyBindings>
 
   <Panel>
@@ -137,7 +139,7 @@
         </DockPanel>
       </Border>
 
-      <!-- Collapsed chatbot composer (inert until the AI phase; kept visible per the design). -->
+      <!-- Collapsed chatbot composer -->
       <Border Grid.Row="1" Margin="16,10,16,14"
               Height="44"
               Background="{StaticResource BrushPaperWhite}"
@@ -145,7 +147,7 @@
               BorderThickness="1"
               CornerRadius="{StaticResource RadiusPanel}"
               BoxShadow="{StaticResource ShadowSubtle}"
-              AutomationProperties.Name="BeBoosted composer (not yet available)">
+              IsVisible="{Binding !Chat.IsExpanded}">
         <DockPanel Margin="14,0" VerticalAlignment="Center">
           <Border DockPanel.Dock="Left" Width="22" Height="22"
                   Background="{StaticResource BrushHighlighterLime}"
@@ -153,9 +155,184 @@
             <Path Classes="icon" Data="{StaticResource IconSpark}" Width="12" Height="12"
                   StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Border>
-          <TextBlock Margin="11,0,0,0" VerticalAlignment="Center"
-                     Classes="secondary"
-                     Text="Tell BeBoosted what you need…" />
+          <Border DockPanel.Dock="Right"
+                  BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                  CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
+            <TextBlock Classes="meta" Text="{Binding ComposerShortcutText}" />
+          </Border>
+          <TextBox Name="ComposerInput" Margin="7,0,10,0" VerticalAlignment="Center"
+                   Text="{Binding Chat.InputText}"
+                   PlaceholderText="{Binding Chat.Placeholder}"
+                   BorderThickness="0" Background="Transparent"
+                   VerticalContentAlignment="Center"
+                   AutomationProperties.Name="BeBoosted composer">
+            <TextBox.KeyBindings>
+              <KeyBinding Gesture="Enter" Command="{Binding Chat.SubmitCommand}" />
+            </TextBox.KeyBindings>
+          </TextBox>
+        </DockPanel>
+      </Border>
+
+      <!-- Expanded chat: temporary, over the current surface (frame 07) -->
+      <Border Grid.Row="0" Grid.RowSpan="2" Margin="100,120,100,0"
+              IsVisible="{Binding Chat.IsExpanded}"
+              Background="{StaticResource BrushPaperWhite}"
+              BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1,1,1,0"
+              CornerRadius="12,12,0,0"
+              BoxShadow="{StaticResource ShadowDrawer}">
+        <DockPanel>
+          <Border DockPanel.Dock="Top" Padding="22,14,18,10"
+                  BorderBrush="{StaticResource BrushRuleLight}" BorderThickness="0,0,0,1">
+            <DockPanel>
+              <StackPanel Orientation="Horizontal" Spacing="9">
+                <Border Width="22" Height="22" Background="{StaticResource BrushHighlighterLime}"
+                        CornerRadius="5">
+                  <Path Classes="icon" Data="{StaticResource IconSpark}" Width="12" Height="12"
+                        StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <TextBlock Text="BeBoosted" FontWeight="SemiBold"
+                           FontSize="{StaticResource TextSizeBodyLarge}" VerticalAlignment="Center" />
+                <TextBlock Classes="meta" Text="temporary — collapses on close"
+                           VerticalAlignment="Center" />
+              </StackPanel>
+              <Button DockPanel.Dock="Right" Classes="icon" HorizontalAlignment="Right"
+                      Command="{Binding Chat.CollapseCommand}"
+                      AutomationProperties.Name="Close chat">
+                <Path Classes="icon" Data="{StaticResource IconClose}" Width="12" Height="12"
+                      Stroke="{StaticResource BrushPencilGray}" StrokeThickness="1.5" />
+              </Button>
+            </DockPanel>
+          </Border>
+
+          <Border DockPanel.Dock="Bottom" Padding="22,10,22,16">
+            <Border Height="44" BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
+                    CornerRadius="{StaticResource RadiusPanel}">
+              <DockPanel Margin="14,0,6,0">
+                <Button DockPanel.Dock="Right" Width="28" Height="28" Padding="0"
+                        Background="{StaticResource BrushGraphite}" CornerRadius="6"
+                        VerticalAlignment="Center"
+                        Command="{Binding Chat.SubmitCommand}"
+                        AutomationProperties.Name="Send">
+                  <Path Data="M6,10 L6,2 M2.5,5.5 L6,2 L9.5,5.5" Stroke="{StaticResource BrushHighlighterLime}"
+                        StrokeThickness="1.6" Fill="{x:Null}" Width="12" Height="12" />
+                </Button>
+                <TextBox Name="ChatInput" VerticalAlignment="Center" Margin="0,0,8,0"
+                         Text="{Binding Chat.InputText}"
+                         PlaceholderText="Reply or adjust…"
+                         BorderThickness="0" Background="Transparent"
+                         VerticalContentAlignment="Center"
+                         AutomationProperties.Name="Chat message">
+                  <TextBox.KeyBindings>
+                    <KeyBinding Gesture="Enter" Command="{Binding Chat.SubmitCommand}" />
+                  </TextBox.KeyBindings>
+                </TextBox>
+              </DockPanel>
+            </Border>
+          </Border>
+
+          <ScrollViewer Name="ChatScroll" Padding="26,18">
+            <ItemsControl ItemsSource="{Binding Chat.Items}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Spacing="16" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.DataTemplates>
+
+                <DataTemplate DataType="vm:ChatUserMessageViewModel">
+                  <Border HorizontalAlignment="Right" MaxWidth="560"
+                          Background="{StaticResource BrushWorkbenchCream}"
+                          BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                          CornerRadius="{StaticResource RadiusPanel}" Padding="14,10">
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" LineHeight="20"
+                               FontSize="{StaticResource TextSizeBodyLarge}" />
+                  </Border>
+                </DataTemplate>
+
+                <DataTemplate DataType="vm:ChatAssistantMessageViewModel">
+                  <StackPanel MaxWidth="640" HorizontalAlignment="Left" Spacing="8">
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" LineHeight="21"
+                               FontSize="{StaticResource TextSizeBodyLarge}" />
+                    <ItemsControl ItemsSource="{Binding Citations}" IsVisible="{Binding HasCitations}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <WrapPanel />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:CitationChipViewModel">
+                          <Button Height="24" Padding="8,0" Margin="0,0,6,6"
+                                  Command="{Binding OpenCommand}"
+                                  AutomationProperties.Name="{Binding Label, StringFormat='Open source {0}'}">
+                            <TextBlock Classes="mono" Text="{Binding Label}"
+                                       FontSize="{StaticResource TextSizeMeta}" />
+                          </Button>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </DataTemplate>
+
+                <DataTemplate DataType="vm:ChatReviewItemViewModel">
+                  <StackPanel MaxWidth="640" HorizontalAlignment="Left" Spacing="10">
+                    <TextBlock Text="{Binding HeaderText}" TextWrapping="Wrap"
+                               FontSize="{StaticResource TextSizeBodyLarge}"
+                               IsVisible="{Binding IsPending}" />
+                    <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusPanel}" ClipToBounds="True"
+                            IsVisible="{Binding IsPending}">
+                      <ItemsControl ItemsSource="{Binding Drafts}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate DataType="vm:DraftRowViewModel">
+                            <Border Background="{StaticResource BrushLimeWash}"
+                                    BorderBrush="{StaticResource BrushRuleLight}"
+                                    BorderThickness="0,0,0,1" Padding="15,10">
+                              <DockPanel>
+                                <Border DockPanel.Dock="Left"
+                                        Background="{StaticResource BrushPaperWhite}"
+                                        BorderBrush="{StaticResource BrushBorderEmphasis}"
+                                        BorderThickness="1" CornerRadius="3" Padding="5,1"
+                                        VerticalAlignment="Center">
+                                  <TextBlock Classes="meta" Text="AI suggested"
+                                             Foreground="{StaticResource BrushGraphite}" />
+                                </Border>
+                                <Button DockPanel.Dock="Right" Classes="icon"
+                                        Command="{Binding DismissCommand}"
+                                        AutomationProperties.Name="{Binding EditTitle, StringFormat='Dismiss {0}'}"
+                                        ToolTip.Tip="Dismiss" VerticalAlignment="Center">
+                                  <Path Classes="icon" Data="{StaticResource IconClose}" Width="11"
+                                        Height="11" Stroke="{StaticResource BrushPencilGray}"
+                                        StrokeThickness="1.5" />
+                                </Button>
+                                <StackPanel Margin="11,0" Spacing="3" VerticalAlignment="Center">
+                                  <TextBox Text="{Binding EditTitle}" FontWeight="SemiBold"
+                                           BorderThickness="0" Background="Transparent" Padding="0"
+                                           MinHeight="0"
+                                           AutomationProperties.Name="Proposed task title" />
+                                  <TextBlock Classes="meta" Text="{Binding MetaText}" />
+                                </StackPanel>
+                              </DockPanel>
+                            </Border>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </Border>
+                    <StackPanel Orientation="Horizontal" Spacing="10" IsVisible="{Binding IsPending}">
+                      <Button Classes="primary" Content="{Binding AddAllLabel}"
+                              Command="{Binding AddAllCommand}" />
+                      <Button Content="Dismiss all" Command="{Binding DismissAllCommand}" />
+                    </StackPanel>
+                    <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                               IsVisible="{Binding IsPending}" TextWrapping="Wrap"
+                               Text="You can turn on automatic adding in Settings. Auto-added tasks always keep an AI added label." />
+                    <TextBlock Classes="secondary" Text="{Binding ResolutionText}"
+                               IsVisible="{Binding !IsPending}" />
+                  </StackPanel>
+                </DataTemplate>
+
+              </ItemsControl.DataTemplates>
+            </ItemsControl>
+          </ScrollViewer>
         </DockPanel>
       </Border>
 

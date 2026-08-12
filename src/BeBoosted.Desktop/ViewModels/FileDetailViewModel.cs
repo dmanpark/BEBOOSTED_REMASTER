@@ -16,21 +16,27 @@ public sealed partial class FileDetailViewModel : ViewModelBase
     private readonly ProjectsViewModel _owner;
     private readonly ProjectService _service;
     private readonly IFileRevealService _opener;
+    private readonly Application.Ai.AiService _ai;
 
     public FileDetailViewModel(
         ProjectsViewModel owner,
         Project project,
         ProjectFile file,
         ProjectService service,
-        IFileRevealService opener)
+        IFileRevealService opener,
+        Application.Ai.AiService ai)
     {
         _owner = owner;
         _service = service;
         _opener = opener;
+        _ai = ai;
         Project = project;
         File = file;
         Refresh();
     }
+
+    public void SelectResource(Domain.ResourceId resourceId)
+        => Selected = Resources.FirstOrDefault(r => r.Resource.Id == resourceId) ?? Selected;
 
     public Project Project { get; }
 
@@ -79,6 +85,7 @@ public sealed partial class FileDetailViewModel : ViewModelBase
             Resources.Add(new ResourceRowViewModel(this, resource, _opener)
             {
                 StoredAbsolutePath = _service.ResolveStoredPath(resource),
+                Derivations = _ai.GetDerivations(resource.Id),
             });
         }
 
@@ -244,6 +251,11 @@ public sealed partial class ResourceRowViewModel : ViewModelBase
     }
 
     public string? StoredAbsolutePath { get; internal set; }
+
+    /// <summary>Tasks and answers derived from this resource ("Used by…", "Cited in…").</summary>
+    public IReadOnlyList<Application.Ai.ResourceDerivation> Derivations { get; internal set; } = [];
+
+    public bool HasDerivations => Derivations.Count > 0;
 
     [RelayCommand]
     private void Select() => _owner.Selected = this;

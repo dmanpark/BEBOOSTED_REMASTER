@@ -1,4 +1,5 @@
 using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Ai;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Domain;
@@ -17,7 +18,8 @@ public sealed class ProjectService(
     IResourceIndexer indexer,
     ITaskRepository tasks,
     ICalendarBlockRepository blocks,
-    IClock clock)
+    IClock clock,
+    IProvenanceInvalidator? provenanceInvalidator = null)
 {
     public Project CreateProject(string name)
     {
@@ -98,7 +100,22 @@ public sealed class ProjectService(
             }
 
             resources.Delete(id);
+
+            // A removed source flags everything derived from it as Needs review.
+            provenanceInvalidator?.InvalidateForResource(id);
         }
+    }
+
+    /// <summary>Edits a note's content: re-indexes it and flags derived items for review.</summary>
+    public Resource UpdateNote(ResourceId id, string content)
+    {
+        var resource = resources.GetById(id)
+            ?? throw new DomainException("That resource no longer exists.");
+        resource.UpdateNoteContent(content, clock.Now);
+        indexer.Index(resource);
+        resources.Update(resource);
+        provenanceInvalidator?.InvalidateForResource(id);
+        return resource;
     }
 
     public IReadOnlyList<Resource> GetResources(ProjectFileId fileId) => resources.GetForFile(fileId);

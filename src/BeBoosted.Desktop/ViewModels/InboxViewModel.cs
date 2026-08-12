@@ -15,15 +15,19 @@ public sealed partial class InboxViewModel : ViewModelBase
     private readonly InboxQueryService _query;
     private readonly Application.Projects.IProjectRepository _projects;
 
+    private readonly Application.Ai.AiService _ai;
+
     public InboxViewModel(
         TaskService service,
         InboxQueryService query,
         Application.Projects.IProjectRepository projects,
+        Application.Ai.AiService ai,
         IClock clock)
     {
         _service = service;
         _query = query;
         _projects = projects;
+        _ai = ai;
         _clock = clock;
         Reload();
 
@@ -59,7 +63,10 @@ public sealed partial class InboxViewModel : ViewModelBase
     private TaskRowViewModel CreateRow(Domain.Tasks.TaskItem task)
     {
         var projectName = task.ProjectId is { } projectId ? _projectNames.GetValueOrDefault(projectId) : null;
-        return new TaskRowViewModel(task, _service, _clock, RemoveRow, _projectChoices, projectName);
+        return new TaskRowViewModel(task, _service, _clock, RemoveRow, _projectChoices, projectName)
+        {
+            NeedsReview = _ai.TaskNeedsReview(task),
+        };
     }
 
     /// <summary>Shows the current period's ordinal rank chips on the queue rows.</summary>

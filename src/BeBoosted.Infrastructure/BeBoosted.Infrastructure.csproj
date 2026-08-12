@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BeBoosted.Application\BeBoosted.Application.csproj" />
+    <InternalsVisibleTo Include="BeBoosted.Tests" />
   </ItemGroup>
 
   <ItemGroup>

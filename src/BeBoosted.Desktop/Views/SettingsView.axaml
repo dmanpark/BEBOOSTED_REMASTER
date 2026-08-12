@@ -12,14 +12,109 @@
                  FontWeight="SemiBold" />
     </Border>
 
-    <StackPanel Width="640" HorizontalAlignment="Center" Margin="0,40,0,0" Spacing="26">
+    <ScrollViewer>
+    <StackPanel Width="640" HorizontalAlignment="Center" Margin="0,40,0,40" Spacing="26">
       <StackPanel Spacing="6">
-        <TextBlock Text="Settings" FontSize="{StaticResource TextSizeSectionTitle}"
+        <TextBlock Text="AI permissions" FontSize="{StaticResource TextSizeSectionTitle}"
                    FontWeight="SemiBold" />
         <TextBlock Classes="secondary"
-                   Text="BeBoosted stores everything locally. No account, no cloud."
+                   Text="Each permission is separate. Letting BeBoosted add tasks never lets it change your calendar."
                    TextWrapping="Wrap" />
       </StackPanel>
+
+      <!-- Task capture -->
+      <Border Background="{StaticResource BrushPaperWhite}"
+              BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+              CornerRadius="{StaticResource RadiusPanel}" Padding="24,20">
+        <StackPanel Spacing="13">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="Task capture" FontSize="{StaticResource TextSizeHeading}"
+                       FontWeight="SemiBold" />
+            <TextBlock Classes="meta" Text="what enters your Inbox" VerticalAlignment="Center" />
+          </StackPanel>
+          <RadioButton GroupName="taskCapture" IsChecked="{Binding IsTaskCaptureReview}"
+                       AutomationProperties.Name="Review before adding">
+            <StackPanel Spacing="2">
+              <TextBlock Text="Review before adding" FontWeight="SemiBold" />
+              <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                         Text="Suggested tasks wait in a review list until you approve them."
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </RadioButton>
+          <RadioButton GroupName="taskCapture" IsChecked="{Binding IsTaskCaptureAuto}"
+                       AutomationProperties.Name="Add automatically and label AI added">
+            <StackPanel Spacing="2">
+              <TextBlock Text="Add automatically and label AI added" FontWeight="Medium" />
+              <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                         Text="Tasks join the Inbox immediately and keep their origin and sources."
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </RadioButton>
+        </StackPanel>
+      </Border>
+
+      <!-- Calendar planning -->
+      <Border Background="{StaticResource BrushPaperWhite}"
+              BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+              CornerRadius="{StaticResource RadiusPanel}" Padding="24,20">
+        <StackPanel Spacing="13">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="Calendar planning" FontSize="{StaticResource TextSizeHeading}"
+                       FontWeight="SemiBold" />
+            <TextBlock Classes="meta" Text="what lands on your time" VerticalAlignment="Center" />
+          </StackPanel>
+          <RadioButton GroupName="calendarPlanning" IsChecked="{Binding IsPlanningReview}"
+                       AutomationProperties.Name="Review every plan">
+            <StackPanel Spacing="2">
+              <TextBlock Text="Review every plan" FontWeight="SemiBold" />
+              <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                         Text="Plans appear as draft proposals on the calendar until you approve them."
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </RadioButton>
+          <RadioButton GroupName="calendarPlanning" IsChecked="{Binding IsPlanningAuto}"
+                       AutomationProperties.Name="Apply plans automatically">
+            <StackPanel Spacing="2">
+              <TextBlock Text="Apply plans automatically" FontWeight="Medium" />
+              <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                         Text="Blocks are placed without review. Every block stays labeled and undoable."
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </RadioButton>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Path Classes="icon" Data="{StaticResource IconLock}" Width="12" Height="12"
+                  StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}"
+                  VerticalAlignment="Center" />
+            <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                       Text="Separate from task capture — turning that on does not change this."
+                       TextWrapping="Wrap" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- External events (future) -->
+      <Border Background="{StaticResource BrushPaperWhite}" Opacity="0.75"
+              BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
+              CornerRadius="{StaticResource RadiusPanel}" Padding="24,20">
+        <StackPanel Spacing="10">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="External events" FontSize="{StaticResource TextSizeHeading}"
+                       FontWeight="SemiBold" Foreground="{StaticResource BrushPencilGray}" />
+            <Border Background="{StaticResource BrushWorkbenchCream}"
+                    BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                    CornerRadius="3" Padding="7,2" VerticalAlignment="Center">
+              <TextBlock Classes="meta" Text="Coming later" />
+            </Border>
+          </StackPanel>
+          <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                     Text="Read-only availability from a connected calendar. BeBoosted will see busy time but never edit outside events."
+                     TextWrapping="Wrap" />
+          <RadioButton IsEnabled="False" GroupName="externalEvents"
+                       AutomationProperties.Name="Read availability from connected calendars (coming later)">
+            <TextBlock Classes="secondary" Text="Read availability from connected calendars" />
+          </RadioButton>
+        </StackPanel>
+      </Border>
 
       <Border Background="{StaticResource BrushPaperWhite}"
               BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
@@ -38,6 +133,7 @@
         </StackPanel>
       </Border>
     </StackPanel>
+    </ScrollViewer>
   </DockPanel>
 
 </UserControl>

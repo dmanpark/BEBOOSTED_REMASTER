@@ -12,8 +12,15 @@ public sealed class InboxViewModelTests
         var clock = new FakeClock(TestShell.DesignDate);
         var repo = repository ?? new InMemoryTaskRepository();
         var query = new InboxQueryService(repo, new InMemoryCalendarBlockRepository());
+        var projectRepo = new InMemoryProjectRepository();
+        var ai = new BeBoosted.Application.Ai.AiService(
+            new BeBoosted.Infrastructure.Ai.LocalHeuristicAiProvider(new InMemoryResourceRepository(), projectRepo),
+            new InMemoryAiProvenanceRepository(),
+            repo,
+            new BeBoosted.Application.Ai.AiPermissionSettings(new InMemorySettingsStore()),
+            clock);
         return (
-            new InboxViewModel(new TaskService(repo, clock), query, new InMemoryProjectRepository(), clock),
+            new InboxViewModel(new TaskService(repo, clock), query, projectRepo, ai, clock),
             repo);
     }
 

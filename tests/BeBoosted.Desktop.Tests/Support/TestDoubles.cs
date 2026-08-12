@@ -1,4 +1,5 @@
 using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Ai;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Planning;
 using BeBoosted.Application.Prioritization;
@@ -7,6 +8,7 @@ using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Desktop.ViewModels;
 using BeBoosted.Domain;
+using BeBoosted.Domain.Ai;
 using BeBoosted.Domain.Calendar;
 using BeBoosted.Domain.Planning;
 using BeBoosted.Domain.Prioritization;
@@ -227,6 +229,29 @@ public sealed class FakeIndexer(IResourceRepository resources, IClock clock) : I
     }
 }
 
+public sealed class InMemoryAiProvenanceRepository : IAiProvenanceRepository
+{
+    private readonly Dictionary<AiProvenanceId, AiProvenance> _records = [];
+    private readonly List<AiAnswer> _answers = [];
+
+    public void Add(AiProvenance provenance) => _records[provenance.Id] = provenance;
+
+    public void Update(AiProvenance provenance) => _records[provenance.Id] = provenance;
+
+    public AiProvenance? GetById(AiProvenanceId id) => _records.GetValueOrDefault(id);
+
+    public IReadOnlyList<AiProvenance> GetBySourceResource(ResourceId resourceId)
+        => _records.Values.Where(p => p.SourceResourceIds.Contains(resourceId)).ToList();
+
+    public void AddAnswer(AiAnswer answer) => _answers.Add(answer);
+
+    public IReadOnlyList<AiAnswer> GetAnswersForProject(ProjectId projectId)
+        => _answers.Where(a => a.ProjectId == projectId).ToList();
+
+    public AiAnswer? GetAnswerByProvenance(AiProvenanceId provenanceId)
+        => _answers.FirstOrDefault(a => a.ProvenanceId == provenanceId);
+}
+
 public sealed class FakeFileReveal : BeBoosted.Desktop.Platform.IFileRevealService
 {
     public List<string> Opened { get; } = [];
@@ -257,7 +282,8 @@ public static class TestShell
         InMemoryProjectRepository? projects = null,
         DateOnly? today = null)
     {
-        var settings = new AppSettings(store ?? new InMemorySettingsStore());
+        var settingsStore = store ?? new InMemorySettingsStore();
+        var settings = new AppSettings(settingsStore);
         var clock = new FakeClock(today ?? DesignDate);
         var repository = tasks ?? new InMemoryTaskRepository();
         var blockRepository = blocks ?? new InMemoryCalendarBlockRepository();
@@ -273,16 +299,24 @@ public static class TestShell
         var fileRepo = new InMemoryProjectFileRepository();
         var resourceRepo = new InMemoryResourceRepository();
         var storage = new FakeResourceStorage();
+        var aiPermissions = new AiPermissionSettings(settingsStore);
+        var aiProvider = new BeBoosted.Infrastructure.Ai.LocalHeuristicAiProvider(resourceRepo, projectRepo);
+        var aiService = new AiService(
+            aiProvider, new InMemoryAiProvenanceRepository(), repository, aiPermissions, clock);
         var projectService = new ProjectService(
             projectRepo, fileRepo, resourceRepo, storage,
-            new FakeIndexer(resourceRepo, clock), repository, blockRepository, clock);
+            new FakeIndexer(resourceRepo, clock), repository, blockRepository, clock, aiService);
         return new ShellViewModel(
             new CalendarViewModel(settings, clock, calendarService, repository, planning),
-            new InboxViewModel(taskService, inboxQuery, projectRepo, clock),
+            new InboxViewModel(taskService, inboxQuery, projectRepo, aiService, clock),
             new ProjectsViewModel(
-                projectService, projectRepo, fileRepo, taskService, new FakeFileReveal()),
-            new SettingsViewModel(new FakePaths()),
+                projectService, projectRepo, fileRepo, resourceRepo, taskService,
+                new FakeFileReveal(), aiService),
+            new SettingsViewModel(new FakePaths(), aiPermissions),
+            new ChatViewModel(aiService, aiPermissions, clock),
             prioritySort,
+            aiPermissions,
+            new BeBoosted.Desktop.Platform.DefaultKeymapService(),
             clock);
     }
 
