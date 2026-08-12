@@ -240,6 +240,13 @@
     <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderEmphasis}" />
   </Style>
 
+  <!-- AI proposal: translucent lime highlighter stroke with a dashed graphite outline -->
+  <Style Selector="Border.calendarBlock.proposal">
+    <Setter Property="Background" Value="{DynamicResource BrushLimeWash}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="BoxShadow" Value="0 0 0 0 #00000000" />
+  </Style>
+
   <Style Selector="views|CalendarBlockView:focus-visible Border#BlockBorder">
     <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
     <Setter Property="BoxShadow" Value="0 0 0 3 #8CC8F24A" />

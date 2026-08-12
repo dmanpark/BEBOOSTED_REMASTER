@@ -36,6 +36,7 @@ public sealed partial class ShellViewModel : ViewModelBase
             if (e.PropertyName == nameof(InboxViewModel.OpenCount))
             {
                 StartPrioritySortCommand.NotifyCanExecuteChanged();
+                PlanCommand.NotifyCanExecuteChanged();
             }
         };
         Calendar.PropertyChanged += (_, e) =>
@@ -136,4 +137,20 @@ public sealed partial class ShellViewModel : ViewModelBase
 
     private void RefreshInboxRanks()
         => Inbox.SetRanks(_prioritySort.GetRankLookup(CurrentPlanningPeriod));
+
+    // ---- Plan drafts ----
+
+    public bool CanPlan => Inbox.OpenCount >= 1;
+
+    /// <summary>Builds a plan draft for the visible period and reviews it on the calendar.</summary>
+    [RelayCommand(CanExecute = nameof(CanPlan))]
+    private void Plan()
+    {
+        Calendar.CreateDraft(CurrentPlanningPeriod);
+        IsInboxOpen = false;
+    }
+
+    /// <summary>Ctrl+Z / ⌘Z: undoes the most recent plan approval.</summary>
+    [RelayCommand]
+    private void UndoApproval() => Calendar.UndoLastApproval();
 }

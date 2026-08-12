@@ -8,6 +8,9 @@ public sealed record BlockOccurrence(CalendarBlock Block, DateOnly Date)
     public TimeOnly EndTime => Block.EndTime;
 }
 
+/// <summary>A dated interval participating in conflict detection (block or proposal).</summary>
+public readonly record struct TimedItem(CalendarBlockId Id, DateOnly Date, TimeOnly StartTime, TimeOnly EndTime);
+
 /// <summary>
 /// Finds overlapping approved/fixed occurrences. Conflicts are surfaced, never silently
 /// resolved — the user moves or changes one of the blocks.
@@ -16,9 +19,15 @@ public static class ConflictDetector
 {
     /// <summary>Ids of blocks that overlap another block on the same date.</summary>
     public static IReadOnlySet<CalendarBlockId> FindConflicts(IReadOnlyList<BlockOccurrence> occurrences)
+        => FindConflicts(occurrences
+            .Select(o => new TimedItem(o.Block.Id, o.Date, o.StartTime, o.EndTime))
+            .ToList());
+
+    /// <summary>Ids of items that overlap another item on the same date (blocks and proposals).</summary>
+    public static IReadOnlySet<CalendarBlockId> FindConflicts(IReadOnlyList<TimedItem> items)
     {
         var conflicted = new HashSet<CalendarBlockId>();
-        foreach (var group in occurrences.GroupBy(o => o.Date))
+        foreach (var group in items.GroupBy(o => o.Date))
         {
             var ordered = group.OrderBy(o => o.StartTime).ToList();
             for (var i = 0; i < ordered.Count; i++)
@@ -30,8 +39,8 @@ public static class ConflictDetector
                         break;
                     }
 
-                    conflicted.Add(ordered[i].Block.Id);
-                    conflicted.Add(ordered[j].Block.Id);
+                    conflicted.Add(ordered[i].Id);
+                    conflicted.Add(ordered[j].Id);
                 }
             }
         }

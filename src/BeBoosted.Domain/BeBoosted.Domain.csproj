@@ -2,4 +2,8 @@
 
   <!-- Pure domain model: no Avalonia, SQLite, filesystem, or AI dependencies. -->
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="BeBoosted.Tests" />
+  </ItemGroup>
+
 </Project>

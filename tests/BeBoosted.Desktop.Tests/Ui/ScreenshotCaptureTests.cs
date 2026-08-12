@@ -50,6 +50,13 @@ public sealed class ScreenshotCaptureTests
             Capture(window, directory!, $"shell-settings-{width}x{height}.png");
 
             shell.NavigateCommand.Execute(AppSection.Calendar);
+            shell.PlanCommand.Execute(null);
+            Capture(window, directory!, $"plan-draft-{width}x{height}.png");
+            shell.Calendar.ApproveDraftCommand.Execute(null);
+            Capture(window, directory!, $"plan-approved-undo-toast-{width}x{height}.png");
+            shell.UndoApprovalCommand.Execute(null);
+            shell.Calendar.DiscardDraftCommand.Execute(null);
+
             shell.StartPrioritySortCommand.Execute(null);
             Capture(window, directory!, $"priority-sort-comparison-{width}x{height}.png");
             shell.ActiveSort!.ChooseLeftCommand.Execute(null);

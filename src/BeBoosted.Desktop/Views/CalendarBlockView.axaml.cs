@@ -174,32 +174,32 @@ public partial class CalendarBlockView : UserControl
             switch (e.Key)
             {
                 case Key.Up when !e.KeyModifiers.HasFlag(KeyModifiers.Shift):
-                    surface?.RememberFocus(Vm.Block.Id);
+                    surface?.RememberFocus(Vm.Id);
                     Vm.Nudge(-step);
                     e.Handled = true;
                     return;
                 case Key.Down when !e.KeyModifiers.HasFlag(KeyModifiers.Shift):
-                    surface?.RememberFocus(Vm.Block.Id);
+                    surface?.RememberFocus(Vm.Id);
                     Vm.Nudge(step);
                     e.Handled = true;
                     return;
                 case Key.Up when e.KeyModifiers.HasFlag(KeyModifiers.Shift):
-                    surface?.RememberFocus(Vm.Block.Id);
+                    surface?.RememberFocus(Vm.Id);
                     Vm.ResizeBy(-step);
                     e.Handled = true;
                     return;
                 case Key.Down when e.KeyModifiers.HasFlag(KeyModifiers.Shift):
-                    surface?.RememberFocus(Vm.Block.Id);
+                    surface?.RememberFocus(Vm.Id);
                     Vm.ResizeBy(step);
                     e.Handled = true;
                     return;
                 case Key.Left:
-                    surface?.RememberFocus(Vm.Block.Id);
+                    surface?.RememberFocus(Vm.Id);
                     Vm.NudgeDays(-1);
                     e.Handled = true;
                     return;
                 case Key.Right:
-                    surface?.RememberFocus(Vm.Block.Id);
+                    surface?.RememberFocus(Vm.Id);
                     Vm.NudgeDays(1);
                     e.Handled = true;
                     return;
@@ -208,9 +208,14 @@ public partial class CalendarBlockView : UserControl
                     e.Handled = true;
                     return;
                 case Key.Enter or Key.Space:
-                    if (CompleteButton.IsVisible && CompleteButton.Flyout is { } flyout)
+                    if (CompleteButton.IsVisible && CompleteButton.Flyout is { } outcomeFlyout)
                     {
-                        flyout.ShowAt(CompleteButton);
+                        outcomeFlyout.ShowAt(CompleteButton);
+                        e.Handled = true;
+                    }
+                    else if (ProposalButton.IsVisible && ProposalButton.Flyout is { } proposalFlyout)
+                    {
+                        proposalFlyout.ShowAt(ProposalButton);
                         e.Handled = true;
                     }
 
@@ -219,8 +224,8 @@ public partial class CalendarBlockView : UserControl
         }
     }
 
-    /// <summary>Closes the hosting flyout after an outcome action.</summary>
-    private void OnOutcomeActionClick(object? sender, RoutedEventArgs e)
+    /// <summary>Closes the hosting flyout after an action.</summary>
+    private void OnFlyoutActionClick(object? sender, RoutedEventArgs e)
     {
         if (sender is Control control
             && control.FindAncestorOfType<FlyoutPresenter>() is { Parent: Popup popup })

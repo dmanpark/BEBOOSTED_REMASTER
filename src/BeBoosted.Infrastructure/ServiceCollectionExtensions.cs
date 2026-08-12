@@ -1,10 +1,12 @@
 using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Calendar;
+using BeBoosted.Application.Planning;
 using BeBoosted.Application.Prioritization;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Infrastructure.Calendar;
 using BeBoosted.Infrastructure.Persistence;
+using BeBoosted.Infrastructure.Planning;
 using BeBoosted.Infrastructure.Prioritization;
 using BeBoosted.Infrastructure.Settings;
 using BeBoosted.Infrastructure.Tasks;
@@ -29,6 +31,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<InboxQueryService>();
         services.AddSingleton<IPrioritizationRepository, SqlitePrioritizationRepository>();
         services.AddSingleton<PrioritySortService>();
+        services.AddSingleton<IPlanningProposalRepository, SqlitePlanningProposalRepository>();
+        services.AddSingleton<PlanningService>();
         return services;
     }
 }

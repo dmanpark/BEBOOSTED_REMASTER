@@ -1,4 +1,5 @@
 using BeBoosted.Application.Calendar;
+using BeBoosted.Application.Planning;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Desktop.Tests.Support;
@@ -15,7 +16,9 @@ public sealed class CalendarViewModelCalendarTests
         InMemoryTaskRepository Tasks,
         InMemoryCalendarBlockRepository Blocks,
         FakeClock Clock,
-        CalendarService Service);
+        CalendarService Service,
+        PlanningService Planning,
+        InMemoryPrioritizationRepository Prioritization);
 
     private static Context Create(bool seed = false)
     {
@@ -28,8 +31,13 @@ public sealed class CalendarViewModelCalendarTests
         }
 
         var service = new CalendarService(blocks, tasks, clock);
-        var calendar = new CalendarViewModel(new AppSettings(new InMemorySettingsStore()), clock, service, tasks);
-        return new Context(calendar, tasks, blocks, clock, service);
+        var prioritization = new InMemoryPrioritizationRepository();
+        var planning = new PlanningService(
+            new InMemoryPlanningProposalRepository(), blocks,
+            new InboxQueryService(tasks, blocks), prioritization, service, clock);
+        var calendar = new CalendarViewModel(
+            new AppSettings(new InMemorySettingsStore()), clock, service, tasks, planning);
+        return new Context(calendar, tasks, blocks, clock, service, planning, prioritization);
     }
 
     [Fact]

@@ -416,4 +416,90 @@ surface, two paper cards, lime Due chips, tie button with T chip, progress strip
   three intensities) — polish candidate.
 
 ### Local commit
+`79d2487` — phase 4: implement Priority Sort
+
+---
+
+## Phase 5 — Plan drafts
+
+### Intended scope
+Scheduling service, proposal blocks, Why evidence, individual and batch approval,
+undo, and replanning.
+
+### Work completed
+- **Domain:** `PlanningProposal` + `ProposedBlock` (pending/approved/removed statuses;
+  a proposed block's id becomes the calendar block's id on approval, making approval
+  traceable and undoable; drafts never mutate the approved calendar), `WhyEvidence`
+  (deadline/duration/priority/availability/source — user-relevant facts, never
+  chain-of-thought), and `DeterministicScheduler`: rank-then-deadline-then-capture
+  ordering, first-fit into the 8:00–21:00 planning window, 15-minute snapping, never
+  before "now" on today, task time-of-day/not-before constraints, sessions capped at
+  90 minutes with tiny remainders folded in, partial-session rollback when a task can't
+  fully fit, per-task unplaced reasons, and Why evidence generation (including
+  "Rank #1 · above …" from Priority Sort results).
+- **Application:** `IPlanningProposalRepository`, `PlanningService` (single active draft;
+  creating a new draft discards the old; move/resize/remove pending blocks; per-block and
+  batch approval materializing calendar blocks; `UndoApproval` deleting the created
+  blocks and reverting the draft; discard).
+- **Infrastructure:** migration `0005_planning` (proposals + blocks with evidence
+  columns, cascade delete), `SqlitePlanningProposalRepository` (transactional full-state
+  save, active-draft query).
+- **Desktop:** proposals render as lime-wash blocks with dashed graphite outlines and a
+  lime spark chip; drag/resize/keyboard movement reuse the existing interactions but
+  route through the planning service; the spark chip opens a flyout with **Approve this
+  block**, **Remove**, and the Why evidence trail (DEADLINE / DURATION / PRIORITY /
+  OPEN TIME / SOURCE); floating **Plan draft** summary panel (counts, leftover note,
+  Approve plan, Discard draft); 10-second graphite undo toast with a lime Undo button,
+  plus session-level Ctrl+Z/⌘Z bound at the window; Inbox drawer footer gains the
+  primary **Plan…** action; conflicts include proposals (hatched on both sides) and
+  fixed events are never moved by planning.
+
+### Architecture and behavior decisions
+- One active draft at a time, matching "plan Today / plan this week" as a single flow.
+- Conflict detection was generalized (`TimedItem`) so proposals participate without
+  faking domain calendar blocks.
+- The unplaced-reason note is transient (recreated with each draft); persisted state
+  keeps only the draft itself.
+- CalendarBlockViewModel now wraps either an approved block or a proposal behind one
+  interface — the timeline surface and keyboard handling did not change.
+
+### Tests added (31 new; totals 104 + 83)
+DeterministicScheduler (session splitting incl. remainder folding, never-before-now with
+snap, busy-slot first fit, rank ordering + evidence text, session labels without overlap,
+deadline-driven unplaced reasons, time-of-day constraints, day overflow, determinism,
+no proposal overlap), PlanningService on real SQLite (draft persistence with evidence
+round-trip, draft replacement, move/resize/remove persistence, approval materialization
+with shared ids and state transitions, batch approval emptying the Inbox queue, undo
+restoring blocks/draft/Inbox, discard, unplaced reporting), plan-draft ViewModel flows
+(draft creation on the calendar, batch approval with undo toast, Ctrl+Z restore,
+individual approve/remove, keyboard nudge of proposals, proposal-over-fixed conflict
+with the fixed event untouched, discard, rank-influenced ordering).
+
+### Verification
+```
+dotnet format --verify-no-changes   # clean
+dotnet build -warnaserror           # 0 warnings
+dotnet test                         # 104 + 82 passed (1 screenshot skip by design)
+# clean-profile launch              # migration 5 applied
+# BeBoosted.Tests re-run 5× — stable after the TempDatabase fix below
+```
+
+### Screenshots
+`docs/implementation/screenshots/phase5/` — plan draft over Today (lime dashed proposals
++ summary panel), approved plan with the undo toast, at 1440×960 and 1280×800.
+
+### Problems discovered during self-review
+- A parallel-test flake: `TempDatabase.Dispose` used the global
+  `SqliteConnection.ClearAllPools()` (interfering across concurrently-running classes)
+  and let `File.Delete` throw on a lagging WAL handle. Cleanup is now pool-scoped and
+  best-effort; verified stable across five consecutive full runs.
+- A test initially referenced a fixed "Lunch" block its own setup never seeded.
+
+### Known remaining limitations
+- Blocks shorter than ~20 minutes render at an 18px minimum height and can visually
+  brush the next block without a real time overlap (cosmetic).
+- The mockup's "Review on calendar" summary button is intentionally omitted — the
+  calendar is already the review surface.
+
+### Local commit
 Recorded below after commit.

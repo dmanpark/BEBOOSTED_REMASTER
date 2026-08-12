@@ -1,11 +1,13 @@
 using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Calendar;
+using BeBoosted.Application.Planning;
 using BeBoosted.Application.Prioritization;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Desktop.ViewModels;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Calendar;
+using BeBoosted.Domain.Planning;
 using BeBoosted.Domain.Prioritization;
 using BeBoosted.Domain.Tasks;
 
@@ -96,6 +98,23 @@ public sealed class InMemoryCalendarBlockRepository : ICalendarBlockRepository
             .ToHashSet();
 }
 
+public sealed class InMemoryPlanningProposalRepository : IPlanningProposalRepository
+{
+    private readonly Dictionary<PlanningProposalId, PlanningProposal> _proposals = [];
+
+    public void Save(PlanningProposal proposal) => _proposals[proposal.Id] = proposal;
+
+    public PlanningProposal? GetById(PlanningProposalId id) => _proposals.GetValueOrDefault(id);
+
+    public PlanningProposal? GetActiveDraft()
+        => _proposals.Values
+            .Where(p => p.State == ProposalState.Draft)
+            .OrderByDescending(p => p.CreatedAt)
+            .FirstOrDefault();
+
+    public void Delete(PlanningProposalId id) => _proposals.Remove(id);
+}
+
 public sealed class InMemoryPrioritizationRepository : IPrioritizationRepository
 {
     private readonly List<ComparisonDecision> _decisions = [];
@@ -138,9 +157,13 @@ public static class TestShell
         var taskService = new TaskService(repository, clock);
         var calendarService = new CalendarService(blockRepository, repository, clock);
         var inboxQuery = new InboxQueryService(repository, blockRepository);
-        var prioritySort = new PrioritySortService(new InMemoryPrioritizationRepository(), clock);
+        var prioritization = new InMemoryPrioritizationRepository();
+        var prioritySort = new PrioritySortService(prioritization, clock);
+        var planning = new PlanningService(
+            new InMemoryPlanningProposalRepository(), blockRepository,
+            inboxQuery, prioritization, calendarService, clock);
         return new ShellViewModel(
-            new CalendarViewModel(settings, clock, calendarService, repository),
+            new CalendarViewModel(settings, clock, calendarService, repository, planning),
             new InboxViewModel(taskService, inboxQuery, clock),
             new ProjectsViewModel(),
             new SettingsViewModel(new FakePaths()),

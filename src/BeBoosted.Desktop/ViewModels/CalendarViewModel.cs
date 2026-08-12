@@ -2,10 +2,13 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Calendar;
+using BeBoosted.Application.Planning;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Calendar;
+using BeBoosted.Domain.Planning;
+using BeBoosted.Domain.Prioritization;
 using BeBoosted.Domain.Scheduling;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -22,18 +25,25 @@ public sealed partial class CalendarViewModel : ViewModelBase
     private readonly IClock _clock;
     private readonly CalendarService _calendar;
     private readonly ITaskRepository _tasks;
+    private readonly PlanningService _planning;
     private readonly bool _initialized;
+
+    private PlanningProposal? _activeDraft;
+    private IReadOnlyList<UnplacedTask>? _lastUnplaced;
+    private readonly List<(PlanningProposalId ProposalId, IReadOnlyList<CalendarBlockId> BlockIds)> _approvalUndoStack = [];
 
     public CalendarViewModel(
         AppSettings settings,
         IClock clock,
         CalendarService calendar,
-        ITaskRepository tasks)
+        ITaskRepository tasks,
+        PlanningService planning)
     {
         _settings = settings;
         _clock = clock;
         _calendar = calendar;
         _tasks = tasks;
+        _planning = planning;
         VisibleDate = clock.Today;
         ViewKind = settings.GetLastCalendarView();
         _initialized = true;
@@ -250,6 +260,173 @@ public sealed partial class CalendarViewModel : ViewModelBase
     [RelayCommand]
     private void GoToToday() => VisibleDate = _clock.Today;
 
+    // ---- Plan drafts ----
+
+    public bool HasDraft => _activeDraft is { State: ProposalState.Draft } draft && draft.PendingBlocks.Any();
+
+    public string DraftTitle => _activeDraft?.Period.Kind == PlanningPeriodKind.Today
+        ? "Plan draft · Today"
+        : "Plan draft · This week";
+
+    public string DraftSummaryText
+    {
+        get
+        {
+            if (_activeDraft is not { } draft)
+            {
+                return string.Empty;
+            }
+
+            var pending = draft.PendingBlocks.ToList();
+            var taskCount = pending.Select(b => b.TaskId).Distinct().Count();
+            var flexible = _lastUnplaced?.Count ?? 0;
+            var text = $"{pending.Count} block{(pending.Count == 1 ? string.Empty : "s")} proposed · "
+                + $"{taskCount} task{(taskCount == 1 ? string.Empty : "s")} scheduled";
+            return flexible > 0
+                ? $"{text} · {flexible} remain{(flexible == 1 ? "s" : string.Empty)} flexible"
+                : text;
+        }
+    }
+
+    public string? DraftLeftoverNote => _lastUnplaced is [{ } first, ..]
+        ? $"{first.Title} stays in Inbox — {first.Reason}."
+        : null;
+
+    public bool HasDraftLeftoverNote => DraftLeftoverNote is not null;
+
+    /// <summary>Creates a fresh draft for the period and shows it on the matching view.</summary>
+    public void CreateDraft(PlanningPeriod period)
+    {
+        var result = _planning.CreateDraft(period);
+        _lastUnplaced = result.Unplaced;
+        ViewKind = period.Kind == PlanningPeriodKind.Week ? CalendarViewKind.Week : CalendarViewKind.Today;
+        VisibleDate = _clock.Today;
+        Reload();
+    }
+
+    [RelayCommand]
+    private void ApproveDraft()
+    {
+        if (_activeDraft is not { } draft)
+        {
+            return;
+        }
+
+        var created = _planning.ApproveAll(draft.Id);
+        if (created.Count == 0)
+        {
+            return;
+        }
+
+        _approvalUndoStack.Add((draft.Id, created));
+        ShowUndoToast(created.Count == 1 ? "Block approved" : $"Plan approved · {created.Count} blocks");
+        _lastUnplaced = null;
+        Reload();
+        DataChanged?.Invoke();
+    }
+
+    public void ApproveProposalBlock(CalendarBlockId blockId)
+    {
+        if (_activeDraft is not { } draft)
+        {
+            return;
+        }
+
+        var created = _planning.ApproveBlock(draft.Id, blockId);
+        _approvalUndoStack.Add((draft.Id, [created]));
+        ShowUndoToast("Block approved");
+        Reload();
+        DataChanged?.Invoke();
+    }
+
+    public void RemoveProposalBlock(CalendarBlockId blockId)
+    {
+        if (_activeDraft is not { } draft)
+        {
+            return;
+        }
+
+        _planning.RemoveBlock(draft.Id, blockId);
+        _lastUnplaced = null;
+        Reload();
+    }
+
+    public void MoveProposalBlock(CalendarBlockId blockId, DateOnly date, TimeOnly start)
+    {
+        if (_activeDraft is not { } draft)
+        {
+            return;
+        }
+
+        _planning.MoveBlock(draft.Id, blockId, date, start);
+        Reload();
+    }
+
+    public void ResizeProposalBlockTo(CalendarBlockId blockId, TimeOnly end)
+    {
+        if (_activeDraft is not { } draft)
+        {
+            return;
+        }
+
+        try
+        {
+            _planning.ResizeBlock(draft.Id, blockId, end);
+        }
+        catch (DomainException)
+        {
+            // Resizing below the minimum keeps the previous size.
+        }
+
+        Reload();
+    }
+
+    [RelayCommand]
+    private void DiscardDraft()
+    {
+        if (_activeDraft is not { } draft)
+        {
+            return;
+        }
+
+        _planning.DiscardDraft(draft.Id);
+        _lastUnplaced = null;
+        Reload();
+    }
+
+    /// <summary>Session-level undo (Ctrl+Z / ⌘Z) for approvals; also driven by the 10s toast.</summary>
+    [RelayCommand]
+    public void UndoLastApproval()
+    {
+        if (_approvalUndoStack.Count == 0)
+        {
+            return;
+        }
+
+        var (proposalId, blockIds) = _approvalUndoStack[^1];
+        _approvalUndoStack.RemoveAt(_approvalUndoStack.Count - 1);
+        _planning.UndoApproval(proposalId, blockIds);
+        IsUndoToastVisible = false;
+        Reload();
+        DataChanged?.Invoke();
+    }
+
+    [ObservableProperty]
+    public partial bool IsUndoToastVisible { get; private set; }
+
+    [ObservableProperty]
+    public partial string UndoToastText { get; private set; } = string.Empty;
+
+    /// <summary>Hides the toast after its 10-second window; Ctrl+Z keeps working afterwards.</summary>
+    public void ExpireUndoToast() => IsUndoToastVisible = false;
+
+    private void ShowUndoToast(string text)
+    {
+        UndoToastText = text;
+        IsUndoToastVisible = false; // retrigger the view timer even for back-to-back approvals
+        IsUndoToastVisible = true;
+    }
+
     // ---- Block operations (called by block VMs and the timeline surface) ----
 
     public void ScheduleTask(TaskId taskId, DateOnly date, TimeOnly start)
@@ -295,27 +472,28 @@ public sealed partial class CalendarViewModel : ViewModelBase
 
     public void NudgeBlock(CalendarBlockViewModel block, int minutes)
     {
-        var start = block.Block.StartTime.AddMinutes(minutes);
-        if (start < TimeOnly.MinValue.AddMinutes(0) || start.ToTimeSpan() + block.Block.Duration > TimeSpan.FromHours(24))
+        var start = block.StartTime.AddMinutes(minutes);
+        var duration = block.EndTime - block.StartTime;
+        if (start.ToTimeSpan() + duration > TimeSpan.FromHours(24) || (minutes < 0 && block.StartTime.ToTimeSpan().TotalMinutes + minutes < 0))
         {
             return;
         }
 
-        MoveBlock(block.Block.Id, block.Date, start);
+        block.MoveTo(block.Date, start);
     }
 
     public void NudgeBlockDays(CalendarBlockViewModel block, int days)
-        => MoveBlock(block.Block.Id, block.Date.AddDays(days), block.Block.StartTime);
+        => block.MoveTo(block.Date.AddDays(days), block.StartTime);
 
     public void ResizeBlockBy(CalendarBlockViewModel block, int minutes)
     {
-        var end = block.Block.EndTime.AddMinutes(minutes);
-        if (end <= block.Block.StartTime || end.ToTimeSpan() >= TimeSpan.FromHours(24))
+        var end = block.EndTime.AddMinutes(minutes);
+        if (end <= block.StartTime || end.ToTimeSpan() >= TimeSpan.FromHours(24))
         {
             return;
         }
 
-        ResizeBlockTo(block.Block.Id, end);
+        block.ResizeTo(end);
     }
 
     // ---- Loading ----
@@ -327,7 +505,16 @@ public sealed partial class CalendarViewModel : ViewModelBase
             : (VisibleDate, VisibleDate);
 
         var occurrences = _calendar.GetOccurrences(from, to);
-        var conflicts = ConflictDetector.FindConflicts(occurrences);
+        _activeDraft = _planning.GetActiveDraft();
+        var pendingProposals = _activeDraft?.PendingBlocks.ToList() ?? [];
+
+        // Conflicts consider both approved occurrences and pending proposals.
+        var timed = occurrences
+            .Select(o => new TimedItem(o.Block.Id, o.Date, o.StartTime, o.EndTime))
+            .Concat(pendingProposals.Select(p => new TimedItem(p.Id, p.Date, p.StartTime, p.EndTime)))
+            .ToList();
+        var conflicts = ConflictDetector.FindConflicts(timed);
+
         var titles = new Dictionary<TaskId, (string Title, bool IsDone)>();
         foreach (var task in _tasks.GetAll())
         {
@@ -347,11 +534,23 @@ public sealed partial class CalendarViewModel : ViewModelBase
                 day.Blocks.Add(CreateBlockViewModel(occurrence, titles, conflicts, today, nowMinutes));
             }
 
+            foreach (var proposal in pendingProposals.Where(p => p.Date == date))
+            {
+                var title = titles.TryGetValue(proposal.TaskId, out var info) ? info.Title : "(deleted task)";
+                day.Blocks.Add(CalendarBlockViewModel.ForProposal(
+                    this, proposal, title, conflicts.Contains(proposal.Id)));
+            }
+
             Days.Add(day);
         }
 
         RefreshReviewNotice(titles);
         OnPropertyChanged(nameof(HeaderMeta));
+        OnPropertyChanged(nameof(HasDraft));
+        OnPropertyChanged(nameof(DraftTitle));
+        OnPropertyChanged(nameof(DraftSummaryText));
+        OnPropertyChanged(nameof(DraftLeftoverNote));
+        OnPropertyChanged(nameof(HasDraftLeftoverNote));
     }
 
     /// <summary>
@@ -384,7 +583,8 @@ public sealed partial class CalendarViewModel : ViewModelBase
         var elapsed = occurrence.Date < today
             || (occurrence.Date == today && block.EndTime.ToTimeSpan().TotalMinutes <= nowMinutes);
         var needsOutcome = block.Kind == BlockKind.TaskBlock && block.Outcome == BlockOutcome.None && elapsed;
-        return new CalendarBlockViewModel(this, occurrence, title, conflicts.Contains(block.Id), isDone, needsOutcome);
+        return CalendarBlockViewModel.ForBlock(
+            this, occurrence, title, conflicts.Contains(block.Id), isDone, needsOutcome);
     }
 
     private void RefreshReviewNotice(Dictionary<TaskId, (string Title, bool IsDone)> titles)
@@ -395,7 +595,7 @@ public sealed partial class CalendarViewModel : ViewModelBase
             var title = block.TaskId is { } taskId && titles.TryGetValue(taskId, out var info)
                 ? info.Title
                 : block.Title ?? "(deleted task)";
-            ReviewBlocks.Add(new CalendarBlockViewModel(
+            ReviewBlocks.Add(CalendarBlockViewModel.ForBlock(
                 this,
                 new BlockOccurrence(block, block.Date),
                 title,

@@ -1,6 +1,8 @@
 using System.Globalization;
 using BeBoosted.Application.Calendar;
+using BeBoosted.Application.Planning;
 using BeBoosted.Application.Settings;
+using BeBoosted.Application.Tasks;
 using BeBoosted.Desktop.Tests.Support;
 using BeBoosted.Desktop.ViewModels;
 
@@ -13,11 +15,17 @@ public sealed class CalendarViewModelTests
         var clock = new FakeClock(TestShell.DesignDate);
         var tasks = new InMemoryTaskRepository();
         var blocks = new InMemoryCalendarBlockRepository();
+        var calendarService = new CalendarService(blocks, tasks, clock);
+        var planning = new PlanningService(
+            new InMemoryPlanningProposalRepository(), blocks,
+            new InboxQueryService(tasks, blocks), new InMemoryPrioritizationRepository(),
+            calendarService, clock);
         return new CalendarViewModel(
             new AppSettings(store ?? new InMemorySettingsStore()),
             clock,
-            new CalendarService(blocks, tasks, clock),
-            tasks);
+            calendarService,
+            tasks,
+            planning);
     }
 
     [Fact]

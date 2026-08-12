@@ -104,7 +104,7 @@ public partial class TimelineSurfaceView : UserControl
 
         var target = DaysArea.GetVisualDescendants()
             .OfType<CalendarBlockView>()
-            .FirstOrDefault(view => (view.DataContext as CalendarBlockViewModel)?.Block.Id == id);
+            .FirstOrDefault(view => (view.DataContext as CalendarBlockViewModel)?.Id == id);
         if (target is not null)
         {
             _refocusBlockId = null;

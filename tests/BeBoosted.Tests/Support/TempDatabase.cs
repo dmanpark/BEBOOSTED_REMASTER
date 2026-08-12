@@ -18,13 +18,22 @@ public sealed class TempDatabase : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        // Clear only this database's pool — ClearAllPools would race with tests
+        // running in parallel on their own database files.
+        using (var connection = new SqliteConnection($"Data Source={DatabasePath}"))
+        {
+            SqliteConnection.ClearPool(connection);
+        }
+
         foreach (var suffix in new[] { string.Empty, "-shm", "-wal" })
         {
-            var file = DatabasePath + suffix;
-            if (File.Exists(file))
+            try
             {
-                File.Delete(file);
+                File.Delete(DatabasePath + suffix);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup of temp files; never fail a test over it.
             }
         }
     }
