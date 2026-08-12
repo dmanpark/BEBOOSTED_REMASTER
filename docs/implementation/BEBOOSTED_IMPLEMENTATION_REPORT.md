@@ -1,21 +1,36 @@
 # BeBoosted Implementation Report
 
-Maintained incrementally: each phase's record is appended immediately after its
-verification gate passes. Sections marked *(in progress)* are completed at final handoff.
+Maintained incrementally: each phase's record was appended immediately after its
+verification gate passed. Phases 1–8 are complete.
 
-## Executive summary *(in progress — updated per phase)*
+## Executive summary
 
-- **Implemented so far:** Phase 1 foundation — solution architecture, design tokens,
-  bundled fonts, application shell with rail navigation, Inbox drawer shell, collapsed
-  composer, SQLite persistence with migrations, settings + window/view restoration,
-  structured logging, and a 48-test suite including headless UI tests.
-- **Current usability:** the application launches on Windows, restores its window and
-  last-used calendar view, and navigates between Calendar/Projects/Settings. Planning
-  features arrive in Phases 2–7.
-- **Windows status:** builds, tests, launches verified on Windows 11 (.NET 10.0.110 SDK).
-- **macOS status:** code kept cross-platform behind interfaces; no macOS execution yet.
-- **Important limitations:** calendar timeline, tasks, Priority Sort, plans, projects,
-  and AI are not yet implemented (scheduled phases).
+- **What is implemented:** the full approved scope across eight phases — the Academic
+  Workbench shell with bundled OFL fonts and design tokens; a universal Inbox with
+  capture, editing, project assignment, and completion; a computed timeline calendar
+  (Today + Week) with local fixed/recurring commitments, drag/resize/keyboard movement,
+  15/5-minute snapping, conflict hatching, current-time indicator, and outcome recording
+  (Done / Needs more time / Didn't happen) with a quiet review notice; adaptive Priority
+  Sort with real ties, period-scoped dense ordinal ranks, tiers, undo, and early exit;
+  deterministic plan drafts rendered as lime-wash dashed proposals with per-block Why
+  evidence, individual/batch approval, a 10-second undo toast, and session Ctrl+Z;
+  Projects with tactile folio Files, four resource types in app-controlled storage,
+  previews, and local indexing; and a vendor-neutral AI layer with a deterministic local
+  provider driving review-first task capture, project-scoped answers with exact
+  citations, plan intents, separate task/calendar permissions, and provenance with
+  Needs-review invalidation. All state is local SQLite behind seven migrations.
+- **Current usability:** a first-time user can capture tasks, rank them, draft and
+  approve a realistic day or week, record outcomes, keep project materials in Files, and
+  ask project-scoped questions — entirely offline, no account.
+- **Windows status:** verified — clean builds with warnings-as-errors, 235 tests
+  (131 + 104) passing, dev and packaged (self-contained win-x64, ~208 MB) launches on
+  clean profiles applying migrations 1–7.
+- **macOS status:** code-ready, not runtime-verified. The solution publishes for
+  osx-arm64 from Windows; platform behavior sits behind `IAppDataPaths`,
+  `IKeymapService`, and `IFileRevealService`. See "macOS readiness".
+- **Important limitations:** no external calendar providers or network AI (by scope —
+  interfaces are in place); document indexing is title/filename-level; recurring
+  commitments edit as a series; chat history is session-only.
 
 ## Source authority
 
@@ -74,9 +89,39 @@ in version order by `MigrationRunner`, each in its own transaction, recorded in
 `schema_migrations`. Migration failure at startup shows a dedicated error window instead
 of crashing.
 
-### Calendar-layout and AI architecture
+### Important interfaces (final)
 
-Arrive in Phases 3 and 7 respectively; sections will be completed then.
+The table above lists Phase-1 interfaces; the full port surface grew to include
+`ITaskRepository`, `ICalendarBlockRepository`, `IPrioritizationRepository`,
+`IPlanningProposalRepository`, `IProjectRepository` / `IProjectFileRepository` /
+`IResourceRepository`, `IResourceStorage`, `IResourceIndexer`, `IAiProvider`,
+`IAiProvenanceRepository`, `IProvenanceInvalidator`, and the Desktop platform ports
+`IKeymapService` and `IFileRevealService`.
+
+### Calendar-layout architecture
+
+Pure, Avalonia-free engine in `Desktop/CalendarEngine`: `TimelineGeometry` maps time↔Y
+for a configurable visible range (6:00–23:00 at 56px/hour) with snapping and clamping;
+`OverlapLayout` clusters transitively-overlapping intervals and greedily reuses freed
+columns. `TimelinePanel` (custom panel) arranges block views from attached
+start/duration minutes — live re-arrange powers drag/resize feedback — while
+`TimelineDecorations` renders hour rules, the current-time indicator, and the dashed
+lime drop preview. One `TimelineSurfaceView` serves Today (one lane) and Week (seven).
+Conflicts come from the domain `ConflictDetector` over blocks *and* pending proposals;
+they are only ever surfaced, never auto-resolved.
+
+### AI/provider architecture
+
+`IAiProvider` (Application) exposes typed operations: task extraction, metadata
+suggestion, and project-scoped Q&A; planning reuses the deterministic domain scheduler.
+Version one registers `LocalHeuristicAiProvider` — fully deterministic and offline — so
+every workflow is testable without an API key; a network provider slots in behind the
+same port. `AiService` enforces the two separate permissions (task capture, calendar
+planning; both review-first by default), stamps every derived item with `AiProvenance`
+(operation + exact source resource ids), persists project answers with citations, and
+flags provenance Needs-review when a source changes or disappears (hooked into resource
+delete/edit). Retrieval is project-scoped by construction: the provider's only search
+surface is `IResourceRepository.SearchInProject`.
 
 ## Design system implementation
 
@@ -672,4 +717,267 @@ frame-08 AI permissions, plus refreshed shell/plan/sort/project screens, both re
 - Chat history is session-only (not persisted) — answers and provenance are persisted.
 
 ### Local commit
-Recorded below after commit.
+`4e18e61` — phase 7: implement AI architecture
+
+---
+
+## Phase 8 — Packaging and macOS readiness
+
+### Intended scope
+Windows packaging and smoke tests, platform-service review, macOS build preparation,
+documentation of remaining macOS validation steps.
+
+### Work completed
+- Self-contained Windows publish (`win-x64`, Release) producing `publish/win-x64`
+  (~208 MB incl. .NET runtime, Avalonia, Skia, bundled fonts).
+- Packaged-app smoke test on a **clean profile** (`BEBOOSTED_DATA_DIR` override): app
+  stays alive, creates its data directory, applies migrations 1–7, writes logs.
+- macOS build preparation verified from Windows: `dotnet publish -c Release -r osx-arm64
+  --self-contained` restores osx-specific natives and produces a 242-file bundle
+  (code-ready; execution requires a Mac — see "macOS readiness").
+- Platform-service audit (see "macOS readiness" table) and this report's final sections.
+
+### Verification
+```
+dotnet format --verify-no-changes                                   # clean
+dotnet build BeBoosted.slnx -warnaserror                            # 0 warnings
+dotnet test BeBoosted.slnx                                          # 131 + 103 passed (1 by-design skip)
+dotnet publish src/BeBoosted.Desktop -c Release -r win-x64 --self-contained -o publish/win-x64
+BEBOOSTED_DATA_DIR=<temp> publish/win-x64/BeBoosted.exe             # alive; migrations 1–7; db + logs created
+dotnet publish src/BeBoosted.Desktop -c Release -r osx-arm64 --self-contained -o publish/osx-arm64
+```
+
+### Local commit
+Recorded in "Git history" below.
+
+---
+
+## Functional inventory
+
+| Workflow | Status | Notes |
+|---|---|---|
+| Application shell (rail, top bars, composer) | Complete | |
+| Today view | Complete | computed timeline, current-time indicator, capacity summary |
+| Week view | Complete | 7 lanes, Monday start, lime today chip |
+| Inbox (drawer, badge, empty state) | Complete | |
+| Task capture / edit / completion | Complete | edit flyout incl. project assignment |
+| Fixed commitments (local, weekly recurrence) | Complete | series-level edits; per-occurrence exceptions deferred |
+| Dragging and resizing | Complete | 15-min snap, Alt = 5-min; drop-from-Inbox with preview slot |
+| Keyboard block movement | Complete | ↑/↓ move, Shift resize, ←/→ day, Enter outcome, Delete remove |
+| Priority Sort (adaptive, ties, undo, early exit) | Complete | deterministic engine, estimated progress strip |
+| Ties and ordinal ranks (Today/Week scoped) | Complete | dense ranks, tier groups, Inbox rank chips |
+| Plan proposals and approval | Complete | per-block + Approve plan, Why evidence, discard |
+| Undo (10 s toast + session Ctrl+Z/⌘Z) | Complete | approval undo stack |
+| Conflicts | Complete | hatching + emphasis on blocks and proposals; user-resolved |
+| Projects (index, sparse detail view) | Complete | rename/delete exist in the service, no UI affordance yet |
+| Project Files (tactile folios) | Complete | flat by construction |
+| Resources (document/link/note/image) | Complete | app-controlled byte storage, previews, open/reveal |
+| Provenance (Used by / Cited in, Needs review) | Complete | populated by AI answers/tasks |
+| AI task-review flow (frame 07) | Complete | review-first, inline title edit, dismiss, Add all |
+| AI permissions (frame 08) | Complete | separate persisted radio groups + External events "Coming later" |
+| Project-scoped Q&A with citations | Complete | citation chips navigate to the exact resource |
+| Settings persistence | Complete | last view, window placement, AI permissions |
+| Window/view restoration | Complete | size/position/maximized with off-screen guard |
+| External calendar connections | Deferred (by scope) | model + provider fields reserved |
+| Network AI provider | Deferred (by scope) | `IAiProvider` port ready |
+
+## Data model and migrations
+
+**Tables** (all STRICT): `settings` (0001); `tasks` (0002 — durations as minutes,
+ISO dates, constraints, recurrence encoding, origin, provenance id, completion);
+`calendar_blocks` (0003 — task FK cascade, wall-clock date/start/end, kind, recurrence,
+reserved provider/external_id/sync_state, outcome); `comparisons` + `priority_ranks`
+(0004 — period-keyed); `planning_proposals` + `proposed_blocks` (0005 — cascade, Why
+evidence columns); `projects` + `project_files` + `resources` (0006 — cascades,
+index_text); `ai_provenance` + `ai_provenance_sources` + `ai_answers` (0007 — cascades).
+
+**Migrations:** forward-only embedded SQL, applied in order inside per-migration
+transactions, recorded in `schema_migrations`; re-runs are no-ops; a failing migration
+rolls back and surfaces a startup error window. Covered by fresh-database, reopen,
+idempotence, ordering, and rollback tests.
+
+**Resource bytes:** `resources/<resource-guid>.<ext>` under the app data root via
+`IResourceStorage`; deletes are best-effort with provenance invalidation.
+
+**Recovery/error behavior:** migration failure → dedicated error window (no crash);
+missing resource bytes → index state Failed; malformed settings values fall back to
+defaults (tested).
+
+**Future synchronization:** repositories are interfaces; blocks carry provider,
+external id, and sync-state fields; ids are GUIDs — a sync backend can attach without
+remodeling.
+
+## Quality report
+
+- **Build:** `dotnet build -warnaserror` clean across all 6 projects (Debug and the
+  Release publishes).
+- **Tests:** 235 total — BeBoosted.Tests 131 passed; BeBoosted.Desktop.Tests 104
+  (103 passed + 1 intentional env-gated screenshot skip). Two parallel-execution flakes
+  were found and fixed during gates (pool-scoped SQLite cleanup; lazy brush creation);
+  suites re-run 3–5× to confirm stability.
+- **Analyzers/format:** `dotnet format --verify-no-changes` clean; xUnit analyzers
+  enforced (warnings-as-errors).
+- **Accessibility/keyboard:** automation names on all icon-only and templated controls;
+  real radio semantics (rail, segmented switch, settings); graphite+lime
+  `:focus-visible` everywhere; Escape/Ctrl+J/Ctrl+Z/e.a. global gestures; full keyboard
+  paths for sort (←/→/T/Backspace/Esc) and block movement; 11px metadata floor.
+- **Visual regression:** headless screenshot suite at 1440×960 and 1280×800 per phase
+  (`docs/implementation/screenshots/phase1..7`), reviewed against the design frames each
+  gate; assertions cover rendered block counts, drawer/task rows, and state text rather
+  than raw pixels.
+- **Performance observations:** startup migration + first render < 1 s on the dev
+  machine; reloads rebuild day collections (hundreds of rows max) without measurable
+  lag; the 60 s now-indicator tick mutates one property (no collection rebuild).
+- **Local-first/offline:** no network calls anywhere at runtime; fonts bundled; clean
+  profiles exercised via `BEBOOSTED_DATA_DIR` in every phase gate.
+- **Security/privacy:** all data under the user's local app-data directory; no
+  telemetry, accounts, or secrets; logs contain operational events only; `.gitignore`
+  excludes databases/logs; imported resource bytes stay in the app-controlled store.
+
+## Visual comparison
+
+| Design frame | Implemented screen | Screenshot (1440×960; 1280×800 alongside) | Intentional differences | Remaining material differences |
+|---|---|---|---|---|
+| 01 Today | Calendar · Today | `phase3/shell-calendar-today-1440x960.png` | 11px metadata floor; "1 h 30 min" duration wording; scrollable 6:00–23:00 range | Today lane spans full width (mock leaves a wide right margin) |
+| 02 Week + Inbox | Calendar · Week + drawer | `phase3/shell-calendar-week-1440x960.png`, `phase2/shell-inbox-drawer-1440x960.png` | selection checkboxes replaced by drawer footer actions (Plan…, Priority Sort) | — |
+| 03 Priority Sort | Sort overlay | `phase4/priority-sort-comparison-1440x960.png` | progress strip is an explicit estimate; Backspace = back | results stage is an addition (mock implies next comparison only) |
+| 04 Plan draft | Draft + summary panel | `phase5/plan-draft-1440x960.png` | "Review on calendar" omitted (calendar is the review surface); Why lives with Approve/Remove in one flyout | — |
+| 05 Project | Project detail | `phase6/project-detail-1440x960.png` | — | — |
+| 06 Project File | File view | `phase6/project-file-1440x960.png` | document preview shows an info card, not fake page lines | — |
+| 07 AI review | Expanded chat | `phase7/chat-task-review-1440x960.png` | per-row edit = inline title editing | background not dimmed behind the panel |
+| 08 AI permissions | Settings | `phase7/shell-settings-1440x960.png` | About card appended | — |
+
+## Windows delivery
+
+- **Prerequisites:** Windows 10/11, .NET SDK 10.0.1xx (dev only; the package is
+  self-contained).
+- **Develop/run:** `dotnet run --project src/BeBoosted.Desktop`
+- **Test:** `dotnet test BeBoosted.slnx`
+- **Publish:** `dotnet publish src/BeBoosted.Desktop -c Release -r win-x64
+  --self-contained -o publish/win-x64`
+- **Output:** `publish/win-x64/BeBoosted.exe` (+ runtime files, ~208 MB).
+- **Smoke-test result:** packaged app verified on a clean profile — window shown,
+  data directory created, migrations 1–7 applied, logs written.
+- **Known Windows limitations:** no installer/MSIX (folder deploy); no code signing;
+  per-monitor DPI mixes approximate window-position restore; display-scaling beyond
+  100% was not manually exercised this run (Avalonia logical units + manifest are in
+  place).
+
+## macOS readiness
+
+**Code-readiness status (all code-ready, none macOS-executed):**
+
+| Boundary | Implementation | State |
+|---|---|---|
+| App data location | `DefaultAppDataPaths` → `~/Library/Application Support/BeBoosted` | code-ready |
+| Keyboard conventions | `DefaultKeymapService` → ⌘-gestures + ⌘J/⌘Z bindings | code-ready |
+| Open/reveal files & URLs | `DefaultFileRevealService` → `open` / `open -R` | code-ready |
+| Fonts/rendering | bundled TTFs + Skia (no GDI dependence) | code-ready |
+| Window restore | Avalonia `Screens` APIs (no Win32 calls) | code-ready |
+| Packaging | none yet (`.app` bundle required) | requires macOS |
+
+**CI/build status:** no CI is configured (local-only repo by design); `dotnet publish
+-r osx-arm64` succeeds from Windows and would be the CI compile gate.
+
+**Commands to run on a Mac:**
+```
+dotnet test BeBoosted.slnx
+dotnet run --project src/BeBoosted.Desktop
+dotnet publish src/BeBoosted.Desktop -c Release -r osx-arm64 --self-contained -o publish/osx-arm64
+```
+
+**Packaging/signing/notarization checklist (requires execution on macOS):**
+1. Wrap the publish output in `BeBoosted.app/Contents/{MacOS,Resources}` with an
+   `Info.plist` (bundle id e.g. `com.beboosted.app`, `LSMinimumSystemVersion`) and icns.
+2. `codesign --deep --options runtime` with a Developer ID certificate; add the
+   hardened-runtime entitlements Avalonia needs (JIT).
+3. `xcrun notarytool submit … --wait`, then `xcrun stapler staple BeBoosted.app`.
+4. Verify Gatekeeper launch, ⌘ shortcuts, menu conventions, Retina rendering,
+   `open -R` reveal, and window restore across displays.
+
+**Cannot be truthfully verified from Windows:** runtime behavior, native menu/keyboard
+feel, Retina rendering, signing/notarization, and `.app` packaging.
+
+## External calendar integration path
+
+- **Adapter surface already present:** `ICalendarBlockRepository` +
+  `CalendarService.GetOccurrences` are the only read paths the UI uses; blocks carry
+  `Provider` (`"local"` today), `ExternalId`, and `SyncState` reserved fields;
+  `CalendarBlock.IsExternal` already refuses edits to non-local events.
+- **Exact future boundary:** implement a provider service that materializes read-only
+  external occurrences (busy time) into the occurrence stream and, optionally, creates
+  BeBoosted-owned events remotely; the settings frame already reserves the "External
+  events" permission group. No UI or scheduling code changes are required to add
+  read-only availability — the scheduler consumes occurrences regardless of provider.
+- **Confirmation:** no live provider was added; nothing performs network calendar I/O.
+
+## Known issues and technical debt
+
+| Severity | Issue | Impact / evidence | Recommended next action |
+|---|---|---|---|
+| Low | Runtime settings-write failure (disk full) would surface as an unhandled exception | theoretical; settings writes are tiny | global exception handler + toast |
+| Low | Blocks < ~20 min render at 18px min height and can visually brush the next block | cosmetic (phase 5 screenshot) | cap min height to actual duration at small scales |
+| Low | Recurring commitments edit as a series (no per-occurrence exceptions) | documented Phase 3 decision | add exception dates table |
+| Low | Project rename/delete lack UI affordances (service + tests exist) | management via UI not possible yet | context menu on project cards |
+| Low | Extracted tasks are not linked to mentioned resources (no sources on extraction provenance) | Needs-review on tasks only via richer providers | let providers return source refs |
+| Info | `CalendarViewModel` is the largest ViewModel (~600 lines incl. draft logic) | readability | extract a PlanDraft sub-ViewModel |
+
+## Deferred scope (intentional exclusions)
+
+Habits/streaks, Constellation and goal maps, dashboard home, project progress/health
+metrics, kanban, social/cohort features, dark mode, mobile layouts, cloud accounts and
+synchronization, live external-calendar connections, network AI providers, and a global
+document library — all excluded per the approved design; none reappear indirectly.
+
+## Reproduction guide (fresh checkout)
+
+```
+git clone <repo> && cd BEBOOSTED_REMASTER
+dotnet restore BeBoosted.slnx
+dotnet build BeBoosted.slnx -warnaserror
+dotnet test BeBoosted.slnx
+dotnet run --project src/BeBoosted.Desktop
+dotnet publish src/BeBoosted.Desktop -c Release -r win-x64 --self-contained -o publish/win-x64
+
+# capture/update visual review screenshots (writes PNGs to the given directory):
+BEBOOSTED_SCREENSHOT_DIR=<abs-dir> dotnet test tests/BeBoosted.Desktop.Tests --filter "FullyQualifiedName~ScreenshotCaptureTests"
+
+# run against a disposable profile:
+BEBOOSTED_DATA_DIR=<temp-dir> ./publish/win-x64/BeBoosted.exe
+```
+
+## Git history
+
+1. `9229787` docs: define BeBoosted remaster design *(pre-existing)*
+2. `a7af431` phase 1: establish Avalonia foundation
+3. `9c37281` phase 2: implement task inbox
+4. `a20e7ed` phase 3: implement calendar engine
+5. `79d2487` phase 4: implement Priority Sort
+6. `bf2c919` phase 5: implement plan drafts
+7. `e7bc35d` phase 6: implement projects and files
+8. `4e18e61` phase 7: implement AI architecture
+9. *(phase 8 commit — recorded post-commit below)*
+
+## Final acceptance checklist
+
+| Requirement | Status |
+|---|---|
+| C# / .NET LTS / Avalonia 12 / MVVM / compiled bindings / SQLite / DI / logging / xUnit + headless | Implemented and verified |
+| No Electron/React/WebView/HTTP server/global state/giant VM/mockup coordinates | Implemented and verified |
+| Single cross-platform solution, platform behavior behind interfaces | Implemented and verified (Windows); macOS code-ready, not platform-verified |
+| Core domain model (Task, Project, File, Resource, CalendarBlock, PlanningProposal, ComparisonDecision, PriorityRank, AIProvenance) | Implemented and verified |
+| Design tokens, bundled OFL fonts, readable minimum type | Implemented and verified |
+| Three primary destinations + Settings utility; drawer Inbox; temporary composer | Implemented and verified |
+| First launch Today; last view restored | Implemented and verified |
+| Timeline engine (ranges, scroll, Today/Week, now-line, overlaps, drag, resize, keyboard, completion, proposals, conflicts, 1440×960 & 1280×800) | Implemented and verified |
+| Priority Sort (pairwise, real ties, period scoping, adaptive, undo, early exit, no fabricated scores, deterministic tests) | Implemented and verified |
+| Plan drafts (lime-dash proposals, move/resize/remove/approve, Approve plan, Why evidence, undoable, fixed events never mutated) | Implemented and verified |
+| Project Files (4 resource types, flat, preview, indexing states, citations, provenance links) | Implemented and verified |
+| AI architecture (vendor-neutral port, deterministic provider, review-by-default, separate calendar permission, AI added labels) | Implemented and verified |
+| Project-scoped retrieval with exact citations and Needs-review invalidation | Implemented and verified |
+| Local-first persistence with migrations for all listed state | Implemented and verified |
+| Accessibility (keyboard, focus, names, radio semantics, hit targets, states, non-color indicators) | Implemented and verified (headless + review; no screen-reader hardware pass) |
+| Testing requirements incl. repository round trips, migrations, provenance invalidation, layout math, VM transitions, screenshots at both sizes | Implemented and verified |
+| Windows packaging + clean-profile smoke test | Implemented and verified |
+| macOS runtime verification | Blocked — requires a Mac (evidence: osx-arm64 publish succeeds; checklist above) |
+| External calendars, network AI | Deferred by scope |
