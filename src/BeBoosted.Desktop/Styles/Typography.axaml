@@ -1,0 +1,25 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    Bundled fonts (all SIL OFL 1.1; license files ship beside the font assets):
+      Instrument Sans — primary UI
+      IBM Plex Mono   — times, durations, ranks, metadata
+      Newsreader (14pt optical size) — Project File titles and reading contexts
+    The design mockups use 8–10px metadata sizes; production enforces an 11px floor.
+  -->
+
+  <FontFamily x:Key="FontUi">avares://BeBoosted/Assets/Fonts/InstrumentSans#Instrument Sans</FontFamily>
+  <FontFamily x:Key="FontMono">avares://BeBoosted/Assets/Fonts/IBMPlexMono#IBM Plex Mono</FontFamily>
+  <FontFamily x:Key="FontSerif">avares://BeBoosted/Assets/Fonts/Newsreader#Newsreader 14pt</FontFamily>
+
+  <x:Double x:Key="TextSizeMeta">11</x:Double>
+  <x:Double x:Key="TextSizeSmall">12</x:Double>
+  <x:Double x:Key="TextSizeBody">13</x:Double>
+  <x:Double x:Key="TextSizeBodyLarge">14</x:Double>
+  <x:Double x:Key="TextSizeHeading">15</x:Double>
+  <x:Double x:Key="TextSizeSectionTitle">22</x:Double>
+  <x:Double x:Key="TextSizeDisplay">24</x:Double>
+  <x:Double x:Key="TextSizePrompt">27</x:Double>
+
+</ResourceDictionary>

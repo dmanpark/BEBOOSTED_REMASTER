@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BeBoosted.Application/BeBoosted.Application.csproj" />
+    <Project Path="src/BeBoosted.Desktop/BeBoosted.Desktop.csproj" />
+    <Project Path="src/BeBoosted.Domain/BeBoosted.Domain.csproj" />
+    <Project Path="src/BeBoosted.Infrastructure/BeBoosted.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BeBoosted.Desktop.Tests/BeBoosted.Desktop.Tests.csproj" />
+    <Project Path="tests/BeBoosted.Tests/BeBoosted.Tests.csproj" />
+  </Folder>
+</Solution>

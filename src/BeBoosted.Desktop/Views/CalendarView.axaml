@@ -1,0 +1,67 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             x:Class="BeBoosted.Desktop.Views.CalendarView"
+             x:DataType="vm:CalendarViewModel">
+
+  <DockPanel>
+
+    <!-- Compact top bar: date navigation and the Today/Week switch -->
+    <Border DockPanel.Dock="Top" Height="52"
+            BorderBrush="{StaticResource BrushRuleDefault}"
+            BorderThickness="0,0,0,1">
+      <DockPanel Margin="18,0" VerticalAlignment="Center">
+        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="12">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <Button Classes="outlineIcon"
+                    Command="{Binding GoPreviousCommand}"
+                    AutomationProperties.Name="Previous">
+              <Path Classes="icon" Data="{StaticResource IconChevronLeft}" Width="12" Height="12"
+                    StrokeThickness="1.5" />
+            </Button>
+            <Button Classes="outlineIcon"
+                    Command="{Binding GoNextCommand}"
+                    AutomationProperties.Name="Next">
+              <Path Classes="icon" Data="{StaticResource IconChevronRight}" Width="12" Height="12"
+                    StrokeThickness="1.5" />
+            </Button>
+          </StackPanel>
+          <Button Height="28" Padding="12,0"
+                  Command="{Binding GoToTodayCommand}"
+                  Content="Today" FontWeight="Medium" Background="Transparent" />
+          <TextBlock Text="{Binding HeaderTitle}"
+                     FontSize="{StaticResource TextSizeHeading}" FontWeight="SemiBold"
+                     VerticalAlignment="Center" />
+          <TextBlock Classes="meta" Text="{Binding HeaderMeta}" VerticalAlignment="Center" />
+        </StackPanel>
+
+        <Border DockPanel.Dock="Right" Classes="segmentGroup" HorizontalAlignment="Right"
+                VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal">
+            <RadioButton Classes="segment" GroupName="calendarView" Content="Today"
+                         IsChecked="{Binding IsTodayView}"
+                         AutomationProperties.Name="Today view" />
+            <Border Width="1" Background="{StaticResource BrushBorderEmphasis}" />
+            <RadioButton Classes="segment" GroupName="calendarView" Content="Week"
+                         IsChecked="{Binding IsWeekView}"
+                         AutomationProperties.Name="Week view" />
+          </StackPanel>
+        </Border>
+      </DockPanel>
+    </Border>
+
+    <!-- Calendar canvas (timeline engine lands in Phase 3) -->
+    <Border Background="{StaticResource BrushPaperWhite}">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+        <TextBlock Text="Nothing scheduled yet"
+                   FontSize="{StaticResource TextSizeHeading}" FontWeight="SemiBold"
+                   HorizontalAlignment="Center" />
+        <TextBlock Classes="secondary"
+                   Text="The timeline is coming in a later build phase."
+                   HorizontalAlignment="Center" />
+      </StackPanel>
+    </Border>
+
+  </DockPanel>
+
+</UserControl>

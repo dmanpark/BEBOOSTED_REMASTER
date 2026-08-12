@@ -1,0 +1,25 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             x:Class="BeBoosted.Desktop.Views.ProjectsView"
+             x:DataType="vm:ProjectsViewModel">
+
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Height="52"
+            BorderBrush="{StaticResource BrushRuleDefault}"
+            BorderThickness="0,0,0,1">
+      <TextBlock Text="Projects" Margin="18,0" VerticalAlignment="Center"
+                 FontWeight="SemiBold" />
+    </Border>
+
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+      <TextBlock Text="No projects yet"
+                 FontSize="{StaticResource TextSizeHeading}" FontWeight="SemiBold"
+                 HorizontalAlignment="Center" />
+      <TextBlock Classes="secondary"
+                 Text="Projects gather related tasks, scheduled blocks, and Files."
+                 HorizontalAlignment="Center" />
+    </StackPanel>
+  </DockPanel>
+
+</UserControl>

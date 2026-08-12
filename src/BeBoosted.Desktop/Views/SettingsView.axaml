@@ -1,0 +1,43 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             x:Class="BeBoosted.Desktop.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Height="52"
+            BorderBrush="{StaticResource BrushRuleDefault}"
+            BorderThickness="0,0,0,1">
+      <TextBlock Text="Settings" Margin="18,0" VerticalAlignment="Center"
+                 FontWeight="SemiBold" />
+    </Border>
+
+    <StackPanel Width="640" HorizontalAlignment="Center" Margin="0,40,0,0" Spacing="26">
+      <StackPanel Spacing="6">
+        <TextBlock Text="Settings" FontSize="{StaticResource TextSizeSectionTitle}"
+                   FontWeight="SemiBold" />
+        <TextBlock Classes="secondary"
+                   Text="BeBoosted stores everything locally. No account, no cloud."
+                   TextWrapping="Wrap" />
+      </StackPanel>
+
+      <Border Background="{StaticResource BrushPaperWhite}"
+              BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+              CornerRadius="{StaticResource RadiusPanel}" Padding="24,20">
+        <StackPanel Spacing="13">
+          <TextBlock Text="About" FontSize="{StaticResource TextSizeHeading}" FontWeight="SemiBold" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Classes="metaLabel" Text="VERSION" Width="110" VerticalAlignment="Center" />
+            <TextBlock Classes="mono" Text="{Binding Version}" FontSize="{StaticResource TextSizeSmall}" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Classes="metaLabel" Text="DATA LOCATION" Width="110" VerticalAlignment="Center" />
+            <TextBlock Classes="mono" Text="{Binding DataDirectory}"
+                       FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </DockPanel>
+
+</UserControl>

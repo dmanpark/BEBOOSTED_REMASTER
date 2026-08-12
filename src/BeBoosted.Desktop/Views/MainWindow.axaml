@@ -1,0 +1,132 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+        x:Class="BeBoosted.Desktop.Views.MainWindow"
+        x:DataType="vm:ShellViewModel"
+        Title="BeBoosted"
+        Width="1440" Height="960"
+        MinWidth="1100" MinHeight="720"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BrushWorkbenchCream}"
+        FontFamily="{StaticResource FontUi}">
+
+  <Window.KeyBindings>
+    <KeyBinding Gesture="Escape" Command="{Binding CloseInboxCommand}" />
+  </Window.KeyBindings>
+
+  <Grid ColumnDefinitions="52,*">
+
+    <!-- Icon rail -->
+    <Border Grid.Column="0"
+            BorderBrush="{StaticResource BrushRuleDefault}"
+            BorderThickness="0,0,1,0">
+      <DockPanel LastChildFill="False" Margin="0,12,0,14">
+        <StackPanel DockPanel.Dock="Top" Spacing="4" HorizontalAlignment="Center">
+          <Border Width="30" Height="30" Background="{StaticResource BrushGraphite}"
+                  Margin="0,0,0,14" HorizontalAlignment="Center">
+            <TextBlock Text="B"
+                       FontFamily="{StaticResource FontMono}"
+                       FontWeight="SemiBold" FontSize="15"
+                       Foreground="{StaticResource BrushHighlighterLime}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+
+          <RadioButton Classes="rail" GroupName="railSections"
+                       IsChecked="{Binding IsCalendarActive, Mode=OneWay}"
+                       Command="{Binding NavigateCommand}"
+                       CommandParameter="{x:Static vm:AppSection.Calendar}"
+                       AutomationProperties.Name="Calendar"
+                       ToolTip.Tip="Calendar">
+            <Path Classes="icon" Data="{StaticResource IconCalendar}" Width="20" Height="20" />
+          </RadioButton>
+
+          <ToggleButton Classes="rail"
+                        IsChecked="{Binding IsInboxOpen}"
+                        AutomationProperties.Name="Inbox"
+                        ToolTip.Tip="Inbox">
+            <Path Classes="icon" Data="{StaticResource IconInbox}" Width="20" Height="20" />
+          </ToggleButton>
+
+          <RadioButton Classes="rail" GroupName="railSections"
+                       IsChecked="{Binding IsProjectsActive, Mode=OneWay}"
+                       Command="{Binding NavigateCommand}"
+                       CommandParameter="{x:Static vm:AppSection.Projects}"
+                       AutomationProperties.Name="Projects"
+                       ToolTip.Tip="Projects">
+            <Path Classes="icon" Data="{StaticResource IconProjects}" Width="20" Height="20" />
+          </RadioButton>
+        </StackPanel>
+
+        <RadioButton DockPanel.Dock="Bottom" Classes="rail" GroupName="railSections"
+                     HorizontalAlignment="Center"
+                     IsChecked="{Binding IsSettingsActive, Mode=OneWay}"
+                     Command="{Binding NavigateCommand}"
+                     CommandParameter="{x:Static vm:AppSection.Settings}"
+                     AutomationProperties.Name="Settings"
+                     ToolTip.Tip="Settings">
+          <Path Classes="icon" Data="{StaticResource IconSettings}" Width="20" Height="20" />
+        </RadioButton>
+      </DockPanel>
+    </Border>
+
+    <!-- Main column -->
+    <Grid Grid.Column="1" RowDefinitions="*,Auto">
+
+      <ContentControl Grid.Row="0" Content="{Binding CurrentSection}" />
+
+      <!-- Inbox drawer: floats over the current surface, never reflows the calendar. -->
+      <Border Grid.Row="0"
+              IsVisible="{Binding IsInboxOpen}"
+              Width="372" MaxHeight="520"
+              HorizontalAlignment="Left" VerticalAlignment="Top"
+              Margin="14,74,0,0"
+              Background="{StaticResource BrushPaperWhite}"
+              BorderBrush="{StaticResource BrushBorderDefault}"
+              BorderThickness="1"
+              CornerRadius="{StaticResource RadiusDrawer}"
+              BoxShadow="{StaticResource ShadowDrawer}">
+        <DockPanel>
+          <DockPanel DockPanel.Dock="Top" Margin="16,13,14,10">
+            <TextBlock Text="Inbox" FontSize="{StaticResource TextSizeHeading}" FontWeight="SemiBold"
+                       VerticalAlignment="Center" />
+            <Button DockPanel.Dock="Right" Classes="icon" HorizontalAlignment="Right"
+                    Command="{Binding CloseInboxCommand}"
+                    AutomationProperties.Name="Close Inbox">
+              <Path Classes="icon" Data="{StaticResource IconClose}" Width="12" Height="12"
+                    Stroke="{StaticResource BrushPencilGray}" StrokeThickness="1.5" />
+            </Button>
+          </DockPanel>
+          <StackPanel Margin="16,18,16,24" Spacing="6">
+            <TextBlock Text="Your Inbox is empty." FontWeight="Medium" />
+            <TextBlock Classes="secondary" Text="Captured tasks will wait here until they are planned."
+                       FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap" />
+          </StackPanel>
+        </DockPanel>
+      </Border>
+
+      <!-- Collapsed chatbot composer (inert until the AI phase; kept visible per the design). -->
+      <Border Grid.Row="1" Margin="16,10,16,14"
+              Height="44"
+              Background="{StaticResource BrushPaperWhite}"
+              BorderBrush="{StaticResource BrushBorderDefault}"
+              BorderThickness="1"
+              CornerRadius="{StaticResource RadiusPanel}"
+              BoxShadow="{StaticResource ShadowSubtle}"
+              AutomationProperties.Name="BeBoosted composer (not yet available)">
+        <DockPanel Margin="14,0" VerticalAlignment="Center">
+          <Border DockPanel.Dock="Left" Width="22" Height="22"
+                  Background="{StaticResource BrushHighlighterLime}"
+                  CornerRadius="5" VerticalAlignment="Center">
+            <Path Classes="icon" Data="{StaticResource IconSpark}" Width="12" Height="12"
+                  StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <TextBlock Margin="11,0,0,0" VerticalAlignment="Center"
+                     Classes="secondary"
+                     Text="Tell BeBoosted what you need…" />
+        </DockPanel>
+      </Border>
+
+    </Grid>
+  </Grid>
+
+</Window>

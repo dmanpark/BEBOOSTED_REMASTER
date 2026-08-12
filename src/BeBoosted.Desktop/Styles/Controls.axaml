@@ -1,0 +1,223 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- ======================= Base text ======================= -->
+
+  <Style Selector="TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource BrushGraphite}" />
+    <Setter Property="FontSize" Value="{DynamicResource TextSizeBody}" />
+  </Style>
+
+  <Style Selector="TextBlock.secondary">
+    <Setter Property="Foreground" Value="{DynamicResource BrushPencilGray}" />
+  </Style>
+
+  <Style Selector="TextBlock.mono">
+    <Setter Property="FontFamily" Value="{DynamicResource FontMono}" />
+  </Style>
+
+  <!-- Mono metadata: the mockups draw these at 9–10px; production floor is 11px. -->
+  <Style Selector="TextBlock.meta">
+    <Setter Property="FontFamily" Value="{DynamicResource FontMono}" />
+    <Setter Property="FontSize" Value="{DynamicResource TextSizeMeta}" />
+    <Setter Property="Foreground" Value="{DynamicResource BrushPencilGray}" />
+  </Style>
+
+  <Style Selector="TextBlock.metaLabel">
+    <Setter Property="FontFamily" Value="{DynamicResource FontMono}" />
+    <Setter Property="FontSize" Value="{DynamicResource TextSizeMeta}" />
+    <Setter Property="Foreground" Value="{DynamicResource BrushPencilGray}" />
+    <Setter Property="LetterSpacing" Value="0.8" />
+  </Style>
+
+  <Style Selector="TextBlock.serif">
+    <Setter Property="FontFamily" Value="{DynamicResource FontSerif}" />
+  </Style>
+
+  <!-- ======================= Buttons ======================= -->
+
+  <Style Selector="Button">
+    <Setter Property="Background" Value="{DynamicResource BrushPaperWhite}" />
+    <Setter Property="Foreground" Value="{DynamicResource BrushGraphite}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderEmphasis}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusButton}" />
+    <Setter Property="Padding" Value="14,0" />
+    <Setter Property="Height" Value="32" />
+    <Setter Property="FontSize" Value="{DynamicResource TextSizeBody}" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_ButtonBorder"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="{TemplateBinding CornerRadius}">
+          <ContentPresenter Name="PART_ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            Padding="{TemplateBinding Padding}"
+                            HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="Button:pointerover /template/ Border#PART_ButtonBorder">
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+  </Style>
+
+  <Style Selector="Button:focus-visible /template/ Border#PART_ButtonBorder">
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    <Setter Property="BoxShadow" Value="0 0 0 3 #8CC8F24A" />
+  </Style>
+
+  <Style Selector="Button:disabled">
+    <Setter Property="Foreground" Value="{DynamicResource BrushGraphite55}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushRuleMedium}" />
+    <Setter Property="Cursor" Value="Arrow" />
+  </Style>
+
+  <Style Selector="Button.primary">
+    <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Padding" Value="16,0" />
+  </Style>
+
+  <Style Selector="Button.icon">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Width" Value="28" />
+    <Setter Property="Height" Value="28" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusControl}" />
+  </Style>
+
+  <Style Selector="Button.icon:pointerover /template/ Border#PART_ButtonBorder">
+    <Setter Property="Background" Value="{DynamicResource BrushHoverWash}" />
+  </Style>
+
+  <Style Selector="Button.outlineIcon">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Width" Value="28" />
+    <Setter Property="Height" Value="28" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusControl}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderStrong}" />
+  </Style>
+
+  <Style Selector="Button.outlineIcon:pointerover /template/ Border#PART_ButtonBorder">
+    <Setter Property="Background" Value="{DynamicResource BrushPaperWhite}" />
+  </Style>
+
+  <Style Selector="Button.link">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Height" Value="NaN" />
+    <Setter Property="Padding" Value="2" />
+  </Style>
+
+  <!-- ======================= Icon rail ======================= -->
+
+  <Style Selector=":is(ToggleButton).rail">
+    <Setter Property="Width" Value="36" />
+    <Setter Property="Height" Value="36" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusButton}" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_RailBorder"
+                Background="{TemplateBinding Background}"
+                CornerRadius="{TemplateBinding CornerRadius}">
+          <ContentPresenter Content="{TemplateBinding Content}"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector=":is(ToggleButton).rail:pointerover /template/ Border#PART_RailBorder">
+    <Setter Property="Background" Value="{DynamicResource BrushHoverWash}" />
+  </Style>
+
+  <Style Selector=":is(ToggleButton).rail:checked /template/ Border#PART_RailBorder">
+    <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
+  </Style>
+
+  <Style Selector=":is(ToggleButton).rail:focus-visible /template/ Border#PART_RailBorder">
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    <Setter Property="BorderThickness" Value="2" />
+    <Setter Property="BoxShadow" Value="0 0 0 3 #8CC8F24A" />
+  </Style>
+
+  <!-- ======================= Segmented switch (Today/Week) ======================= -->
+
+  <Style Selector="Border.segmentGroup">
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderEmphasis}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusButton}" />
+    <Setter Property="ClipToBounds" Value="True" />
+  </Style>
+
+  <Style Selector="RadioButton.segment">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource BrushGraphite}" />
+    <Setter Property="Padding" Value="16,5" />
+    <Setter Property="FontSize" Value="{DynamicResource TextSizeBody}" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_SegmentBorder" Background="{TemplateBinding Background}">
+          <ContentPresenter Content="{TemplateBinding Content}"
+                            Padding="{TemplateBinding Padding}"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="RadioButton.segment:pointerover /template/ Border#PART_SegmentBorder">
+    <Setter Property="Background" Value="{DynamicResource BrushPaperWhite}" />
+  </Style>
+
+  <Style Selector="RadioButton.segment:checked">
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="RadioButton.segment:checked /template/ Border#PART_SegmentBorder">
+    <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
+  </Style>
+
+  <Style Selector="RadioButton.segment:focus-visible /template/ Border#PART_SegmentBorder">
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    <Setter Property="BorderThickness" Value="2" />
+  </Style>
+
+  <!-- ======================= Icon path default ======================= -->
+
+  <Style Selector="Path.icon">
+    <Setter Property="Stroke" Value="{DynamicResource BrushGraphite}" />
+    <Setter Property="StrokeThickness" Value="1.6" />
+    <Setter Property="Fill" Value="{x:Null}" />
+    <Setter Property="StrokeJoin" Value="Round" />
+    <Setter Property="StrokeLineCap" Value="Round" />
+  </Style>
+
+  <!-- ======================= Tooltips ======================= -->
+
+  <Style Selector="ToolTip">
+    <Setter Property="Background" Value="{DynamicResource BrushGraphite}" />
+    <Setter Property="Foreground" Value="{DynamicResource BrushPaperWhite}" />
+    <Setter Property="FontSize" Value="{DynamicResource TextSizeSmall}" />
+    <Setter Property="Padding" Value="8,4" />
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusSmall}" />
+  </Style>
+
+</Styles>

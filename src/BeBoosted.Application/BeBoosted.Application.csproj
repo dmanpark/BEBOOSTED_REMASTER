@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\BeBoosted.Domain\BeBoosted.Domain.csproj" />
+  </ItemGroup>
+
+</Project>
