@@ -2,6 +2,7 @@ using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Planning;
 using BeBoosted.Application.Prioritization;
+using BeBoosted.Application.Projects;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Desktop.ViewModels;
@@ -9,6 +10,7 @@ using BeBoosted.Domain;
 using BeBoosted.Domain.Calendar;
 using BeBoosted.Domain.Planning;
 using BeBoosted.Domain.Prioritization;
+using BeBoosted.Domain.Projects;
 using BeBoosted.Domain.Tasks;
 
 namespace BeBoosted.Desktop.Tests.Support;
@@ -132,6 +134,110 @@ public sealed class InMemoryPrioritizationRepository : IPrioritizationRepository
         => _ranks.GetValueOrDefault(periodKey, []);
 }
 
+public sealed class InMemoryProjectRepository : IProjectRepository
+{
+    private readonly Dictionary<ProjectId, Project> _projects = [];
+
+    public void Add(Project project) => _projects[project.Id] = project;
+
+    public void Update(Project project) => _projects[project.Id] = project;
+
+    public void Delete(ProjectId id) => _projects.Remove(id);
+
+    public Project? GetById(ProjectId id) => _projects.GetValueOrDefault(id);
+
+    public IReadOnlyList<Project> GetAll() => _projects.Values.OrderBy(p => p.CreatedAt).ToList();
+}
+
+public sealed class InMemoryProjectFileRepository : IProjectFileRepository
+{
+    private readonly Dictionary<ProjectFileId, ProjectFile> _files = [];
+
+    public void Add(ProjectFile file) => _files[file.Id] = file;
+
+    public void Update(ProjectFile file) => _files[file.Id] = file;
+
+    public void Delete(ProjectFileId id) => _files.Remove(id);
+
+    public ProjectFile? GetById(ProjectFileId id) => _files.GetValueOrDefault(id);
+
+    public IReadOnlyList<ProjectFile> GetForProject(ProjectId projectId)
+        => _files.Values.Where(f => f.ProjectId == projectId).OrderBy(f => f.CreatedAt).ToList();
+}
+
+public sealed class InMemoryResourceRepository : IResourceRepository
+{
+    private readonly Dictionary<ResourceId, Resource> _resources = [];
+    private readonly Dictionary<ResourceId, string> _indexText = [];
+
+    public void Add(Resource resource) => _resources[resource.Id] = resource;
+
+    public void Update(Resource resource) => _resources[resource.Id] = resource;
+
+    public void Delete(ResourceId id)
+    {
+        _resources.Remove(id);
+        _indexText.Remove(id);
+    }
+
+    public Resource? GetById(ResourceId id) => _resources.GetValueOrDefault(id);
+
+    public IReadOnlyList<Resource> GetForFile(ProjectFileId fileId)
+        => _resources.Values.Where(r => r.FileId == fileId).OrderBy(r => r.AddedAt).ToList();
+
+    public int CountForFile(ProjectFileId fileId) => GetForFile(fileId).Count;
+
+    public void SetIndexText(ResourceId id, string text) => _indexText[id] = text;
+
+    public string? GetIndexText(ResourceId id) => _indexText.GetValueOrDefault(id);
+
+    public IReadOnlyList<Resource> SearchInProject(ProjectId projectId, string query)
+        => _resources.Values
+            .Where(r => _indexText.GetValueOrDefault(r.Id, string.Empty)
+                    .Contains(query, StringComparison.OrdinalIgnoreCase)
+                || r.Title.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(r => r.AddedAt)
+            .ToList();
+}
+
+public sealed class FakeResourceStorage : IResourceStorage
+{
+    private readonly HashSet<string> _stored = [];
+
+    public string Store(ResourceId id, string sourcePath)
+    {
+        var storedPath = id + Path.GetExtension(sourcePath);
+        _stored.Add(storedPath);
+        return storedPath;
+    }
+
+    public string ResolvePath(string storedPath) => Path.Combine("fake-resources", storedPath);
+
+    public bool Exists(string storedPath) => _stored.Contains(storedPath);
+
+    public void Delete(string storedPath) => _stored.Remove(storedPath);
+}
+
+public sealed class FakeIndexer(IResourceRepository resources, IClock clock) : IResourceIndexer
+{
+    public void Index(Resource resource)
+    {
+        resources.SetIndexText(resource.Id, $"{resource.Title}\n{resource.Content}\n{resource.Url}");
+        resource.MarkIndexed(clock.Now);
+    }
+}
+
+public sealed class FakeFileReveal : BeBoosted.Desktop.Platform.IFileRevealService
+{
+    public List<string> Opened { get; } = [];
+
+    public void OpenFile(string path) => Opened.Add(path);
+
+    public void RevealInFolder(string path) => Opened.Add(path);
+
+    public void OpenUrl(string url) => Opened.Add(url);
+}
+
 public sealed class FakeClock(DateOnly today) : IClock
 {
     public DateTimeOffset Now => new(today.ToDateTime(new TimeOnly(14, 10)));
@@ -148,6 +254,7 @@ public static class TestShell
         InMemorySettingsStore? store = null,
         InMemoryTaskRepository? tasks = null,
         InMemoryCalendarBlockRepository? blocks = null,
+        InMemoryProjectRepository? projects = null,
         DateOnly? today = null)
     {
         var settings = new AppSettings(store ?? new InMemorySettingsStore());
@@ -162,10 +269,18 @@ public static class TestShell
         var planning = new PlanningService(
             new InMemoryPlanningProposalRepository(), blockRepository,
             inboxQuery, prioritization, calendarService, clock);
+        var projectRepo = projects ?? new InMemoryProjectRepository();
+        var fileRepo = new InMemoryProjectFileRepository();
+        var resourceRepo = new InMemoryResourceRepository();
+        var storage = new FakeResourceStorage();
+        var projectService = new ProjectService(
+            projectRepo, fileRepo, resourceRepo, storage,
+            new FakeIndexer(resourceRepo, clock), repository, blockRepository, clock);
         return new ShellViewModel(
             new CalendarViewModel(settings, clock, calendarService, repository, planning),
-            new InboxViewModel(taskService, inboxQuery, clock),
-            new ProjectsViewModel(),
+            new InboxViewModel(taskService, inboxQuery, projectRepo, clock),
+            new ProjectsViewModel(
+                projectService, projectRepo, fileRepo, taskService, new FakeFileReveal()),
             new SettingsViewModel(new FakePaths()),
             prioritySort,
             clock);

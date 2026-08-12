@@ -4,22 +4,524 @@
              x:Class="BeBoosted.Desktop.Views.ProjectsView"
              x:DataType="vm:ProjectsViewModel">
 
-  <DockPanel>
-    <Border DockPanel.Dock="Top" Height="52"
-            BorderBrush="{StaticResource BrushRuleDefault}"
-            BorderThickness="0,0,0,1">
-      <TextBlock Text="Projects" Margin="18,0" VerticalAlignment="Center"
-                 FontWeight="SemiBold" />
-    </Border>
+  <UserControl.Styles>
+    <!-- The tactile folio: the product's one physical motif -->
+    <Style Selector="Button.folio">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Height" Value="NaN" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    </Style>
+  </UserControl.Styles>
 
-    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
-      <TextBlock Text="No projects yet"
-                 FontSize="{StaticResource TextSizeHeading}" FontWeight="SemiBold"
-                 HorizontalAlignment="Center" />
-      <TextBlock Classes="secondary"
-                 Text="Projects gather related tasks, scheduled blocks, and Files."
-                 HorizontalAlignment="Center" />
-    </StackPanel>
-  </DockPanel>
+  <Panel>
+
+    <!-- ================= Projects index ================= -->
+    <DockPanel IsVisible="{Binding IsListVisible}">
+      <Border DockPanel.Dock="Top" Height="52"
+              BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,0,0,1">
+        <DockPanel Margin="18,0" VerticalAlignment="Center">
+          <TextBlock Text="Projects" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <Button DockPanel.Dock="Right" Height="28" Padding="12,0" Content="New project"
+                  HorizontalAlignment="Right"
+                  AutomationProperties.Name="Create a new project">
+            <Button.Flyout>
+              <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+                <StackPanel Width="264" Spacing="10" Margin="4">
+                  <TextBlock Text="New project" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding NewProjectName}" PlaceholderText="Name"
+                           AutomationProperties.Name="Project name" />
+                  <Button Classes="primary" Content="Create" HorizontalAlignment="Right"
+                          Click="OnCreateProjectClick" />
+                </StackPanel>
+              </Flyout>
+            </Button.Flyout>
+          </Button>
+        </DockPanel>
+      </Border>
+
+      <StackPanel IsVisible="{Binding !HasProjects}"
+                  HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+        <TextBlock Text="No projects yet"
+                   FontSize="{StaticResource TextSizeHeading}" FontWeight="SemiBold"
+                   HorizontalAlignment="Center" />
+        <TextBlock Classes="secondary"
+                   Text="Projects gather related tasks, scheduled blocks, and Files."
+                   HorizontalAlignment="Center" />
+      </StackPanel>
+
+      <ScrollViewer IsVisible="{Binding HasProjects}">
+        <ItemsControl ItemsSource="{Binding Projects}" Margin="48,34">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <WrapPanel />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ProjectCardViewModel">
+              <Button Command="{Binding OpenCommand}" Height="NaN" Margin="0,0,20,20"
+                      Padding="20,16" Width="280" HorizontalContentAlignment="Stretch"
+                      AutomationProperties.Name="{Binding Name}">
+                <StackPanel Spacing="8">
+                  <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Border Width="10" Height="22" CornerRadius="2"
+                            Background="{Binding AccentBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Name}" FontSize="17" FontWeight="SemiBold"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                  <TextBlock Classes="meta" Text="{Binding MetaText}" />
+                </StackPanel>
+              </Button>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </DockPanel>
+
+    <!-- ================= Project detail (frame 05) ================= -->
+    <ContentControl IsVisible="{Binding IsDetailVisible}" Content="{Binding Detail}">
+      <ContentControl.ContentTemplate>
+        <DataTemplate x:DataType="vm:ProjectDetailViewModel">
+    <DockPanel>
+      <Border DockPanel.Dock="Top" Height="52"
+              BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,0,0,1">
+        <DockPanel Margin="18,0" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Button Classes="link" Click="OnBreadcrumbProjectsClick"
+                    AutomationProperties.Name="Back to Projects">
+              <TextBlock Classes="secondary" Text="Projects" />
+            </Button>
+            <Path Classes="icon" Data="{StaticResource IconChevronRight}" Width="10" Height="10"
+                  StrokeThickness="1.5" Stroke="{StaticResource BrushPencilGray}"
+                  VerticalAlignment="Center" />
+            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </StackPanel>
+          <Button DockPanel.Dock="Right" Height="30" Padding="14,0" HorizontalAlignment="Right"
+                  IsEnabled="False"
+                  ToolTip.Tip="The assistant arrives in a later build phase"
+                  AutomationProperties.Name="Ask BeBoosted about this project (not yet available)">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Border Width="14" Height="14" Background="{StaticResource BrushHighlighterLime}"
+                      CornerRadius="3">
+                <Path Classes="icon" Data="{StaticResource IconSpark}" Width="8" Height="8"
+                      StrokeThickness="1.6" />
+              </Border>
+              <TextBlock Text="Ask BeBoosted about this project" />
+            </StackPanel>
+          </Button>
+        </DockPanel>
+      </Border>
+
+      <ScrollViewer>
+        <Grid ColumnDefinitions="*,56,420" Margin="48,34,48,24">
+
+          <!-- left: tasks and blocks -->
+          <StackPanel Grid.Column="0" Spacing="30">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Border Width="10" Height="26" CornerRadius="2" Background="{Binding AccentBrush}" />
+              <TextBlock Text="{Binding Name}" FontSize="{StaticResource TextSizeDisplay}"
+                         FontWeight="SemiBold" LetterSpacing="-0.2" />
+            </StackPanel>
+
+            <StackPanel Spacing="2">
+              <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="0,0,0,1"
+                      Padding="0,0,0,8">
+                <TextBlock Classes="metaLabel" Text="OPEN TASKS" />
+              </Border>
+              <TextBlock Classes="secondary" Text="Nothing open right now."
+                         Margin="4,10" IsVisible="{Binding !HasOpenTasks}" />
+              <ItemsControl ItemsSource="{Binding OpenTasks}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ProjectTaskRowViewModel">
+                    <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
+                            Padding="4,11">
+                      <DockPanel>
+                        <Button DockPanel.Dock="Left" Classes="icon" Width="18" Height="18"
+                                CornerRadius="9" BorderThickness="1.5"
+                                BorderBrush="{StaticResource BrushBorderStrong}"
+                                Command="{Binding CompleteCommand}"
+                                AutomationProperties.Name="{Binding Title, StringFormat='Mark {0} done'}"
+                                ToolTip.Tip="Mark done" VerticalAlignment="Center" />
+                        <TextBlock DockPanel.Dock="Right" Classes="meta" Text="{Binding MetaText}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Title}" FontWeight="Medium" Margin="11,0"
+                                   FontSize="{StaticResource TextSizeBodyLarge}"
+                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                      </DockPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <ItemsControl ItemsSource="{Binding RecentlyCompleted}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ProjectTaskRowViewModel">
+                    <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
+                            Padding="4,11" Opacity="0.55">
+                      <DockPanel>
+                        <Border DockPanel.Dock="Left" Width="18" Height="18" CornerRadius="9"
+                                Background="{StaticResource BrushHighlighterLime}"
+                                BorderBrush="{StaticResource BrushGraphite}" BorderThickness="1.5"
+                                VerticalAlignment="Center">
+                          <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
+                                StrokeThickness="1.8" />
+                        </Border>
+                        <TextBlock DockPanel.Dock="Right" Classes="meta" Text="{Binding MetaText}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Title}" Margin="11,0"
+                                   FontSize="{StaticResource TextSizeBodyLarge}"
+                                   TextDecorations="Strikethrough"
+                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                      </DockPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+
+            <StackPanel Spacing="2">
+              <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="0,0,0,1"
+                      Padding="0,0,0,8">
+                <TextBlock Classes="metaLabel" Text="UPCOMING BLOCKS" />
+              </Border>
+              <TextBlock Classes="secondary" Text="Nothing scheduled yet."
+                         Margin="4,10" IsVisible="{Binding !HasUpcomingBlocks}" />
+              <ItemsControl ItemsSource="{Binding UpcomingBlocks}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:UpcomingBlockRowViewModel">
+                    <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
+                            Padding="4,11">
+                      <DockPanel>
+                        <TextBlock DockPanel.Dock="Left" Classes="mono" Text="{Binding WhenText}"
+                                   FontSize="{StaticResource TextSizeMeta}" Width="110"
+                                   VerticalAlignment="Center" />
+                        <Border DockPanel.Dock="Left" Width="3" Height="16" CornerRadius="2"
+                                Background="{Binding AccentBrush}" VerticalAlignment="Center" />
+                        <TextBlock DockPanel.Dock="Right" Classes="meta" Text="{Binding DurationText}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Title}" FontWeight="Medium" Margin="11,0"
+                                   FontSize="{StaticResource TextSizeBodyLarge}"
+                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                      </DockPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </StackPanel>
+
+          <!-- right: File shelf -->
+          <StackPanel Grid.Column="2" Spacing="18" Margin="0,6,0,0">
+            <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="0,0,0,1"
+                    Padding="0,0,0,8">
+              <TextBlock Classes="metaLabel" Text="FILES" />
+            </Border>
+            <TextBlock Classes="secondary" Margin="0,4,0,0" TextWrapping="Wrap"
+                       Text="Files keep supporting documents, links, notes, and evidence beside this project."
+                       IsVisible="{Binding !HasFiles}" />
+            <ItemsControl ItemsSource="{Binding Files}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:FolioCardViewModel">
+                  <Button Classes="folio" Command="{Binding OpenCommand}" Margin="0,0,26,26"
+                          AutomationProperties.Name="{Binding Title, StringFormat='Open File {0}'}">
+                    <Panel Width="188">
+                      <!-- layered underlay -->
+                      <Border Background="{StaticResource BrushFolioUnderlay}"
+                              BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                              CornerRadius="{StaticResource RadiusControl}"
+                              Margin="5,34,-5,-6" />
+                      <StackPanel>
+                        <!-- tab -->
+                        <Border Width="76" Height="24" HorizontalAlignment="Left" Margin="10,0,0,0"
+                                Background="{StaticResource BrushPaperWhite}"
+                                BorderBrush="{StaticResource BrushBorderDefault}"
+                                BorderThickness="1,1,1,0" CornerRadius="6,6,0,0">
+                          <StackPanel Orientation="Horizontal" Spacing="6" Margin="10,0"
+                                      VerticalAlignment="Center">
+                            <Border Width="8" Height="8" CornerRadius="2"
+                                    Background="{Binding AccentBrush}" />
+                            <TextBlock Classes="metaLabel" Text="FILE" />
+                          </StackPanel>
+                        </Border>
+                        <!-- folio body -->
+                        <Border Background="{StaticResource BrushPaperWhite}"
+                                BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusControl}"
+                                BoxShadow="{StaticResource ShadowFolio}"
+                                Padding="16,18,16,16" MinHeight="96">
+                          <StackPanel Spacing="8">
+                            <TextBlock Classes="serif" Text="{Binding Title}" FontSize="19"
+                                       FontWeight="Medium" LineHeight="22" TextWrapping="Wrap" />
+                            <TextBlock Classes="secondary" Text="{Binding Description}"
+                                       FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap"
+                                       IsVisible="{Binding HasDescription}" />
+                            <TextBlock Classes="meta" Text="{Binding CountText}" Margin="0,4,0,0" />
+                          </StackPanel>
+                        </Border>
+                      </StackPanel>
+                    </Panel>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Button Classes="link" HorizontalAlignment="Left"
+                    AutomationProperties.Name="Create a new File">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Path Classes="icon" Data="{StaticResource IconPlus}" Width="12" Height="12"
+                      StrokeThickness="1.5" Stroke="{StaticResource BrushPencilGray}" />
+                <TextBlock Classes="secondary" Text="New File" />
+              </StackPanel>
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedLeft" ShowMode="Standard">
+                  <StackPanel Width="264" Spacing="10" Margin="4">
+                    <TextBlock Text="New File" FontWeight="SemiBold" />
+                    <TextBox Text="{Binding NewFileTitle}" PlaceholderText="Title"
+                             AutomationProperties.Name="File title" />
+                    <TextBox Text="{Binding NewFileDescription}" PlaceholderText="Description (optional)"
+                             AutomationProperties.Name="File description" />
+                    <Button Classes="primary" Content="Create" HorizontalAlignment="Right"
+                            Click="OnCreateFileClick" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+          </StackPanel>
+        </Grid>
+      </ScrollViewer>
+    </DockPanel>
+        </DataTemplate>
+      </ContentControl.ContentTemplate>
+    </ContentControl>
+
+    <!-- ================= Open File (frame 06) ================= -->
+    <ContentControl IsVisible="{Binding IsFileVisible}" Content="{Binding FileDetail}">
+      <ContentControl.ContentTemplate>
+        <DataTemplate x:DataType="vm:FileDetailViewModel">
+    <DockPanel>
+      <Border DockPanel.Dock="Top" Height="52"
+              BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,0,0,1">
+        <DockPanel Margin="18,0" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Button Classes="link" Click="OnBreadcrumbProjectsClick"
+                    AutomationProperties.Name="Back to Projects">
+              <TextBlock Classes="secondary" Text="Projects" />
+            </Button>
+            <Path Classes="icon" Data="{StaticResource IconChevronRight}" Width="10" Height="10"
+                  StrokeThickness="1.5" Stroke="{StaticResource BrushPencilGray}"
+                  VerticalAlignment="Center" />
+            <Button Classes="link" Command="{Binding BackCommand}"
+                    AutomationProperties.Name="{Binding Project.Name, StringFormat='Back to {0}'}">
+              <TextBlock Classes="secondary" Text="{Binding Project.Name}" />
+            </Button>
+            <Path Classes="icon" Data="{StaticResource IconChevronRight}" Width="10" Height="10"
+                  StrokeThickness="1.5" Stroke="{StaticResource BrushPencilGray}"
+                  VerticalAlignment="Center" />
+            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </StackPanel>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8"
+                      HorizontalAlignment="Right">
+            <Button Height="30" Padding="12,0" Content="Document" Click="OnAddDocumentClick"
+                    AutomationProperties.Name="Add a document" />
+            <Button Height="30" Padding="12,0" Content="Link"
+                    AutomationProperties.Name="Add a link">
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+                  <StackPanel Width="280" Spacing="10" Margin="4">
+                    <TextBlock Text="Add link" FontWeight="SemiBold" />
+                    <TextBox Text="{Binding NewLinkUrl}" PlaceholderText="https://…"
+                             AutomationProperties.Name="Link URL" />
+                    <TextBox Text="{Binding NewLinkTitle}" PlaceholderText="Title (optional)"
+                             AutomationProperties.Name="Link title" />
+                    <Button Classes="primary" Content="Add" HorizontalAlignment="Right"
+                            Click="OnAddLinkClick" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+            <Button Height="30" Padding="12,0" Content="Note"
+                    AutomationProperties.Name="Add a note">
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+                  <StackPanel Width="300" Spacing="10" Margin="4">
+                    <TextBlock Text="Add note" FontWeight="SemiBold" />
+                    <TextBox Text="{Binding NewNoteTitle}" PlaceholderText="Title"
+                             AutomationProperties.Name="Note title" />
+                    <TextBox Text="{Binding NewNoteContent}" PlaceholderText="Write your note…"
+                             AcceptsReturn="True" MinHeight="88" TextWrapping="Wrap"
+                             AutomationProperties.Name="Note content" />
+                    <Button Classes="primary" Content="Add" HorizontalAlignment="Right"
+                            Click="OnAddNoteClick" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+            <Button Height="30" Padding="12,0" Content="Image" Click="OnAddImageClick"
+                    AutomationProperties.Name="Add an image" />
+          </StackPanel>
+        </DockPanel>
+      </Border>
+
+      <Grid Margin="48,30,48,20" RowDefinitions="Auto,*">
+        <!-- folio tab -->
+        <Border Grid.Row="0" Height="30" HorizontalAlignment="Left" Margin="14,0,0,0"
+                Background="{StaticResource BrushPaperWhite}"
+                BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1,1,1,0"
+                CornerRadius="7,7,0,0" ZIndex="2">
+          <StackPanel Orientation="Horizontal" Spacing="8" Margin="14,0" VerticalAlignment="Center">
+            <Border Width="9" Height="9" CornerRadius="2" Background="{Binding AccentBrush}" />
+            <TextBlock Classes="metaLabel" Text="{Binding TabLabel}" />
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Row="1" Margin="0,-1,0,0"
+                Background="{StaticResource BrushPaperWhite}"
+                BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                CornerRadius="{StaticResource RadiusPanel}"
+                BoxShadow="{StaticResource ShadowFolio}" ClipToBounds="True">
+          <Grid ColumnDefinitions="1.15*,*">
+
+            <!-- resource list -->
+            <Border Grid.Column="0" BorderBrush="{StaticResource BrushRuleDefault}"
+                    BorderThickness="0,0,1,0">
+              <DockPanel>
+                <Border DockPanel.Dock="Top" Padding="26,22,26,14"
+                        BorderBrush="{StaticResource BrushRuleLight}" BorderThickness="0,0,0,1">
+                  <StackPanel Spacing="4">
+                    <TextBlock Classes="serif" Text="{Binding Title}" FontSize="26" FontWeight="Medium" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock Classes="secondary" Text="{Binding Description}"
+                                 IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                      <TextBlock Classes="secondary" Text="{Binding CountText}" />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+                <StackPanel IsVisible="{Binding !HasResources}" Margin="26,20" Spacing="6">
+                  <TextBlock Text="Nothing collected yet." FontWeight="Medium" />
+                  <TextBlock Classes="secondary" TextWrapping="Wrap"
+                             Text="Add documents, links, notes, or images with the actions above." />
+                </StackPanel>
+                <ListBox ItemsSource="{Binding Resources}" SelectedItem="{Binding Selected}"
+                         IsVisible="{Binding HasResources}"
+                         Background="Transparent" Padding="0">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ResourceRowViewModel">
+                      <DockPanel Margin="12,3">
+                        <Border DockPanel.Dock="Left" Width="36" Padding="0,2"
+                                BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
+                                CornerRadius="3" VerticalAlignment="Center">
+                          <TextBlock Classes="mono" Text="{Binding KindChip}"
+                                     FontSize="{StaticResource TextSizeMeta}"
+                                     HorizontalAlignment="Center" />
+                        </Border>
+                        <StackPanel Margin="12,0,0,0" Spacing="2" VerticalAlignment="Center">
+                          <TextBlock Text="{Binding Title}" FontWeight="Medium"
+                                     TextTrimming="CharacterEllipsis" />
+                          <TextBlock Classes="meta" Text="{Binding MetaText}" />
+                        </StackPanel>
+                      </DockPanel>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+              </DockPanel>
+            </Border>
+
+            <!-- preview / reading pane -->
+            <ScrollViewer Grid.Column="1">
+              <StackPanel Margin="28,22" Spacing="14"
+                          DataContext="{Binding Selected}" x:DataType="vm:ResourceRowViewModel">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <TextBlock Classes="serif" Text="{Binding Title}" FontSize="20" FontWeight="Medium"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <TextBlock Classes="meta" Text="{Binding PreviewMeta}" VerticalAlignment="Center" />
+                  <Border Background="{StaticResource BrushLimeWash}" CornerRadius="3" Padding="7,2">
+                    <TextBlock Classes="mono" Text="{Binding IndexChip}"
+                               FontSize="{StaticResource TextSizeMeta}" />
+                  </Border>
+                </StackPanel>
+
+                <!-- note reading -->
+                <Border IsVisible="{Binding IsNote}"
+                        Background="#FFFFFF" BorderBrush="{StaticResource BrushRuleMedium}"
+                        BorderThickness="1" CornerRadius="{StaticResource RadiusControl}"
+                        Padding="22,18">
+                  <TextBlock Classes="serif" Text="{Binding NoteContent}" TextWrapping="Wrap"
+                             FontSize="{StaticResource TextSizeBodyLarge}" LineHeight="22" />
+                </Border>
+
+                <!-- link -->
+                <StackPanel IsVisible="{Binding IsLink}" Spacing="10">
+                  <Border Background="{StaticResource BrushWorkbenchCream}"
+                          BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                          CornerRadius="{StaticResource RadiusControl}" Padding="14,10">
+                    <TextBlock Classes="mono" Text="{Binding LinkUrl}"
+                               FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap" />
+                  </Border>
+                  <Button Content="Open in browser" HorizontalAlignment="Left"
+                          Command="{Binding OpenExternallyCommand}" />
+                </StackPanel>
+
+                <!-- image -->
+                <StackPanel IsVisible="{Binding IsImage}" Spacing="10">
+                  <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                          CornerRadius="{StaticResource RadiusControl}" ClipToBounds="True"
+                          MaxHeight="320" HorizontalAlignment="Left">
+                    <Image Source="{Binding ImagePreview}" StretchDirection="DownOnly" />
+                  </Border>
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Open" Command="{Binding OpenExternallyCommand}" />
+                    <Button Content="Reveal in folder" Command="{Binding RevealInFolderCommand}" />
+                  </StackPanel>
+                </StackPanel>
+
+                <!-- document -->
+                <StackPanel IsVisible="{Binding IsDocument}" Spacing="10">
+                  <Border Background="#FFFFFF" BorderBrush="{StaticResource BrushRuleMedium}"
+                          BorderThickness="1" CornerRadius="{StaticResource RadiusControl}"
+                          Padding="22,18">
+                    <StackPanel Spacing="9">
+                      <TextBlock Classes="serif" Text="{Binding Resource.OriginalFileName}"
+                                 FontWeight="Medium" />
+                      <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                                 Text="Stored safely in BeBoosted's local library."
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Border>
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Open" Command="{Binding OpenExternallyCommand}" />
+                    <Button Content="Reveal in folder" Command="{Binding RevealInFolderCommand}" />
+                  </StackPanel>
+                </StackPanel>
+
+                <!-- provenance -->
+                <StackPanel Spacing="8" Margin="0,8,0,0">
+                  <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="0,0,0,1"
+                          Padding="0,0,0,7">
+                    <TextBlock Classes="metaLabel" Text="PROVENANCE" />
+                  </Border>
+                  <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                             Text="No tasks or answers cite this yet." TextWrapping="Wrap" />
+                </StackPanel>
+
+                <Button Content="Remove from File" HorizontalAlignment="Left" Margin="0,6,0,0"
+                        Command="{Binding DeleteCommand}"
+                        AutomationProperties.Name="{Binding Title, StringFormat='Remove {0}'}" />
+              </StackPanel>
+            </ScrollViewer>
+          </Grid>
+        </Border>
+      </Grid>
+    </DockPanel>
+        </DataTemplate>
+      </ContentControl.ContentTemplate>
+    </ContentControl>
+
+  </Panel>
 
 </UserControl>

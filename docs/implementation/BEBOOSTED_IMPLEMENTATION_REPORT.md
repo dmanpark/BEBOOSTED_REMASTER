@@ -502,4 +502,89 @@ dotnet test                         # 104 + 82 passed (1 screenshot skip by desi
   calendar is already the review surface.
 
 ### Local commit
+`bf2c919` — phase 5: implement plan drafts
+
+---
+
+## Phase 6 — Projects and Files
+
+### Intended scope
+Minimal Project view, File objects, resources, preview and provenance, local indexing
+interfaces.
+
+### Work completed
+- **Domain:** `Project` (validated name, restrained accent from `ProjectPalette` —
+  six muted colors assigned round-robin, always subordinate to lime), `ProjectFile`
+  (title/optional description, flat by construction — no nesting exists in the model),
+  `Resource` (document/link/note/image; stable ids; notes carry content, links a URL,
+  documents/images an original file name + id-based stored path; `Pending/Indexed/Failed`
+  index states; editing a note resets it to Pending for re-indexing).
+- **Application:** `IProjectRepository` / `IProjectFileRepository` /
+  `IResourceRepository` (including `SetIndexText` and project-scoped `SearchInProject` —
+  the retrieval surface Phase 7's AI will be confined to), `IResourceStorage`
+  (app-controlled byte store keyed by resource id), `IResourceIndexer` port,
+  `ProjectService` (projects/Files/resources CRUD with byte cleanup, cascade delete that
+  unlinks tasks, open/recently-completed task queries, upcoming pending blocks per
+  project). `TaskService.UpdateDetails` now assigns projects.
+- **Infrastructure:** migration `0006_projects` (cascading FKs, index-text column),
+  the three SQLite repositories, `LocalResourceStorage`
+  (`resources/<id>.<ext>`), `SimpleLocalIndexer` (notes index content, links URL,
+  documents/images title+filename with byte verification; missing bytes → Failed).
+- **Desktop:** Projects index (accent-chip cards, New project flyout); frame-05 project
+  view (accent bar + name, OPEN TASKS with completion circles and mono metadata,
+  struck-through recently-completed rows, UPCOMING BLOCKS with accent ticks, the tactile
+  folio shelf — layered underlay, labeled tab, Newsreader titles, resource counts —
+  New File flyout, disabled "Ask BeBoosted about this project" until Phase 7); frame-06
+  File view (folio tab header, serif title, kind-chip resource list with source/date/
+  index-state metadata, lime-wash selection, preview pane: serif note reading surface,
+  link open-in-browser, image preview with open/reveal, document card with open/reveal,
+  provenance section with an honest empty state, per-resource delete, Document/Link/
+  Note/Image add actions with platform file pickers); Inbox rows now show project names
+  and the edit flyout assigns projects; `IFileRevealService` platform port
+  (Explorer/Finder conventions).
+
+### Architecture and behavior decisions
+- Brushes are created lazily in ViewModels (composition resources are UI-thread-bound;
+  eager creation in plain unit tests poisoned the shared headless session — see below).
+- Detail/File surfaces render through `ContentControl` DataTemplates so compiled
+  bindings scope correctly across the DataContext switch.
+- Document indexing is honest about v1 scope: title + file-name text only (no PDF text
+  extraction); recorded as a known limitation.
+
+### Tests added (16 new; totals 112 + 88)
+ProjectService on real SQLite (palette rotation, File/resource round-trips incl. index
+state, byte import to stable paths + delete cleanup, project-scoped search isolation,
+cascade delete unlinking tasks, open/recent task split, upcoming-block filtering,
+missing-bytes → Failed re-index), Projects ViewModel flows (create-project navigation,
+File creation + breadcrumbs, resource add/select/count/delete with kind chips, project
+task completion moving rows, Inbox project names + assignment via the edit flyout).
+
+### Verification
+```
+dotnet format --verify-no-changes   # clean
+dotnet build -warnaserror           # 0 warnings
+dotnet test                         # 112 + 87 passed (1 screenshot skip by design)
+# Desktop tests re-run 3× — stable after the brush-thread fix
+# clean-profile launch              # migrations 1–6 applied
+```
+
+### Screenshots
+`docs/implementation/screenshots/phase6/` — projects list, frame-05 project view
+(College Admissions with two folio Files), frame-06 open File (Metric Proof with note
+reading pane, Indexed chip, provenance section) at 1440×960 and 1280×800, produced by
+driving the real creation flows.
+
+### Problems discovered during self-review
+- Creating `SolidColorBrush` eagerly in ViewModels made plain unit tests construct
+  composition resources off the Avalonia session thread, intermittently failing an
+  unrelated headless test's cleanup. All accent brushes are now lazy properties.
+- Freshly-captured Inbox rows missed the project-choice list (only `Reload` passed it).
+
+### Known remaining limitations
+- Document indexing covers title/filename only (no byte-level text extraction in v1).
+- Provenance shows an empty state until Phase 7 populates citations.
+- Project rename/delete have service + tests but no UI affordance yet (management UI is
+  a polish candidate; creation, the primary flow, is complete).
+
+### Local commit
 Recorded below after commit.

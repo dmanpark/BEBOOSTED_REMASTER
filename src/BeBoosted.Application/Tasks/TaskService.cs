@@ -23,12 +23,14 @@ public sealed class TaskService(ITaskRepository repository, IClock clock)
         return task;
     }
 
-    public TaskItem UpdateDetails(TaskId id, string title, TimeSpan? estimatedDuration, DateOnly? deadline)
+    public TaskItem UpdateDetails(
+        TaskId id, string title, TimeSpan? estimatedDuration, DateOnly? deadline, ProjectId? projectId = null)
     {
         var task = Require(id);
         task.Rename(title, clock.Now);
         task.SetEstimatedDuration(estimatedDuration, clock.Now);
         task.SetDeadline(deadline, clock.Now);
+        task.AssignToProject(projectId, clock.Now);
         repository.Update(task);
         return task;
     }

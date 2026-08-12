@@ -49,6 +49,53 @@ public sealed class ScreenshotCaptureTests
             shell.NavigateCommand.Execute(AppSection.Settings);
             Capture(window, directory!, $"shell-settings-{width}x{height}.png");
 
+            // Projects: reproduce frame 05/06 content through the real flows.
+            shell.NavigateCommand.Execute(AppSection.Projects);
+            var projects = shell.Projects;
+            projects.NewProjectName = "DECA";
+            projects.TryCreateProject();
+            projects.CloseDetailCommand.Execute(null);
+            projects.NewProjectName = "College Admissions";
+            projects.TryCreateProject();
+            var detail = projects.Detail!;
+
+            detail.NewFileTitle = "Metric Proof";
+            detail.NewFileDescription = "Scores, certificates, and verified numbers";
+            detail.TryCreateFile();
+            var fileDetail = projects.FileDetail!;
+            fileDetail.NewNoteTitle = "Leadership metrics";
+            fileDetail.NewNoteContent =
+                "Led three DECA role-play teams to state finals; organized 120 volunteer hours "
+                + "across the robotics club and the regional food bank.";
+            fileDetail.TryAddNote();
+            fileDetail.NewLinkUrl = "https://collegeboard.org/scores";
+            fileDetail.NewLinkTitle = "SAT Score Report";
+            fileDetail.TryAddLink();
+            Capture(window, directory!, $"project-file-{width}x{height}.png");
+            projects.CloseFileCommand.Execute(null);
+
+            detail = projects.Detail!;
+            detail.NewFileTitle = "Essay Research";
+            detail.NewFileDescription = "Prompts, notes, and reference essays";
+            detail.TryCreateFile();
+            projects.CloseFileCommand.Execute(null);
+
+            // Assign two inbox tasks to the project so the detail view shows real rows.
+            shell.Inbox.Reload(); // pick up the just-created projects as edit choices
+            var admissionsChoice = shell.Inbox.Tasks[0].ProjectChoices.First(c => c.Name == "College Admissions");
+            foreach (var row in shell.Inbox.Tasks.Where(r =>
+                r.Title is "Draft essay outline" or "Email recommendation request").ToList())
+            {
+                row.EditProject = admissionsChoice;
+                row.CommitEditCommand.Execute(null);
+            }
+
+            projects.Detail!.Refresh();
+            Capture(window, directory!, $"project-detail-{width}x{height}.png");
+            projects.CloseDetailCommand.Execute(null);
+            Capture(window, directory!, $"projects-list-{width}x{height}.png");
+            shell.Inbox.Reload();
+
             shell.NavigateCommand.Execute(AppSection.Calendar);
             shell.PlanCommand.Execute(null);
             Capture(window, directory!, $"plan-draft-{width}x{height}.png");

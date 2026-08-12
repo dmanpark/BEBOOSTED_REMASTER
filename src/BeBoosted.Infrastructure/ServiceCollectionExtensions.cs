@@ -2,12 +2,14 @@ using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Planning;
 using BeBoosted.Application.Prioritization;
+using BeBoosted.Application.Projects;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Infrastructure.Calendar;
 using BeBoosted.Infrastructure.Persistence;
 using BeBoosted.Infrastructure.Planning;
 using BeBoosted.Infrastructure.Prioritization;
+using BeBoosted.Infrastructure.Projects;
 using BeBoosted.Infrastructure.Settings;
 using BeBoosted.Infrastructure.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,6 +35,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<PrioritySortService>();
         services.AddSingleton<IPlanningProposalRepository, SqlitePlanningProposalRepository>();
         services.AddSingleton<PlanningService>();
+        services.AddSingleton<IProjectRepository, SqliteProjectRepository>();
+        services.AddSingleton<IProjectFileRepository, SqliteProjectFileRepository>();
+        services.AddSingleton<IResourceRepository, SqliteResourceRepository>();
+        services.AddSingleton<IResourceStorage, LocalResourceStorage>();
+        services.AddSingleton<IResourceIndexer, SimpleLocalIndexer>();
+        services.AddSingleton<ProjectService>();
         return services;
     }
 }

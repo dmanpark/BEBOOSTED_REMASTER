@@ -256,6 +256,20 @@
     <Setter Property="Cursor" Value="Hand" />
   </Style>
 
+  <!-- ======================= Lists ======================= -->
+
+  <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BrushHoverWash}" />
+  </Style>
+
+  <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BrushLimeWash}" />
+  </Style>
+
+  <Style Selector="ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BrushLimeWash}" />
+  </Style>
+
   <!-- ======================= Text inputs ======================= -->
 
   <Style Selector="TextBox">

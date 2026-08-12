@@ -84,6 +84,20 @@
                                            PlaceholderText="minutes"
                                            AutomationProperties.Name="Estimated minutes" />
                           </DockPanel>
+                          <DockPanel>
+                            <TextBlock Classes="metaLabel" Text="PROJECT" Width="82"
+                                       VerticalAlignment="Center" />
+                            <ComboBox ItemsSource="{Binding ProjectChoices}"
+                                      SelectedItem="{Binding EditProject}"
+                                      HorizontalAlignment="Stretch"
+                                      AutomationProperties.Name="Project">
+                              <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ProjectChoiceViewModel">
+                                  <TextBlock Text="{Binding Name}" />
+                                </DataTemplate>
+                              </ComboBox.ItemTemplate>
+                            </ComboBox>
+                          </DockPanel>
                           <DockPanel Margin="0,4,0,0">
                             <Button DockPanel.Dock="Right" Classes="primary" Content="Save"
                                     Command="{Binding CommitEditCommand}"

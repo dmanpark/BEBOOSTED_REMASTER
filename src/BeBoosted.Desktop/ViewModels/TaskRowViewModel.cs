@@ -7,21 +7,41 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace BeBoosted.Desktop.ViewModels;
 
+/// <summary>A project option in the task edit flyout ("No project" uses a null id).</summary>
+public sealed record ProjectChoiceViewModel(Domain.ProjectId? Id, string Name)
+{
+    public static readonly ProjectChoiceViewModel None = new(null, "No project");
+}
+
 /// <summary>One Inbox row wrapping a task, with inline edit state for its flyout.</summary>
 public sealed partial class TaskRowViewModel : ViewModelBase
 {
     private readonly TaskService _service;
     private readonly IClock _clock;
     private readonly Action<TaskRowViewModel> _onRemoved;
+    private readonly string? _projectName;
 
-    public TaskRowViewModel(TaskItem task, TaskService service, IClock clock, Action<TaskRowViewModel> onRemoved)
+    public TaskRowViewModel(
+        TaskItem task,
+        TaskService service,
+        IClock clock,
+        Action<TaskRowViewModel> onRemoved,
+        IReadOnlyList<ProjectChoiceViewModel>? projectChoices = null,
+        string? projectName = null)
     {
         Task = task;
         _service = service;
         _clock = clock;
         _onRemoved = onRemoved;
+        _projectName = projectName;
+        ProjectChoices = projectChoices ?? [ProjectChoiceViewModel.None];
         ResetEditFields();
     }
+
+    public IReadOnlyList<ProjectChoiceViewModel> ProjectChoices { get; }
+
+    [ObservableProperty]
+    public partial ProjectChoiceViewModel? EditProject { get; set; }
 
     public TaskItem Task { get; private set; }
 
@@ -29,12 +49,17 @@ public sealed partial class TaskRowViewModel : ViewModelBase
 
     public bool IsAiOrigin => Task.Origin == TaskOrigin.Ai;
 
-    /// <summary>Only the useful metadata: deadline and estimated duration.</summary>
+    /// <summary>Only the useful metadata: project, deadline, and estimated duration.</summary>
     public string MetaText
     {
         get
         {
-            var parts = new List<string>(2);
+            var parts = new List<string>(3);
+            if (_projectName is { } project)
+            {
+                parts.Add(project);
+            }
+
             if (Task.Deadline is { } deadline)
             {
                 parts.Add(DescribeDeadline(deadline));
@@ -94,7 +119,8 @@ public sealed partial class TaskRowViewModel : ViewModelBase
             Task.Id,
             EditTitle,
             EditDurationMinutes is { } minutes and > 0 ? TimeSpan.FromMinutes((double)minutes) : null,
-            EditDeadline is { } deadline ? DateOnly.FromDateTime(deadline.Date) : null);
+            EditDeadline is { } deadline ? DateOnly.FromDateTime(deadline.Date) : null,
+            EditProject?.Id);
         ResetEditFields();
         OnPropertyChanged(nameof(Title));
         OnPropertyChanged(nameof(MetaText));
@@ -111,6 +137,8 @@ public sealed partial class TaskRowViewModel : ViewModelBase
             ? new DateTimeOffset(deadline.ToDateTime(TimeOnly.MinValue))
             : null;
         EditDurationMinutes = Task.EstimatedDuration is { } duration ? (decimal)duration.TotalMinutes : null;
+        EditProject = ProjectChoices.FirstOrDefault(choice => choice.Id == Task.ProjectId)
+            ?? ProjectChoices[0];
     }
 
     private string DescribeDeadline(DateOnly deadline)

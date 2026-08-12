@@ -42,6 +42,7 @@ public partial class App : Avalonia.Application
             services.AddLogging(builder => builder.AddSerilog());
             services.AddBeBoostedInfrastructure(paths);
             services.AddSingleton<IKeymapService, DefaultKeymapService>();
+            services.AddSingleton<IFileRevealService, DefaultFileRevealService>();
             services.AddSingleton<WindowStateService>();
             services.AddSingleton<CalendarViewModel>();
             services.AddSingleton<InboxViewModel>();

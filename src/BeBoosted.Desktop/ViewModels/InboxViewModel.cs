@@ -13,11 +13,17 @@ public sealed partial class InboxViewModel : ViewModelBase
     private readonly IClock _clock;
 
     private readonly InboxQueryService _query;
+    private readonly Application.Projects.IProjectRepository _projects;
 
-    public InboxViewModel(TaskService service, InboxQueryService query, IClock clock)
+    public InboxViewModel(
+        TaskService service,
+        InboxQueryService query,
+        Application.Projects.IProjectRepository projects,
+        IClock clock)
     {
         _service = service;
         _query = query;
+        _projects = projects;
         _clock = clock;
         Reload();
 
@@ -30,16 +36,30 @@ public sealed partial class InboxViewModel : ViewModelBase
 
     private IReadOnlyDictionary<Domain.TaskId, Domain.Prioritization.PriorityRank>? _ranks;
 
+    private List<ProjectChoiceViewModel> _projectChoices = [ProjectChoiceViewModel.None];
+    private Dictionary<Domain.ProjectId, string> _projectNames = [];
+
     /// <summary>Rebuilds the queue from storage — called after scheduling or outcomes change it.</summary>
     public void Reload()
     {
+        var projects = _projects.GetAll();
+        _projectNames = projects.ToDictionary(p => p.Id, p => p.Name);
+        _projectChoices = [ProjectChoiceViewModel.None];
+        _projectChoices.AddRange(projects.Select(p => new ProjectChoiceViewModel(p.Id, p.Name)));
+
         Tasks.Clear();
         foreach (var task in _query.GetInboxTasks())
         {
-            Tasks.Add(new TaskRowViewModel(task, _service, _clock, RemoveRow));
+            Tasks.Add(CreateRow(task));
         }
 
         ApplyRanks();
+    }
+
+    private TaskRowViewModel CreateRow(Domain.Tasks.TaskItem task)
+    {
+        var projectName = task.ProjectId is { } projectId ? _projectNames.GetValueOrDefault(projectId) : null;
+        return new TaskRowViewModel(task, _service, _clock, RemoveRow, _projectChoices, projectName);
     }
 
     /// <summary>Shows the current period's ordinal rank chips on the queue rows.</summary>
@@ -78,7 +98,7 @@ public sealed partial class InboxViewModel : ViewModelBase
         }
 
         var task = _service.Capture(title);
-        Tasks.Add(new TaskRowViewModel(task, _service, _clock, RemoveRow));
+        Tasks.Add(CreateRow(task));
         CaptureText = string.Empty;
     }
 

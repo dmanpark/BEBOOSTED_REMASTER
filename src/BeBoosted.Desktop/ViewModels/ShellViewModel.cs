@@ -28,8 +28,9 @@ public sealed partial class ShellViewModel : ViewModelBase
         _clock = clock;
         CurrentSection = calendar;
 
-        // Scheduling and outcomes change what belongs in the Inbox queue.
+        // Scheduling and outcomes change what belongs in the Inbox queue and project views.
         Calendar.DataChanged += Inbox.Reload;
+        Calendar.DataChanged += Projects.RefreshActive;
 
         Inbox.PropertyChanged += (_, e) =>
         {

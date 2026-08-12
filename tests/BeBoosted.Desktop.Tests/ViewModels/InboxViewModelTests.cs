@@ -12,7 +12,9 @@ public sealed class InboxViewModelTests
         var clock = new FakeClock(TestShell.DesignDate);
         var repo = repository ?? new InMemoryTaskRepository();
         var query = new InboxQueryService(repo, new InMemoryCalendarBlockRepository());
-        return (new InboxViewModel(new TaskService(repo, clock), query, clock), repo);
+        return (
+            new InboxViewModel(new TaskService(repo, clock), query, new InMemoryProjectRepository(), clock),
+            repo);
     }
 
     [Fact]
