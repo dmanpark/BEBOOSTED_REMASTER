@@ -1,0 +1,112 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             x:Class="BeBoosted.Desktop.Views.InboxDrawerView"
+             x:DataType="vm:InboxViewModel">
+
+  <DockPanel>
+
+    <!-- Fast capture -->
+    <Border DockPanel.Dock="Top" Margin="14,0,14,10" Height="36"
+            BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+            CornerRadius="{StaticResource RadiusButton}"
+            Background="{StaticResource BrushPaperWhite}">
+      <DockPanel Margin="12,0,8,0">
+        <Path DockPanel.Dock="Left" Classes="icon" Data="{StaticResource IconPlus}"
+              Width="12" Height="12" StrokeThickness="1.5"
+              Stroke="{StaticResource BrushPencilGray}" VerticalAlignment="Center" />
+        <TextBox Name="CaptureBox"
+                 Margin="4,0,0,0"
+                 Text="{Binding CaptureText}"
+                 PlaceholderText="Add a task…"
+                 BorderThickness="0" Background="Transparent"
+                 VerticalContentAlignment="Center"
+                 FontSize="{StaticResource TextSizeSmall}"
+                 AutomationProperties.Name="Add a task">
+          <TextBox.KeyBindings>
+            <KeyBinding Gesture="Enter" Command="{Binding CaptureCommand}" />
+          </TextBox.KeyBindings>
+        </TextBox>
+      </DockPanel>
+    </Border>
+
+    <!-- Empty state -->
+    <StackPanel DockPanel.Dock="Top" Margin="16,18,16,24" Spacing="6"
+                IsVisible="{Binding !HasTasks}">
+      <TextBlock Text="Your Inbox is empty." FontWeight="Medium" />
+      <TextBlock Classes="secondary" Text="Captured tasks will wait here until they are planned."
+                 FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap" />
+    </StackPanel>
+
+    <!-- Task queue -->
+    <ScrollViewer IsVisible="{Binding HasTasks}">
+      <Border BorderBrush="{StaticResource BrushRuleLight}" BorderThickness="0,1,0,0">
+        <ItemsControl ItemsSource="{Binding Tasks}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:TaskRowViewModel">
+              <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
+                      Padding="16,11" Background="Transparent">
+                <DockPanel>
+                  <Button DockPanel.Dock="Left" Classes="icon"
+                          Width="22" Height="22" CornerRadius="11"
+                          BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1.5"
+                          Command="{Binding CompleteCommand}"
+                          AutomationProperties.Name="{Binding Title, StringFormat='Mark {0} done'}"
+                          ToolTip.Tip="Mark done"
+                          VerticalAlignment="Center" />
+                  <Button DockPanel.Dock="Right" Classes="icon"
+                          VerticalAlignment="Center"
+                          AutomationProperties.Name="{Binding Title, StringFormat='Edit {0}'}"
+                          ToolTip.Tip="Edit">
+                    <Path Classes="icon" Data="{StaticResource IconEdit}" Width="13" Height="13"
+                          StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+                    <Button.Flyout>
+                      <Flyout Placement="RightEdgeAlignedTop" ShowMode="Standard">
+                        <StackPanel Width="264" Spacing="10" Margin="4">
+                          <TextBlock Text="Edit task" FontWeight="SemiBold" />
+                          <TextBox Text="{Binding EditTitle}" PlaceholderText="Title"
+                                   AutomationProperties.Name="Task title" />
+                          <DockPanel>
+                            <TextBlock Classes="metaLabel" Text="DEADLINE" Width="82"
+                                       VerticalAlignment="Center" />
+                            <DatePicker SelectedDate="{Binding EditDeadline}"
+                                        AutomationProperties.Name="Deadline" />
+                          </DockPanel>
+                          <DockPanel>
+                            <TextBlock Classes="metaLabel" Text="DURATION" Width="82"
+                                       VerticalAlignment="Center" />
+                            <NumericUpDown Value="{Binding EditDurationMinutes}"
+                                           Minimum="5" Maximum="720" Increment="5"
+                                           FormatString="0"
+                                           PlaceholderText="minutes"
+                                           AutomationProperties.Name="Estimated minutes" />
+                          </DockPanel>
+                          <DockPanel Margin="0,4,0,0">
+                            <Button DockPanel.Dock="Right" Classes="primary" Content="Save"
+                                    Command="{Binding CommitEditCommand}"
+                                    Click="OnEditActionClick" />
+                            <Button Content="Delete"
+                                    Command="{Binding DeleteCommand}"
+                                    Click="OnEditActionClick"
+                                    HorizontalAlignment="Left" />
+                          </DockPanel>
+                        </StackPanel>
+                      </Flyout>
+                    </Button.Flyout>
+                  </Button>
+                  <StackPanel Margin="10,0,8,0" Spacing="2" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Title}" FontWeight="Medium" TextWrapping="Wrap" />
+                    <TextBlock Classes="meta" Text="{Binding MetaText}"
+                               IsVisible="{Binding HasMeta}" />
+                  </StackPanel>
+                </DockPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+    </ScrollViewer>
+
+  </DockPanel>
+
+</UserControl>

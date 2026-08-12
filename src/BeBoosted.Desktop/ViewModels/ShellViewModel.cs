@@ -5,15 +5,22 @@ namespace BeBoosted.Desktop.ViewModels;
 
 public sealed partial class ShellViewModel : ViewModelBase
 {
-    public ShellViewModel(CalendarViewModel calendar, ProjectsViewModel projects, SettingsViewModel settings)
+    public ShellViewModel(
+        CalendarViewModel calendar,
+        InboxViewModel inbox,
+        ProjectsViewModel projects,
+        SettingsViewModel settings)
     {
         Calendar = calendar;
+        Inbox = inbox;
         Projects = projects;
         Settings = settings;
         CurrentSection = calendar;
     }
 
     public CalendarViewModel Calendar { get; }
+
+    public InboxViewModel Inbox { get; }
 
     public ProjectsViewModel Projects { get; }
 

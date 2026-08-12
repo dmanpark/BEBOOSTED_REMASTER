@@ -67,6 +67,27 @@ public sealed class ShellSmokeTests
         Assert.Null(FindText(window, "Your Inbox is empty."));
     }
 
+    [AvaloniaFact]
+    public void InboxDrawer_ShowsCapturedTaskRows()
+    {
+        var shell = TestShell.Create(tasks: TestShell.SeededTasks(new FakeClock(TestShell.DesignDate)));
+        var window = new MainWindow { DataContext = shell };
+        window.Show();
+
+        shell.ToggleInboxCommand.Execute(null);
+        window.CaptureRenderedFrame();
+
+        Assert.NotNull(FindText(window, "Finish DECA presentation"));
+        Assert.NotNull(FindText(window, "Fri · 1 h 30 min"));
+
+        shell.Inbox.CaptureText = "Practice interview answers";
+        shell.Inbox.CaptureCommand.Execute(null);
+        window.CaptureRenderedFrame();
+
+        Assert.NotNull(FindText(window, "Practice interview answers"));
+        Assert.Equal(5, shell.Inbox.OpenCount);
+    }
+
     private static T? FindDescendant<T>(Window window)
         where T : class
         => window.GetVisualDescendants().OfType<T>().FirstOrDefault();

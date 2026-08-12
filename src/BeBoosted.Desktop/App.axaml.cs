@@ -44,6 +44,7 @@ public partial class App : Avalonia.Application
             services.AddSingleton<IKeymapService, DefaultKeymapService>();
             services.AddSingleton<WindowStateService>();
             services.AddSingleton<CalendarViewModel>();
+            services.AddSingleton<InboxViewModel>();
             services.AddSingleton<ProjectsViewModel>();
             services.AddSingleton<SettingsViewModel>();
             services.AddSingleton<ShellViewModel>();

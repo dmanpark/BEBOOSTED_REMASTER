@@ -1,7 +1,9 @@
 using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Settings;
+using BeBoosted.Application.Tasks;
 using BeBoosted.Infrastructure.Persistence;
 using BeBoosted.Infrastructure.Settings;
+using BeBoosted.Infrastructure.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BeBoosted.Infrastructure;
@@ -16,6 +18,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MigrationRunner>();
         services.AddSingleton<ISettingsStore, SqliteSettingsStore>();
         services.AddSingleton<AppSettings>();
+        services.AddSingleton<ITaskRepository, SqliteTaskRepository>();
+        services.AddSingleton<TaskService>();
         return services;
     }
 }

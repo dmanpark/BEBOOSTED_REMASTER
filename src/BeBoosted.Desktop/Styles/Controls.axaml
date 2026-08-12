@@ -210,6 +210,14 @@
     <Setter Property="StrokeLineCap" Value="Round" />
   </Style>
 
+  <!-- ======================= Text inputs ======================= -->
+
+  <Style Selector="TextBox">
+    <Setter Property="SelectionBrush" Value="{DynamicResource BrushHighlighterLime}" />
+    <Setter Property="SelectionForegroundBrush" Value="{DynamicResource BrushGraphite}" />
+    <Setter Property="CaretBrush" Value="{DynamicResource BrushGraphite}" />
+  </Style>
+
   <!-- ======================= Tooltips ======================= -->
 
   <Style Selector="ToolTip">

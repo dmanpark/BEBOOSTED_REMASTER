@@ -171,4 +171,73 @@ empty state until Phase 3.
   approximated (screen-intersection guard prevents off-screen windows).
 
 ### Local commit
+`a7af431` — phase 1: establish Avalonia foundation
+
+---
+
+## Phase 2 — Tasks and Inbox
+
+### Intended scope
+Task domain behavior, repository, universal Inbox, capture and editing, completion outcomes.
+
+### Work completed
+- **Domain** (`BeBoosted.Domain`): strongly-typed IDs for every core entity (`TaskId`,
+  `ProjectId`, `CalendarBlockId`, `PlanningProposalId`, `ComparisonId`, `AiProvenanceId`, …),
+  `DomainException`, `TaskItem` entity (validated title, positive duration, deadline,
+  project link, constraints, recurrence, origin, provenance slot, completion state,
+  created/modified stamps; `Complete`/`Reopen` idempotent; `RecordNeedsMoreTime` replaces
+  the estimate and keeps the task open), `SchedulingConstraints` value object,
+  `RecurrenceRule` (daily/weekly with interval + weekday set, `OccursOn` expansion —
+  deliberately *not* a habit system).
+- **Application**: `ITaskRepository` port (synchronous local persistence by design),
+  `TaskService` use cases (capture, update details, complete/reopen, needs-more-time,
+  delete) with clock injection.
+- **Infrastructure**: migration `0002_tasks` (STRICT table + open-tasks index),
+  `SqliteTaskRepository` (full field mapping, invariant-culture ISO storage),
+  `RecurrenceSerializer` ("D:n" / "W:n:MO,FR").
+- **Desktop**: Inbox drawer becomes real — fast capture (plus Enter), task rows with
+  completion circle, title, mono metadata ("Fri · 1 h 30 min", relative deadline names),
+  edit flyout (title/deadline/duration/delete), empty state, open-count badge on the rail
+  icon and drawer header, capture box auto-focus on open. Fluent accent recolored to
+  graphite; text selection lime.
+
+### Architecture and behavior decisions
+- Task scheduling state is derived from calendar blocks (Phase 3), never stored on the task.
+- Completed tasks leave the Inbox (it is a queue of unscheduled work, not an archive).
+- Batch selection + "Plan…" footer intentionally deferred to Phase 4 (Priority Sort) so no
+  dead controls ship; mock frame 02's selected-row styling will be reused then.
+- Deadlines are date-level (`DateOnly`) per the design frames; durations stored as minutes.
+
+### Tests added (31 new; totals 43 + 36)
+TaskItem (validation, idempotent completion, needs-more-time boundaries), RecurrenceRule
+(daily/weekly/biweekly occurrence math, invalid rules), SchedulingConstraints,
+RecurrenceSerializer round-trips, SqliteTaskRepository (full-field round-trip, update,
+missing-row update failure, inbox ordering/exclusion, delete), InboxViewModel (load,
+capture/clear, blank input, complete/delete persistence, edit commit incl. blank-title
+revert, relative metadata), headless drawer rows + live capture.
+
+### Verification
+```
+dotnet format --verify-no-changes   # clean
+dotnet build -warnaserror           # 0 warnings
+dotnet test                         # 43 + 35 passed (1 screenshot skip by design)
+# launch smoke on clean profile     # alive, db migrated to version 2
+```
+
+### Screenshots
+`docs/implementation/screenshots/phase2/` — Inbox drawer populated with the frame-02 task
+set at 1440×960 and 1280×800; capture field focus is graphite (accent override verified).
+
+### Problems discovered during self-review
+- Avalonia 12 renamed `Watermark` → `PlaceholderText` (build error surfaced it).
+- `AvaloniaPropertyChangedEventArgs.GetNewValue<T>` no longer generic — used `NewValue is true`.
+- Fluent's blue accent leaked into TextBox focus — repainted `SystemAccentColor*` to
+  graphite tones and set lime selection brushes.
+
+### Known remaining limitations
+- Edit affordance (pencil) is always visible rather than hover-revealed; acceptable, may
+  tighten with the calendar-phase polish pass.
+- Capture accepts a bare title only; structured quick-parse belongs to the AI phase.
+
+### Local commit
 Recorded below after commit.
