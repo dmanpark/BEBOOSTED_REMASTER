@@ -49,6 +49,15 @@ public sealed class ScreenshotCaptureTests
             shell.NavigateCommand.Execute(AppSection.Settings);
             Capture(window, directory!, $"shell-settings-{width}x{height}.png");
 
+            shell.NavigateCommand.Execute(AppSection.Calendar);
+            shell.StartPrioritySortCommand.Execute(null);
+            Capture(window, directory!, $"priority-sort-comparison-{width}x{height}.png");
+            shell.ActiveSort!.ChooseLeftCommand.Execute(null);
+            shell.ActiveSort.ChooseTieCommand.Execute(null);
+            shell.ActiveSort.BuildPlanNowCommand.Execute(null);
+            Capture(window, directory!, $"priority-sort-results-{width}x{height}.png");
+            shell.ActiveSort.CloseCommand.Execute(null);
+
             window.Close();
         }
     }

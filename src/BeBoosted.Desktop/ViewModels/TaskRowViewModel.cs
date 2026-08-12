@@ -51,6 +51,13 @@ public sealed partial class TaskRowViewModel : ViewModelBase
 
     public bool HasMeta => MetaText.Length > 0;
 
+    /// <summary>Ordinal rank chip for the active planning period ("#1"); null when unranked.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasRank))]
+    public partial string? RankText { get; set; }
+
+    public bool HasRank => RankText is not null;
+
     [ObservableProperty]
     public partial string EditTitle { get; set; } = string.Empty;
 

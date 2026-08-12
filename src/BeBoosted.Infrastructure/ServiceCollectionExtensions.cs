@@ -1,9 +1,11 @@
 using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Calendar;
+using BeBoosted.Application.Prioritization;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Infrastructure.Calendar;
 using BeBoosted.Infrastructure.Persistence;
+using BeBoosted.Infrastructure.Prioritization;
 using BeBoosted.Infrastructure.Settings;
 using BeBoosted.Infrastructure.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,6 +27,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ICalendarBlockRepository, SqliteCalendarBlockRepository>();
         services.AddSingleton<CalendarService>();
         services.AddSingleton<InboxQueryService>();
+        services.AddSingleton<IPrioritizationRepository, SqlitePrioritizationRepository>();
+        services.AddSingleton<PrioritySortService>();
         return services;
     }
 }

@@ -335,4 +335,85 @@ circles, lime current-time dot, lime TUE 11 chip, mono gutter.
   lane (consistent with Week).
 
 ### Local commit
+`a20e7ed` — phase 3: implement calendar engine
+
+---
+
+## Phase 4 — Priority Sort
+
+### Intended scope
+Adaptive pairwise comparisons, real ties, Today/Week-scoped ordinal ranks, planning
+tiers, and the complete accessible comparison UI.
+
+### Work completed
+- **Domain:** `PlanningPeriod` (Today anchored to a date / Week anchored to Monday, with
+  stable persistence keys), `ComparisonDecision` + `ComparisonResult` (Tie is a first-class
+  answer), `PriorityRank` + `PlanningTier`, and `ComparisonSession` — the adaptive
+  algorithm. Tasks are placed one at a time by binary insertion among already-ordered
+  tie-groups, so each question is maximally informative (~n·log n total). The session is a
+  pure function of (candidates, answer log): undo pops the log and replays, which makes
+  undo trivially correct and the whole flow deterministic. `BuildRanking()` works at any
+  time (Build my plan now): dense ordinal ranks (1, 2, 2, 3), unplaced tasks share the
+  trailing ordinal, tiers split into thirds without ever splitting a tied group. Progress
+  is an explicit estimate of remaining informative questions — no fabricated scores.
+- **Application:** `IPrioritizationRepository`, `PrioritySortService` (session start,
+  completion persisting decisions + replacing the period's ranks, rank lookups).
+- **Infrastructure:** migration `0004_prioritization` (comparisons history + per-period
+  ranks), `SqlitePrioritizationRepository` with transactional rank replacement.
+- **Desktop:** full-screen `PrioritySortView` overlay (no rail — the mockup's focused
+  frame): centered period prompt, two large card buttons with lime-wash Due chips and
+  mono metadata, "Too tough to decide [T]", "Build my plan now", Back (undo), status
+  label ("Priority Sort · This week · Comparison 3"), 3px lime estimated-completeness
+  strip, keyboard hints, and full keyboard support (←/→/T/Backspace/Esc). Results stage
+  shows Protect now / Advance next / Can wait groups with lime ordinal chips and a
+  "period only" note. Shell integration: drawer footer "Priority Sort" (enabled at ≥2
+  tasks), period follows the visible calendar view, Escape closes sort before drawer,
+  rank chips appear on Inbox rows and refresh with the view.
+
+### Architecture and behavior decisions
+- Adaptive selection = binary insertion between uncertain neighbors; this satisfies the
+  informativeness requirement with a deterministic, fully testable core (no randomness).
+- Decisions and ranks persist when a session finishes (including early exit); an
+  abandoned session (Esc) writes nothing.
+- The progress strip is labeled an estimate; the only numeric claim shown is the
+  comparison count.
+- Fluent state styles leak into replaced templates through the `PART_ContentPresenter`
+  name — presenter renamed to `PART_ButtonContent` (fixed a gray disabled artifact).
+
+### Tests added (25 new; totals 82 + 75)
+ComparisonSession (single question for two tasks, tie sharing + dense ranks, immediate
+tie continuation, undo restoring the exact question + pure-replay equivalence, undo at
+zero, best-effort early ranking, tier thirds incl. all-tied, progress bounds + completion,
+n·log n comparison budget, deterministic question sequences, single/empty candidate
+edges, period key scoping), SqlitePrioritizationRepository (per-period decisions,
+atomic rank replacement, period independence), PrioritySortViewModel (cards with
+relative deadlines, tie advance, completion persistence + result groups, early exit,
+undo, close-without-save), Shell integration (two-task gate, period from view, rank
+chips after sort, Escape layering).
+
+### Verification
+```
+dotnet format --verify-no-changes   # clean
+dotnet build -warnaserror           # 0 warnings
+dotnet test                         # 82 + 74 passed (1 screenshot skip by design)
+# clean-profile launch              # migration 4 applied
+```
+
+### Screenshots
+`docs/implementation/screenshots/phase4/` — comparison stage and results stage at both
+resolutions, plus refreshed shell screens. Matches frame 03's composition: focused cream
+surface, two paper cards, lime Due chips, tie button with T chip, progress strip.
+
+### Problems discovered during self-review
+- Two hand-derived test scripts didn't match the algorithm's actual pivot sequence —
+  corrected the scripts (the algorithm was right).
+- Disabled Back button rendered with Fluent's gray fill (template name leak) — fixed.
+
+### Known remaining limitations
+- Inbox batch *selection* for sorting a subset arrives with Phase 5's Plan flow; sorting
+  currently ranks the whole Inbox queue.
+- Tier chips on the results screen share one lime-wash treatment (component sheet shows
+  three intensities) — polish candidate.
+
+### Local commit
 Recorded below after commit.

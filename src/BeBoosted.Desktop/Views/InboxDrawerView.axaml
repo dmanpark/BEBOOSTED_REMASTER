@@ -98,7 +98,15 @@
                     </Button.Flyout>
                   </Button>
                   <StackPanel Margin="10,0,8,0" Spacing="2" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Title}" FontWeight="Medium" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                      <TextBlock Text="{Binding Title}" FontWeight="Medium" TextWrapping="Wrap" />
+                      <Border Background="{StaticResource BrushHighlighterLime}" Padding="5,0"
+                              VerticalAlignment="Center" IsVisible="{Binding HasRank}"
+                              ToolTip.Tip="Rank for the current planning period">
+                        <TextBlock Classes="mono" Text="{Binding RankText}"
+                                   FontSize="{StaticResource TextSizeMeta}" FontWeight="SemiBold" />
+                      </Border>
+                    </StackPanel>
                     <TextBlock Classes="meta" Text="{Binding MetaText}"
                                IsVisible="{Binding HasMeta}" />
                   </StackPanel>

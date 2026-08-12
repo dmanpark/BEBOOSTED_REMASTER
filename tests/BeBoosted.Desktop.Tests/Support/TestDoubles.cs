@@ -1,10 +1,12 @@
 using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Calendar;
+using BeBoosted.Application.Prioritization;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Desktop.ViewModels;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Calendar;
+using BeBoosted.Domain.Prioritization;
 using BeBoosted.Domain.Tasks;
 
 namespace BeBoosted.Desktop.Tests.Support;
@@ -94,6 +96,23 @@ public sealed class InMemoryCalendarBlockRepository : ICalendarBlockRepository
             .ToHashSet();
 }
 
+public sealed class InMemoryPrioritizationRepository : IPrioritizationRepository
+{
+    private readonly List<ComparisonDecision> _decisions = [];
+    private readonly Dictionary<string, IReadOnlyList<PriorityRank>> _ranks = [];
+
+    public void SaveDecisions(IReadOnlyList<ComparisonDecision> decisions) => _decisions.AddRange(decisions);
+
+    public IReadOnlyList<ComparisonDecision> GetDecisions(string periodKey)
+        => _decisions.Where(d => d.Period.Key == periodKey).ToList();
+
+    public void ReplaceRanks(string periodKey, IReadOnlyList<PriorityRank> ranks)
+        => _ranks[periodKey] = [.. ranks];
+
+    public IReadOnlyList<PriorityRank> GetRanks(string periodKey)
+        => _ranks.GetValueOrDefault(periodKey, []);
+}
+
 public sealed class FakeClock(DateOnly today) : IClock
 {
     public DateTimeOffset Now => new(today.ToDateTime(new TimeOnly(14, 10)));
@@ -119,11 +138,14 @@ public static class TestShell
         var taskService = new TaskService(repository, clock);
         var calendarService = new CalendarService(blockRepository, repository, clock);
         var inboxQuery = new InboxQueryService(repository, blockRepository);
+        var prioritySort = new PrioritySortService(new InMemoryPrioritizationRepository(), clock);
         return new ShellViewModel(
             new CalendarViewModel(settings, clock, calendarService, repository),
             new InboxViewModel(taskService, inboxQuery, clock),
             new ProjectsViewModel(),
-            new SettingsViewModel(new FakePaths()));
+            new SettingsViewModel(new FakePaths()),
+            prioritySort,
+            clock);
     }
 
     /// <summary>

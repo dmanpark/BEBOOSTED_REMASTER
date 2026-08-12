@@ -12,9 +12,10 @@
         FontFamily="{StaticResource FontUi}">
 
   <Window.KeyBindings>
-    <KeyBinding Gesture="Escape" Command="{Binding CloseInboxCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding EscapePressedCommand}" />
   </Window.KeyBindings>
 
+  <Panel>
   <Grid ColumnDefinitions="52,*">
 
     <!-- Icon rail -->
@@ -114,6 +115,19 @@
                     Stroke="{StaticResource BrushPencilGray}" StrokeThickness="1.5" />
             </Button>
           </DockPanel>
+          <!-- Drawer footer: batch planning entry points -->
+          <Border DockPanel.Dock="Bottom"
+                  Background="{StaticResource BrushWorkbenchCream}"
+                  BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,1,0,0"
+                  Padding="14,12" CornerRadius="0,0,10,10">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="Priority Sort"
+                      Command="{Binding StartPrioritySortCommand}"
+                      ToolTip.Tip="Compare tasks two at a time to rank this period" />
+              <TextBlock Classes="meta" Text="drag onto the calendar to schedule"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+          </Border>
           <views:InboxDrawerView Name="InboxDrawerContent" DataContext="{Binding Inbox}" Margin="0,0,0,12" />
         </DockPanel>
       </Border>
@@ -142,5 +156,11 @@
 
     </Grid>
   </Grid>
+
+  <!-- Priority Sort: focused, full-screen comparison flow over everything -->
+  <Panel IsVisible="{Binding IsSortActive}">
+    <views:PrioritySortView DataContext="{Binding ActiveSort}" />
+  </Panel>
+  </Panel>
 
 </Window>

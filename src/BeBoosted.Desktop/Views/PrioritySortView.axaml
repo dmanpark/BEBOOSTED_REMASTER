@@ -1,0 +1,209 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             x:Class="BeBoosted.Desktop.Views.PrioritySortView"
+             x:DataType="vm:PrioritySortViewModel"
+             Focusable="True"
+             Background="{StaticResource BrushWorkbenchCream}">
+
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Left" Command="{Binding ChooseLeftCommand}" />
+    <KeyBinding Gesture="Right" Command="{Binding ChooseRightCommand}" />
+    <KeyBinding Gesture="T" Command="{Binding ChooseTieCommand}" />
+    <KeyBinding Gesture="Back" Command="{Binding UndoCommand}" />
+  </UserControl.KeyBindings>
+
+  <UserControl.Styles>
+    <Style Selector="Button.comparisonCard">
+      <Setter Property="Width" Value="380" />
+      <Setter Property="Height" Value="NaN" />
+      <Setter Property="Background" Value="{DynamicResource BrushPaperWhite}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderStrong}" />
+      <Setter Property="CornerRadius" Value="{DynamicResource RadiusDrawer}" />
+      <Setter Property="Padding" Value="32,30,32,26" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="Button.comparisonCard:pointerover /template/ Border#PART_ButtonBorder">
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+      <Setter Property="BoxShadow" Value="0 4 0 0 #C8F24A" />
+    </Style>
+    <Style Selector="Button.comparisonCard:focus-visible /template/ Border#PART_ButtonBorder">
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+      <Setter Property="BoxShadow" Value="0 4 0 0 #C8F24A, 0 0 0 3 #8CC8F24A" />
+    </Style>
+  </UserControl.Styles>
+
+  <Panel>
+
+    <!-- Comparison stage -->
+    <DockPanel IsVisible="{Binding !IsFinished}">
+      <DockPanel DockPanel.Dock="Top" Height="56" Margin="22,0" VerticalAlignment="Center">
+        <Button DockPanel.Dock="Left" Background="Transparent" BorderThickness="0"
+                Command="{Binding UndoCommand}" IsEnabled="{Binding CanUndo}"
+                AutomationProperties.Name="Undo last comparison" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Path Classes="icon" Data="{StaticResource IconChevronLeft}" Width="13" Height="13"
+                  StrokeThickness="1.5" />
+            <TextBlock Text="Back" />
+          </StackPanel>
+        </Button>
+        <TextBlock DockPanel.Dock="Right" Classes="meta" Text="{Binding StatusLabel}"
+                   HorizontalAlignment="Right" VerticalAlignment="Center"
+                   FontSize="{StaticResource TextSizeSmall}" />
+      </DockPanel>
+
+      <!-- keyboard hints + progress -->
+      <StackPanel DockPanel.Dock="Bottom">
+        <TextBlock Classes="meta" Margin="22,0,0,14"
+                   Text="← left · → right · T tie · Backspace back · Esc exit" />
+        <ProgressBar Height="3" MinHeight="3" Minimum="0" Maximum="1"
+                     Value="{Binding Progress}"
+                     Foreground="{StaticResource BrushHighlighterLime}"
+                     Background="{StaticResource BrushRuleLight}"
+                     CornerRadius="0" />
+      </StackPanel>
+
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="40"
+                  Margin="0,0,0,40">
+        <TextBlock Text="{Binding Prompt}" TextAlignment="Center"
+                   FontSize="{StaticResource TextSizePrompt}" FontWeight="SemiBold"
+                   LineHeight="35" LetterSpacing="-0.3" MaxWidth="760" />
+
+        <StackPanel Orientation="Horizontal" Spacing="24" HorizontalAlignment="Center">
+          <Button Name="LeftCardButton" Classes="comparisonCard"
+                  Command="{Binding ChooseLeftCommand}"
+                  AutomationProperties.Name="{Binding LeftCard.Title}">
+            <Grid RowDefinitions="Auto,Auto,Auto" MinHeight="150">
+              <TextBlock Grid.Row="0" Classes="meta" Text="←" HorizontalAlignment="Right" />
+              <StackPanel Grid.Row="1" Spacing="12">
+                <TextBlock Text="{Binding LeftCard.Title}" FontSize="21" FontWeight="SemiBold"
+                           TextWrapping="Wrap" LineHeight="26" />
+                <StackPanel Spacing="6">
+                  <StackPanel Orientation="Horizontal" Spacing="5"
+                              IsVisible="{Binding LeftCard.HasDue}">
+                    <TextBlock Classes="mono" Text="Due" FontSize="{StaticResource TextSizeSmall}" />
+                    <Border Background="{StaticResource BrushLimeWash}" Padding="5,1">
+                      <TextBlock Classes="mono" Text="{Binding LeftCard.DueText}"
+                                 FontSize="{StaticResource TextSizeSmall}" />
+                    </Border>
+                  </StackPanel>
+                  <TextBlock Classes="meta" Text="{Binding LeftCard.DurationText}"
+                             FontSize="{StaticResource TextSizeSmall}"
+                             IsVisible="{Binding LeftCard.HasDuration}" />
+                </StackPanel>
+              </StackPanel>
+            </Grid>
+          </Button>
+
+          <TextBlock Classes="meta" Text="or" VerticalAlignment="Center"
+                     FontSize="{StaticResource TextSizeSmall}" />
+
+          <Button Name="RightCardButton" Classes="comparisonCard"
+                  Command="{Binding ChooseRightCommand}"
+                  AutomationProperties.Name="{Binding RightCard.Title}">
+            <Grid RowDefinitions="Auto,Auto,Auto" MinHeight="150">
+              <TextBlock Grid.Row="0" Classes="meta" Text="→" HorizontalAlignment="Right" />
+              <StackPanel Grid.Row="1" Spacing="12">
+                <TextBlock Text="{Binding RightCard.Title}" FontSize="21" FontWeight="SemiBold"
+                           TextWrapping="Wrap" LineHeight="26" />
+                <StackPanel Spacing="6">
+                  <StackPanel Orientation="Horizontal" Spacing="5"
+                              IsVisible="{Binding RightCard.HasDue}">
+                    <TextBlock Classes="mono" Text="Due" FontSize="{StaticResource TextSizeSmall}" />
+                    <Border Background="{StaticResource BrushLimeWash}" Padding="5,1">
+                      <TextBlock Classes="mono" Text="{Binding RightCard.DueText}"
+                                 FontSize="{StaticResource TextSizeSmall}" />
+                    </Border>
+                  </StackPanel>
+                  <TextBlock Classes="meta" Text="{Binding RightCard.DurationText}"
+                             FontSize="{StaticResource TextSizeSmall}"
+                             IsVisible="{Binding RightCard.HasDuration}" />
+                </StackPanel>
+              </StackPanel>
+            </Grid>
+          </Button>
+        </StackPanel>
+
+        <StackPanel Spacing="18" HorizontalAlignment="Center">
+          <Button HorizontalAlignment="Center" Height="38" Padding="20,0"
+                  Command="{Binding ChooseTieCommand}"
+                  AutomationProperties.Name="Too tough to decide (records a tie)">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <TextBlock Text="Too tough to decide" FontSize="{StaticResource TextSizeBodyLarge}" />
+              <Border BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                      CornerRadius="4" Padding="6,0">
+                <TextBlock Classes="meta" Text="T" />
+              </Border>
+            </StackPanel>
+          </Button>
+          <Button Classes="link" HorizontalAlignment="Center"
+                  Command="{Binding BuildPlanNowCommand}"
+                  AutomationProperties.Name="Build my plan now (finish early)">
+            <TextBlock Text="Build my plan now" TextDecorations="Underline" />
+          </Button>
+        </StackPanel>
+      </StackPanel>
+    </DockPanel>
+
+    <!-- Results stage -->
+    <DockPanel IsVisible="{Binding IsFinished}">
+      <DockPanel DockPanel.Dock="Top" Height="56" Margin="22,0" VerticalAlignment="Center">
+        <TextBlock DockPanel.Dock="Right" Classes="meta" Text="{Binding StatusLabel}"
+                   HorizontalAlignment="Right" VerticalAlignment="Center"
+                   FontSize="{StaticResource TextSizeSmall}" />
+        <TextBlock Text="" />
+      </DockPanel>
+
+      <ScrollViewer>
+        <StackPanel Width="560" HorizontalAlignment="Center" Margin="0,24,0,40" Spacing="24">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Your priorities are set"
+                       FontSize="{StaticResource TextSizePrompt}" FontWeight="SemiBold" />
+            <TextBlock Classes="secondary"
+                       Text="Ordinal ranks for this period only — they can change the next time you sort."
+                       TextWrapping="Wrap" />
+          </StackPanel>
+
+          <ItemsControl ItemsSource="{Binding ResultGroups}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:TierGroupViewModel">
+                <StackPanel Spacing="8" Margin="0,0,0,18">
+                  <Border HorizontalAlignment="Left"
+                          Background="{StaticResource BrushLimeWash}"
+                          BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
+                          CornerRadius="4" Padding="10,3">
+                    <TextBlock Text="{Binding TierLabel}" FontSize="{StaticResource TextSizeSmall}"
+                               FontWeight="SemiBold" />
+                  </Border>
+                  <ItemsControl ItemsSource="{Binding Entries}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:RankEntryViewModel">
+                        <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
+                                Padding="4,9">
+                          <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Border Background="{StaticResource BrushHighlighterLime}" Padding="7,1">
+                              <TextBlock Classes="mono" Text="{Binding RankText}"
+                                         FontSize="{StaticResource TextSizeMeta}" FontWeight="SemiBold" />
+                            </Border>
+                            <TextBlock Text="{Binding Title}" FontWeight="Medium"
+                                       VerticalAlignment="Center" />
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <Button Classes="primary" Content="Done" HorizontalAlignment="Left"
+                  Command="{Binding CloseCommand}" />
+        </StackPanel>
+      </ScrollViewer>
+    </DockPanel>
+
+  </Panel>
+
+</UserControl>
