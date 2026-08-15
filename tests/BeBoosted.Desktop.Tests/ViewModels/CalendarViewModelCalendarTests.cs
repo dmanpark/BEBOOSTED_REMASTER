@@ -35,9 +35,9 @@ public sealed class CalendarViewModelCalendarTests
         var planning = new PlanningService(
             new InMemoryPlanningProposalRepository(), blocks,
             new InboxQueryService(tasks, blocks), prioritization, service, clock);
-        var calendar = new CalendarViewModel(
-            new AppSettings(new InMemorySettingsStore()), clock, service, tasks, planning,
-            new InMemoryProjectRepository());
+        var calendar = TestShell.CreateCalendarViewModel(
+            new InMemorySettingsStore(), clock, tasks, blocks,
+            new InMemoryProjectRepository(), service, planning, prioritization);
         return new Context(calendar, tasks, blocks, clock, service, planning, prioritization);
     }
 
@@ -122,11 +122,11 @@ public sealed class CalendarViewModelCalendarTests
     }
 
     [Fact]
-    public void HeaderMeta_SummarizesPlannedTimeForToday()
+    public void HeaderMeta_IsEmptyForToday()
     {
+        // The Daily list carries its own progress line; the top bar stays quiet.
         var context = Create(seed: true);
-        // Practice (90) + statement (60); done blocks excluded.
-        Assert.Equal("2 h 30 min planned", context.Calendar.HeaderMeta);
+        Assert.Equal(string.Empty, context.Calendar.HeaderMeta);
     }
 
     [Fact]

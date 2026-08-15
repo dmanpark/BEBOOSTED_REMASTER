@@ -34,8 +34,8 @@ public sealed class CommitmentEditorViewModelTests
             new InMemoryPlanningProposalRepository(), blocks,
             new InboxQueryService(tasks, blocks), new InMemoryPrioritizationRepository(),
             service, clock);
-        var calendar = new CalendarViewModel(
-            new AppSettings(new InMemorySettingsStore()), clock, service, tasks, planning, projects);
+        var calendar = TestShell.CreateCalendarViewModel(
+            new InMemorySettingsStore(), clock, tasks, blocks, projects, service, planning);
         return new Context(calendar, blocks, projects, clock, service);
     }
 

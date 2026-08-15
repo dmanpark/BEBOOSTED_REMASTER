@@ -327,6 +327,32 @@ public static class TestShell
             blocks, completions, new InMemoryCalendarMutations(blocks, completions), tasks, clock);
     }
 
+    /// <summary>
+    /// A CalendarViewModel over shared in-memory repositories, wiring the Daily list's
+    /// full dependency set (task capture/complete, inbox query, ranks, AI review flags).
+    /// </summary>
+    public static CalendarViewModel CreateCalendarViewModel(
+        InMemorySettingsStore store,
+        FakeClock clock,
+        InMemoryTaskRepository tasks,
+        InMemoryCalendarBlockRepository blocks,
+        InMemoryProjectRepository projects,
+        CalendarService service,
+        PlanningService planning,
+        InMemoryPrioritizationRepository? ranks = null)
+    {
+        var aiPermissions = new AiPermissionSettings(store);
+        var aiService = new AiService(
+            new BeBoosted.Infrastructure.Ai.LocalHeuristicAiProvider(new InMemoryResourceRepository(), projects),
+            new InMemoryAiProvenanceRepository(), tasks, aiPermissions, clock);
+        return new CalendarViewModel(
+            new AppSettings(store), clock, service, tasks, planning, projects,
+            new TaskService(tasks, clock),
+            new InboxQueryService(tasks, blocks),
+            new PrioritySortService(ranks ?? new InMemoryPrioritizationRepository(), clock),
+            aiService);
+    }
+
     public static ShellViewModel Create(
         InMemorySettingsStore? store = null,
         InMemoryTaskRepository? tasks = null,
@@ -365,7 +391,9 @@ public static class TestShell
             new FakeIndexer(resourceRepo, clock), repository, blockRepository,
             completionRepository, clock, aiService);
         return new ShellViewModel(
-            new CalendarViewModel(settings, clock, calendarService, repository, planning, projectRepo),
+            new CalendarViewModel(
+                settings, clock, calendarService, repository, planning, projectRepo,
+                taskService, inboxQuery, prioritySort, aiService),
             new InboxViewModel(taskService, inboxQuery, projectRepo, aiService, clock),
             new ProjectsViewModel(
                 projectService, projectRepo, fileRepo, resourceRepo, taskService,

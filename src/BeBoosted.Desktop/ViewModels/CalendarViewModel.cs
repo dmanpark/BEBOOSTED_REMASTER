@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Ai;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Planning;
+using BeBoosted.Application.Prioritization;
 using BeBoosted.Application.Projects;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
@@ -40,7 +42,11 @@ public sealed partial class CalendarViewModel : ViewModelBase
         CalendarService calendar,
         ITaskRepository tasks,
         PlanningService planning,
-        IProjectRepository projects)
+        IProjectRepository projects,
+        TaskService taskService,
+        InboxQueryService inboxQuery,
+        PrioritySortService prioritySort,
+        AiService ai)
     {
         _settings = settings;
         _clock = clock;
@@ -48,11 +54,16 @@ public sealed partial class CalendarViewModel : ViewModelBase
         _tasks = tasks;
         _planning = planning;
         _projects = projects;
+        Daily = new DailyListViewModel(
+            this, taskService, inboxQuery, prioritySort, ai, calendar, tasks, projects, clock);
         VisibleDate = clock.Today;
         ViewKind = settings.GetLastCalendarView();
         _initialized = true;
         Reload();
     }
+
+    /// <summary>The Today view's priority-first list (replaces the hourly timeline there).</summary>
+    public DailyListViewModel Daily { get; }
 
     /// <summary>Raised when blocks changed in a way that can affect the Inbox queue.</summary>
     public event Action? DataChanged;
@@ -126,7 +137,7 @@ public sealed partial class CalendarViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Quiet capacity summary (Today) or the ISO week number (Week).</summary>
+    /// <summary>The ISO week number (Week view). Today stays quiet — the Daily list owns progress.</summary>
     public string HeaderMeta
     {
         get
@@ -137,18 +148,7 @@ public sealed partial class CalendarViewModel : ViewModelBase
                 return $"Week {ISOWeek.GetWeekOfYear(monday.ToDateTime(TimeOnly.MinValue))}";
             }
 
-            var day = Days.FirstOrDefault();
-            if (day is null || day.Blocks.Count == 0)
-            {
-                return string.Empty;
-            }
-
-            var planned = TimeSpan.FromMinutes(day.Blocks
-                .Where(b => b.IsTaskBlock && !b.IsDone)
-                .Sum(b => b.DurationMinutes));
-            return planned > TimeSpan.Zero
-                ? $"{TaskRowViewModel.FormatDuration(planned)} planned"
-                : string.Empty;
+            return string.Empty;
         }
     }
 
@@ -313,6 +313,9 @@ public sealed partial class CalendarViewModel : ViewModelBase
     // ---- Plan drafts ----
 
     public bool HasDraft => _activeDraft is { State: ProposalState.Draft } draft && draft.PendingBlocks.Any();
+
+    /// <summary>Week keeps the floating draft card; Today shows an inline banner instead.</summary>
+    public bool ShowFloatingDraftCard => HasDraft && IsWeekView;
 
     public string DraftTitle => _activeDraft?.Period.Kind == PlanningPeriodKind.Today
         ? "Plan draft · Today"
@@ -603,13 +606,30 @@ public sealed partial class CalendarViewModel : ViewModelBase
             Days.Add(day);
         }
 
+        Daily.IsActive = ViewKind == CalendarViewKind.Today;
+        if (Daily.IsActive)
+        {
+            Daily.Rebuild(VisibleDate, occurrences, pendingProposals, conflicts);
+        }
+
         RefreshReviewNotice(titles);
         OnPropertyChanged(nameof(HeaderMeta));
         OnPropertyChanged(nameof(HasDraft));
+        OnPropertyChanged(nameof(ShowFloatingDraftCard));
         OnPropertyChanged(nameof(DraftTitle));
         OnPropertyChanged(nameof(DraftSummaryText));
         OnPropertyChanged(nameof(DraftLeftoverNote));
         OnPropertyChanged(nameof(HasDraftLeftoverNote));
+    }
+
+    /// <summary>
+    /// One announcement per user action: reloads the calendar (and Daily list) and tells
+    /// dependents (Inbox, Projects) that task or block data changed.
+    /// </summary>
+    internal void NotifyTasksMutated()
+    {
+        Reload();
+        DataChanged?.Invoke();
     }
 
     /// <summary>

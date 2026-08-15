@@ -20,13 +20,9 @@ public sealed class CalendarViewModelTests
             new InMemoryPlanningProposalRepository(), blocks,
             new InboxQueryService(tasks, blocks), new InMemoryPrioritizationRepository(),
             calendarService, clock);
-        return new CalendarViewModel(
-            new AppSettings(store ?? new InMemorySettingsStore()),
-            clock,
-            calendarService,
-            tasks,
-            planning,
-            new InMemoryProjectRepository());
+        return TestShell.CreateCalendarViewModel(
+            store ?? new InMemorySettingsStore(), clock, tasks, blocks,
+            new InMemoryProjectRepository(), calendarService, planning);
     }
 
     [Fact]

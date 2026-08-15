@@ -35,9 +35,9 @@ public sealed class CalendarBlockCapabilityTests
             new InMemoryPlanningProposalRepository(), blocks,
             new InboxQueryService(tasks, blocks), new InMemoryPrioritizationRepository(),
             service, clock);
-        var calendar = new CalendarViewModel(
-            new AppSettings(new InMemorySettingsStore()), clock, service, tasks, planning,
-            new InMemoryProjectRepository());
+        var calendar = TestShell.CreateCalendarViewModel(
+            new InMemorySettingsStore(), clock, tasks, blocks,
+            new InMemoryProjectRepository(), service, planning);
         return new Context(calendar, tasks, blocks, clock, service);
     }
 
