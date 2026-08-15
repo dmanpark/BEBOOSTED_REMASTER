@@ -60,6 +60,9 @@ public sealed partial class ShellViewModel : ViewModelBase
         Calendar.DataChanged += Inbox.Reload;
         Calendar.DataChanged += Projects.RefreshActive;
 
+        // Commitment completion from a Project page changes calendar data directly.
+        Projects.CalendarDataChanged += Calendar.Reload;
+
         Inbox.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(InboxViewModel.OpenCount))
@@ -157,10 +160,16 @@ public sealed partial class ShellViewModel : ViewModelBase
             onSaved: _ => RefreshInboxRanks());
     }
 
-    /// <summary>Escape closes the topmost temporary surface: sort, expanded chat, then drawer.</summary>
+    /// <summary>Escape closes the topmost temporary surface: modal, sort, expanded chat, then drawer.</summary>
     [RelayCommand]
     private void EscapePressed()
     {
+        if (Calendar.IsCommitmentEditorOpen)
+        {
+            Calendar.CloseCommitmentEditor();
+            return;
+        }
+
         if (ActiveSort is { } sort)
         {
             sort.CloseCommand.Execute(null);

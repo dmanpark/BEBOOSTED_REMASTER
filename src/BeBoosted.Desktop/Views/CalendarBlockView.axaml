@@ -7,6 +7,14 @@
              Focusable="True"
              AutomationProperties.Name="{Binding AccessibleName}">
 
+  <UserControl.Styles>
+    <!-- Checked treatment for the commitment done circle -->
+    <Style Selector="Button#CommitmentDoneButton.checked">
+      <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    </Style>
+  </UserControl.Styles>
+
   <Border Name="BlockBorder"
           Classes="calendarBlock"
           Classes.fixed="{Binding IsFixed}"
@@ -60,6 +68,22 @@
                 </StackPanel>
               </Flyout>
             </Button.Flyout>
+          </Button>
+
+          <!-- Completion circle (local fixed commitments): one click marks done,
+               another reopens — never opens the editor. -->
+          <Button Grid.Row="0" Grid.Column="0" Grid.RowSpan="2"
+                  Name="CommitmentDoneButton"
+                  Classes="icon" Classes.checked="{Binding IsDone}"
+                  Width="20" Height="20" CornerRadius="10"
+                  Margin="0,1,8,0" VerticalAlignment="Top"
+                  BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1.5"
+                  IsVisible="{Binding ShowCommitmentCompletionControl}"
+                  Command="{Binding ToggleCommitmentDoneCommand}"
+                  AutomationProperties.Name="{Binding CompletionControlName}"
+                  ToolTip.Tip="{Binding CompletionControlName}">
+            <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
+                  StrokeThickness="1.8" IsVisible="{Binding IsDone}" />
           </Button>
 
           <!-- Draft proposal control: approve / remove / Why? -->
@@ -137,7 +161,8 @@
                        IsVisible="{Binding HasSessionLabel}" VerticalAlignment="Center" />
             <Path Classes="icon" Data="{StaticResource IconLock}" Width="11" Height="11"
                   StrokeThickness="1.2" Stroke="{StaticResource BrushPencilGray}"
-                  IsVisible="{Binding IsFixed}" VerticalAlignment="Center" />
+                  IsVisible="{Binding IsLocked}" VerticalAlignment="Center"
+                  ToolTip.Tip="Synced from an external calendar — BeBoosted never edits it" />
             <Border Background="{StaticResource BrushWorkbenchCream}"
                     BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
                     CornerRadius="3" Padding="4,0"
@@ -157,10 +182,10 @@
                  StrokeDashArray="3,2" RadiusX="5" RadiusY="5"
                  IsHitTestVisible="False" IsVisible="{Binding IsProposal}" />
 
-      <!-- resize grip (task blocks and proposals) -->
+      <!-- resize grip (task blocks, proposals, and local commitments) -->
       <Border Name="ResizeGrip" Height="7" VerticalAlignment="Bottom"
               Background="Transparent" Cursor="SizeNorthSouth"
-              IsVisible="{Binding IsInteractive}" />
+              IsVisible="{Binding CanResize}" />
     </Grid>
   </Border>
 

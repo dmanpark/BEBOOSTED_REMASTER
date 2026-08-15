@@ -5,7 +5,7 @@ namespace BeBoosted.Desktop.Tests.CalendarEngine;
 public sealed class OverlapLayoutTests
 {
     private static LayoutInterval At(int key, int startHour, int startMinute, int endHour, int endMinute)
-        => new(key, new TimeOnly(startHour, startMinute), new TimeOnly(endHour, endMinute));
+        => new(key, (startHour * 60) + startMinute, (endHour * 60) + endMinute);
 
     [Fact]
     public void DisjointIntervals_EachGetFullWidth()

@@ -15,10 +15,10 @@ public sealed class TimelineDecorations : Control
         AvaloniaProperty.Register<TimelineDecorations, double>(nameof(HourHeight), 56);
 
     public static readonly StyledProperty<int> StartHourProperty =
-        AvaloniaProperty.Register<TimelineDecorations, int>(nameof(StartHour), 6);
+        AvaloniaProperty.Register<TimelineDecorations, int>(nameof(StartHour), 0);
 
     public static readonly StyledProperty<int> EndHourProperty =
-        AvaloniaProperty.Register<TimelineDecorations, int>(nameof(EndHour), 23);
+        AvaloniaProperty.Register<TimelineDecorations, int>(nameof(EndHour), 24);
 
     /// <summary>Minutes since midnight for the current-time rule; negative hides it.</summary>
     public static readonly StyledProperty<double> NowMinutesProperty =
@@ -81,7 +81,7 @@ public sealed class TimelineDecorations : Control
     }
 
     public TimelineGeometry Geometry
-        => new(new TimeOnly(StartHour, 0), new TimeOnly(EndHour, 0), HourHeight);
+        => new(StartHour * 60, EndHour * 60, HourHeight);
 
     protected override Size MeasureOverride(Size availableSize)
         => new(double.IsInfinity(availableSize.Width) ? 0 : availableSize.Width, Geometry.TotalHeight);

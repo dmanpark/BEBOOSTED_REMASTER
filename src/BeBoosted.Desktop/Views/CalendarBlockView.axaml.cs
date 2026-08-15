@@ -4,7 +4,6 @@ using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using Avalonia.Media;
 using Avalonia.VisualTree;
 using BeBoosted.Desktop.Controls;
 using BeBoosted.Desktop.ViewModels;
@@ -14,7 +13,8 @@ namespace BeBoosted.Desktop.Views;
 /// <summary>
 /// Block interactions: pointer drag to move (snap 15 min, Alt for 5), bottom-grip resize,
 /// and keyboard movement (↑/↓ move, Alt for fine, Shift+↑/↓ resize, ←/→ change day,
-/// Enter/Space outcome menu, Delete unschedule). Fixed commitments are locked.
+/// Enter/Space outcome menu or editor, Delete by kind). A click below the drag threshold
+/// opens the editor for local commitments. External commitments stay locked.
 /// </summary>
 public partial class CalendarBlockView : UserControl
 {
@@ -23,6 +23,7 @@ public partial class CalendarBlockView : UserControl
     private double _originStartMinutes;
     private double _originDurationMinutes;
     private int _originColumn;
+    private int _currentColumn;
     private bool _moving;
     private bool _resizing;
     private bool _dragConfirmed;
@@ -33,6 +34,7 @@ public partial class CalendarBlockView : UserControl
         AddHandler(PointerPressedEvent, OnPointerPressedHandler, RoutingStrategies.Tunnel);
         AddHandler(PointerMovedEvent, OnPointerMovedHandler, RoutingStrategies.Tunnel);
         AddHandler(PointerReleasedEvent, OnPointerReleasedHandler, RoutingStrategies.Tunnel);
+        AddHandler(PointerCaptureLostEvent, OnPointerCaptureLostHandler);
         AddHandler(KeyDownEvent, OnKeyDownHandler);
     }
 
@@ -43,9 +45,17 @@ public partial class CalendarBlockView : UserControl
     private static int Snap(KeyModifiers modifiers)
         => modifiers.HasFlag(KeyModifiers.Alt) ? CalendarViewModel.FineSnapMinutes : CalendarViewModel.SnapMinutes;
 
+    /// <summary>
+    /// Layout minutes run 0–1440 with an exclusive 24:00 day end, which
+    /// <see cref="TimeOnly"/> cannot express — clamp to the domain's 23:59 maximum.
+    /// </summary>
+    private static TimeOnly TimeFromMinutes(double minutes)
+        => TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(Math.Min(minutes, (24 * 60) - 1)));
+
     private void OnPointerPressedHandler(object? sender, PointerPressedEventArgs e)
     {
-        if (Vm is not { IsInteractive: true } || HostPresenter is null)
+        if (Vm is not { } vm || HostPresenter is null
+            || (!vm.CanMove && !vm.CanResize && !vm.CanEdit))
         {
             if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
             {
@@ -76,9 +86,10 @@ public partial class CalendarBlockView : UserControl
         _originStartMinutes = TimelinePanel.GetStartMinutes(HostPresenter);
         _originDurationMinutes = TimelinePanel.GetDurationMinutes(HostPresenter);
         _originColumn = _surface.ColumnFromX(_pressPoint.X);
-        _resizing = e.Source is Visual gripSource
+        _currentColumn = _originColumn;
+        _resizing = vm.CanResize && e.Source is Visual gripSource
             && gripSource.FindAncestorOfType<Border>(includeSelf: true) is { Name: "ResizeGrip" };
-        _moving = !_resizing;
+        _moving = !_resizing && vm.CanMove;
         _dragConfirmed = false;
         e.Pointer.Capture(this);
         Focus();
@@ -119,10 +130,26 @@ public partial class CalendarBlockView : UserControl
             (_surface.EndHour * 60.0) - _originDurationMinutes);
         TimelinePanel.SetStartMinutes(HostPresenter, start);
 
-        var column = _surface.ColumnFromX(position.X);
-        RenderTransform = column != _originColumn
-            ? new TranslateTransform((column - _originColumn) * _surface.ColumnWidth, 0)
-            : null;
+        if (Vm is not { } vm)
+        {
+            return;
+        }
+
+        // Recurring commitments move as a whole series — a day change would be rejected
+        // on release, so their preview never leaves the origin column.
+        _currentColumn = vm.IsRecurring ? _originColumn : _surface.ColumnFromX(position.X);
+        if (_currentColumn != _originColumn)
+        {
+            // The block's own subtree clips to its day column, so the cross-day preview
+            // renders on the surface overlay instead; hide the source meanwhile.
+            Opacity = 0;
+            _surface.ShowDragPreview(vm, _currentColumn, start, _originDurationMinutes);
+        }
+        else
+        {
+            Opacity = 1;
+            _surface.ClearDragPreview();
+        }
     }
 
     private void OnPointerReleasedHandler(object? sender, PointerReleasedEventArgs e)
@@ -132,30 +159,65 @@ public partial class CalendarBlockView : UserControl
             return;
         }
 
+        // Snapshot and reset the drag state before releasing capture: Capture(null)
+        // raises PointerCaptureLost synchronously, and its abort cleanup must see an
+        // already-idle gesture instead of reverting the values this release persists.
+        var resizing = _resizing;
+        var confirmed = _dragConfirmed;
+        var column = _currentColumn;
+        _moving = _resizing = false;
+        _dragConfirmed = false;
         e.Pointer.Capture(null);
-        if (_surface is null || HostPresenter is null || Vm is null || !_dragConfirmed)
+
+        if (_surface is null || HostPresenter is null || Vm is null)
         {
-            _moving = _resizing = false;
             return;
         }
 
-        if (_resizing)
+        if (!confirmed)
+        {
+            // A press that never crossed the drag threshold is a click:
+            // local commitments open their editor, everything else just keeps focus.
+            Vm.Edit();
+            return;
+        }
+
+        if (resizing)
         {
             var duration = TimelinePanel.GetDurationMinutes(HostPresenter);
             var start = TimelinePanel.GetStartMinutes(HostPresenter);
-            Vm.ResizeTo(TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(start + duration)));
+            Vm.ResizeTo(TimeFromMinutes(start + duration));
         }
         else
         {
-            var position = e.GetPosition(_surface.DaysHost);
-            var column = _surface.ColumnFromX(position.X);
-            RenderTransform = null;
+            // Persist exactly the day and time the preview showed last.
+            Opacity = 1;
+            _surface.ClearDragPreview();
             var start = TimelinePanel.GetStartMinutes(HostPresenter);
-            Vm.MoveTo(
-                _surface.DateForColumn(column),
-                TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(start)));
+            Vm.MoveTo(_surface.DateForColumn(column), TimeFromMinutes(start));
+        }
+    }
+
+    /// <summary>
+    /// Losing pointer capture mid-drag (window deactivation, capture theft) aborts the
+    /// gesture: every temporary preview value reverts and nothing is persisted.
+    /// </summary>
+    private void OnPointerCaptureLostHandler(object? sender, PointerCaptureLostEventArgs e)
+    {
+        if (!_moving && !_resizing)
+        {
+            return;
         }
 
+        if (_dragConfirmed && HostPresenter is not null)
+        {
+            // Clearing the local values restores the style-bound view-model position.
+            HostPresenter.ClearValue(TimelinePanel.StartMinutesProperty);
+            HostPresenter.ClearValue(TimelinePanel.DurationMinutesProperty);
+        }
+
+        Opacity = 1;
+        _surface?.ClearDragPreview();
         _moving = _resizing = false;
         _dragConfirmed = false;
     }
@@ -167,60 +229,63 @@ public partial class CalendarBlockView : UserControl
             return;
         }
 
-        if (Vm.IsInteractive)
+        var step = Snap(e.KeyModifiers);
+        var surface = _surface ?? this.FindAncestorOfType<TimelineSurfaceView>();
+        switch (e.Key)
         {
-            var step = Snap(e.KeyModifiers);
-            var surface = _surface ?? this.FindAncestorOfType<TimelineSurfaceView>();
-            switch (e.Key)
-            {
-                case Key.Up when !e.KeyModifiers.HasFlag(KeyModifiers.Shift):
-                    surface?.RememberFocus(Vm.Id);
-                    Vm.Nudge(-step);
+            case Key.Up when Vm.CanMove && !e.KeyModifiers.HasFlag(KeyModifiers.Shift):
+                surface?.RememberFocus(Vm.Id);
+                Vm.Nudge(-step);
+                e.Handled = true;
+                return;
+            case Key.Down when Vm.CanMove && !e.KeyModifiers.HasFlag(KeyModifiers.Shift):
+                surface?.RememberFocus(Vm.Id);
+                Vm.Nudge(step);
+                e.Handled = true;
+                return;
+            case Key.Up when Vm.CanResize && e.KeyModifiers.HasFlag(KeyModifiers.Shift):
+                surface?.RememberFocus(Vm.Id);
+                Vm.ResizeBy(-step);
+                e.Handled = true;
+                return;
+            case Key.Down when Vm.CanResize && e.KeyModifiers.HasFlag(KeyModifiers.Shift):
+                surface?.RememberFocus(Vm.Id);
+                Vm.ResizeBy(step);
+                e.Handled = true;
+                return;
+            case Key.Left when Vm.CanMove:
+                surface?.RememberFocus(Vm.Id);
+                Vm.NudgeDays(-1);
+                e.Handled = true;
+                return;
+            case Key.Right when Vm.CanMove:
+                surface?.RememberFocus(Vm.Id);
+                Vm.NudgeDays(1);
+                e.Handled = true;
+                return;
+            case Key.Delete when Vm.CanDelete:
+                // Dispatches by kind; external commitments never reach here.
+                Vm.UnscheduleCommand.Execute(null);
+                e.Handled = true;
+                return;
+            case Key.Enter or Key.Space:
+                if (CompleteButton.IsVisible && CompleteButton.Flyout is { } outcomeFlyout)
+                {
+                    outcomeFlyout.ShowAt(CompleteButton);
                     e.Handled = true;
-                    return;
-                case Key.Down when !e.KeyModifiers.HasFlag(KeyModifiers.Shift):
-                    surface?.RememberFocus(Vm.Id);
-                    Vm.Nudge(step);
+                }
+                else if (ProposalButton.IsVisible && ProposalButton.Flyout is { } proposalFlyout)
+                {
+                    proposalFlyout.ShowAt(ProposalButton);
                     e.Handled = true;
-                    return;
-                case Key.Up when e.KeyModifiers.HasFlag(KeyModifiers.Shift):
-                    surface?.RememberFocus(Vm.Id);
-                    Vm.ResizeBy(-step);
+                }
+                else if (Vm.CanEdit)
+                {
+                    Vm.Edit();
                     e.Handled = true;
-                    return;
-                case Key.Down when e.KeyModifiers.HasFlag(KeyModifiers.Shift):
-                    surface?.RememberFocus(Vm.Id);
-                    Vm.ResizeBy(step);
-                    e.Handled = true;
-                    return;
-                case Key.Left:
-                    surface?.RememberFocus(Vm.Id);
-                    Vm.NudgeDays(-1);
-                    e.Handled = true;
-                    return;
-                case Key.Right:
-                    surface?.RememberFocus(Vm.Id);
-                    Vm.NudgeDays(1);
-                    e.Handled = true;
-                    return;
-                case Key.Delete:
-                    Vm.UnscheduleCommand.Execute(null);
-                    e.Handled = true;
-                    return;
-                case Key.Enter or Key.Space:
-                    if (CompleteButton.IsVisible && CompleteButton.Flyout is { } outcomeFlyout)
-                    {
-                        outcomeFlyout.ShowAt(CompleteButton);
-                        e.Handled = true;
-                    }
-                    else if (ProposalButton.IsVisible && ProposalButton.Flyout is { } proposalFlyout)
-                    {
-                        proposalFlyout.ShowAt(ProposalButton);
-                        e.Handled = true;
-                    }
+                }
 
-                    return;
-            }
+                return;
         }
     }
 

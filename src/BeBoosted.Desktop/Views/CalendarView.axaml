@@ -5,6 +5,8 @@
              x:Class="BeBoosted.Desktop.Views.CalendarView"
              x:DataType="vm:CalendarViewModel">
 
+  <Panel>
+
   <DockPanel>
 
     <!-- Compact top bar: date navigation and the Today/Week switch -->
@@ -40,63 +42,8 @@
                     HorizontalAlignment="Right" VerticalAlignment="Center">
           <Button Name="NewCommitmentButton" Height="28" Padding="12,0"
                   Content="New commitment"
-                  Command="{Binding PrepareCommitmentEditorCommand}"
-                  AutomationProperties.Name="New fixed commitment">
-            <Button.Flyout>
-              <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
-                <StackPanel Width="288" Spacing="10" Margin="4">
-                  <TextBlock Text="New commitment" FontWeight="SemiBold" />
-                  <TextBox Text="{Binding CommitmentTitle}" PlaceholderText="Title"
-                           AutomationProperties.Name="Commitment title" />
-                  <DockPanel>
-                    <TextBlock Classes="metaLabel" Text="DATE" Width="64" VerticalAlignment="Center" />
-                    <DatePicker SelectedDate="{Binding CommitmentDate}"
-                                AutomationProperties.Name="Commitment date" />
-                  </DockPanel>
-                  <DockPanel>
-                    <TextBlock Classes="metaLabel" Text="START" Width="64" VerticalAlignment="Center" />
-                    <TimePicker SelectedTime="{Binding CommitmentStart}" ClockIdentifier="12HourClock"
-                                AutomationProperties.Name="Start time" />
-                  </DockPanel>
-                  <DockPanel>
-                    <TextBlock Classes="metaLabel" Text="END" Width="64" VerticalAlignment="Center" />
-                    <TimePicker SelectedTime="{Binding CommitmentEnd}" ClockIdentifier="12HourClock"
-                                AutomationProperties.Name="End time" />
-                  </DockPanel>
-                  <CheckBox IsChecked="{Binding CommitmentRepeatsWeekly}" Content="Repeats weekly" />
-                  <ItemsControl ItemsSource="{Binding CommitmentDays}"
-                                IsVisible="{Binding CommitmentRepeatsWeekly}">
-                    <ItemsControl.ItemsPanel>
-                      <ItemsPanelTemplate>
-                        <StackPanel Orientation="Horizontal" Spacing="4" />
-                      </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:DayToggleViewModel">
-                        <ToggleButton Classes="rail" Width="32" Height="26" CornerRadius="4"
-                                      IsChecked="{Binding IsSelected}"
-                                      AutomationProperties.Name="{Binding Day}">
-                          <TextBlock Classes="meta" Text="{Binding Label}"
-                                     Foreground="{StaticResource BrushGraphite}" />
-                        </ToggleButton>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                  <TextBlock Foreground="{StaticResource BrushInkHover}"
-                             FontSize="{StaticResource TextSizeSmall}"
-                             Text="{Binding CommitmentError}"
-                             IsVisible="{Binding CommitmentError, Converter={x:Static ObjectConverters.IsNotNull}}"
-                             TextWrapping="Wrap" />
-                  <DockPanel Margin="0,4,0,0">
-                    <Button DockPanel.Dock="Right" Classes="primary" Content="Add to calendar"
-                            Click="OnSaveCommitmentClick" />
-                    <TextBlock Classes="meta" Text="shown cream-gray · locked"
-                               VerticalAlignment="Center" />
-                  </DockPanel>
-                </StackPanel>
-              </Flyout>
-            </Button.Flyout>
-          </Button>
+                  Command="{Binding OpenNewCommitmentEditorCommand}"
+                  AutomationProperties.Name="New fixed commitment" />
 
           <Border Classes="segmentGroup" VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal">
@@ -204,5 +151,157 @@
     </Panel>
 
   </DockPanel>
+
+  <!-- Commitment editor: the one shared New/Edit form, centered over the calendar.
+       The scrim blocks every background calendar interaction while it is open. -->
+  <Border Name="CommitmentModalScrim"
+          Background="{StaticResource BrushGraphite40}"
+          IsVisible="{Binding IsCommitmentEditorOpen}"
+          KeyDown="OnCommitmentModalKeyDown">
+    <ContentControl Content="{Binding CommitmentEditor}"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Margin="24">
+      <ContentControl.ContentTemplate>
+        <DataTemplate x:DataType="vm:CommitmentEditorViewModel">
+          <Border Name="CommitmentModalCard" Width="408"
+                  Background="{StaticResource BrushPaperWhite}"
+                  BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
+                  CornerRadius="{StaticResource RadiusDrawer}"
+                  BoxShadow="{StaticResource ShadowDrawer}"
+                  AutomationProperties.Name="{Binding Heading}">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+              <StackPanel Margin="26,22,26,20" Spacing="14">
+                <TextBlock Name="CommitmentEditorHeading" Text="{Binding Heading}"
+                           FontSize="{StaticResource TextSizeHeading}" FontWeight="SemiBold" />
+
+                <StackPanel Spacing="6">
+                  <TextBlock Classes="metaLabel" Text="TITLE" />
+                  <TextBox Name="CommitmentTitleBox" Text="{Binding Title}"
+                           PlaceholderText="What is it?"
+                           AutomationProperties.Name="Commitment title" />
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Classes="metaLabel" Text="PROJECT" />
+                  <ComboBox Name="CommitmentProjectSelector"
+                            ItemsSource="{Binding ProjectOptions}"
+                            SelectedItem="{Binding SelectedProject}"
+                            HorizontalAlignment="Stretch"
+                            AutomationProperties.Name="Project">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:ProjectOptionViewModel">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <Border Width="10" Height="10" CornerRadius="3"
+                                  Background="{Binding AccentBrush}"
+                                  IsVisible="{Binding HasAccent}"
+                                  VerticalAlignment="Center" />
+                          <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                        </StackPanel>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <TextBlock Classes="meta" Text="Create projects from Projects."
+                             IsVisible="{Binding !HasProjects}" />
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Classes="metaLabel" Text="DATE" />
+                  <DatePicker SelectedDate="{Binding Date}" HorizontalAlignment="Stretch"
+                              AutomationProperties.Name="Commitment date" />
+                </StackPanel>
+
+                <Grid ColumnDefinitions="*,14,*">
+                  <StackPanel Grid.Column="0" Spacing="6">
+                    <TextBlock Classes="metaLabel" Text="START" />
+                    <TimePicker SelectedTime="{Binding Start}" ClockIdentifier="12HourClock"
+                                HorizontalAlignment="Stretch" MinWidth="0"
+                                AutomationProperties.Name="Start time" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Spacing="6">
+                    <TextBlock Classes="metaLabel" Text="END" />
+                    <TimePicker SelectedTime="{Binding End}" ClockIdentifier="12HourClock"
+                                HorizontalAlignment="Stretch" MinWidth="0"
+                                AutomationProperties.Name="End time" />
+                  </StackPanel>
+                </Grid>
+
+                <StackPanel Spacing="8">
+                  <CheckBox IsChecked="{Binding RepeatsWeekly}" Content="Repeats weekly" />
+                  <ItemsControl ItemsSource="{Binding Days}" IsVisible="{Binding RepeatsWeekly}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="4" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:DayToggleViewModel">
+                        <ToggleButton Classes="rail" Width="32" Height="26" CornerRadius="4"
+                                      IsChecked="{Binding IsSelected}"
+                                      AutomationProperties.Name="{Binding Day}">
+                          <TextBlock Classes="meta" Text="{Binding Label}"
+                                     Foreground="{StaticResource BrushGraphite}" />
+                        </ToggleButton>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+
+                <!-- Completion state (Edit mode only); new commitments start incomplete -->
+                <StackPanel Spacing="4" IsVisible="{Binding IsEditMode}">
+                  <CheckBox Name="CommitmentCompletedBox" IsChecked="{Binding IsCompleted}"
+                            Content="Completed"
+                            AutomationProperties.Name="Completed" />
+                  <TextBlock Classes="meta" Text="{Binding CompletionScopeNote}"
+                             Margin="28,0,0,0"
+                             IsVisible="{Binding CompletionScopeNote, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                </StackPanel>
+
+                <TextBlock Foreground="{StaticResource BrushInkHover}"
+                           FontSize="{StaticResource TextSizeSmall}"
+                           Text="{Binding Error}"
+                           IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
+                           TextWrapping="Wrap" />
+
+                <DockPanel Margin="0,6,0,0" IsVisible="{Binding !IsConfirmingDelete}">
+                  <Button Name="CommitmentDeleteButton" DockPanel.Dock="Left"
+                          Content="{Binding DeleteButtonText}"
+                          IsVisible="{Binding IsEditMode}"
+                          Command="{Binding RequestDeleteCommand}"
+                          AutomationProperties.Name="{Binding DeleteButtonText}" />
+                  <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button Content="Cancel" Command="{Binding CancelCommand}" />
+                    <Button Name="CommitmentSaveButton" Classes="primary"
+                            Content="{Binding SaveButtonText}"
+                            Command="{Binding SaveCommand}" />
+                  </StackPanel>
+                </DockPanel>
+
+                <!-- Inline deletion confirmation: errors and confirmations stay in the dialog -->
+                <Border IsVisible="{Binding IsConfirmingDelete}"
+                        Background="{StaticResource BrushWorkbenchCream}"
+                        BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusControl}" Padding="12,10">
+                  <StackPanel Spacing="10">
+                    <TextBlock Text="{Binding DeleteConfirmationText}"
+                               FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                      <Button Content="Keep" Command="{Binding CancelDeleteCommand}" />
+                      <Button Name="CommitmentConfirmDeleteButton"
+                              Content="{Binding DeleteButtonText}" FontWeight="SemiBold"
+                              BorderBrush="{StaticResource BrushBorderEmphasis}"
+                              Command="{Binding ConfirmDeleteCommand}"
+                              AutomationProperties.Name="{Binding DeleteButtonText, StringFormat='Confirm: {0}'}" />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </ScrollViewer>
+          </Border>
+        </DataTemplate>
+      </ContentControl.ContentTemplate>
+    </ContentControl>
+  </Border>
+
+  </Panel>
 
 </UserControl>

@@ -31,6 +31,7 @@ public sealed class CalendarBlock
     private CalendarBlock(
         CalendarBlockId id,
         TaskId? taskId,
+        ProjectId? projectId,
         string? title,
         DateOnly date,
         TimeOnly startTime,
@@ -47,6 +48,7 @@ public sealed class CalendarBlock
     {
         Id = id;
         TaskId = taskId;
+        ProjectId = projectId;
         Title = title;
         Date = date;
         StartTime = startTime;
@@ -65,6 +67,12 @@ public sealed class CalendarBlock
     public CalendarBlockId Id { get; }
 
     public TaskId? TaskId { get; }
+
+    /// <summary>
+    /// Direct project link for fixed commitments. Task blocks derive their project from
+    /// the backing task instead — never duplicate that ownership here.
+    /// </summary>
+    public ProjectId? ProjectId { get; private set; }
 
     /// <summary>Fixed commitments carry their own title; task blocks display the task's.</summary>
     public string? Title { get; private set; }
@@ -105,17 +113,13 @@ public sealed class CalendarBlock
         TimeOnly startTime,
         TimeOnly endTime,
         DateTimeOffset now,
-        RecurrenceRule? recurrence = null)
+        RecurrenceRule? recurrence = null,
+        ProjectId? projectId = null)
     {
         ValidateTimes(startTime, endTime);
-        var trimmed = title?.Trim() ?? string.Empty;
-        if (trimmed.Length == 0)
-        {
-            throw new DomainException("A commitment needs a title.");
-        }
-
+        var trimmed = ValidateTitle(title);
         return new CalendarBlock(
-            CalendarBlockId.New(), null, trimmed, date, startTime, endTime,
+            CalendarBlockId.New(), null, projectId, trimmed, date, startTime, endTime,
             BlockKind.FixedCommitment, recurrence, LocalProvider, null, 0,
             BlockOutcome.None, null, now, now);
     }
@@ -129,7 +133,7 @@ public sealed class CalendarBlock
     {
         ValidateTimes(startTime, endTime);
         return new CalendarBlock(
-            CalendarBlockId.New(), taskId, null, date, startTime, endTime,
+            CalendarBlockId.New(), taskId, null, null, date, startTime, endTime,
             BlockKind.TaskBlock, null, LocalProvider, null, 0,
             BlockOutcome.None, null, now, now);
     }
@@ -137,6 +141,7 @@ public sealed class CalendarBlock
     public static CalendarBlock Rehydrate(
         CalendarBlockId id,
         TaskId? taskId,
+        ProjectId? projectId,
         string? title,
         DateOnly date,
         TimeOnly startTime,
@@ -151,7 +156,7 @@ public sealed class CalendarBlock
         DateTimeOffset createdAt,
         DateTimeOffset modifiedAt)
         => new(
-            id, taskId, title, date, startTime, endTime, kind, recurrence, provider,
+            id, taskId, projectId, title, date, startTime, endTime, kind, recurrence, provider,
             externalId, syncState, outcome, outcomeRecordedAt, createdAt, modifiedAt);
 
     public void Reschedule(DateOnly date, TimeOnly startTime, TimeOnly endTime, DateTimeOffset now)
@@ -170,28 +175,48 @@ public sealed class CalendarBlock
 
     public void Rename(string title, DateTimeOffset now)
     {
-        if (Kind != BlockKind.FixedCommitment)
-        {
-            throw new DomainException("Only fixed commitments carry their own title.");
-        }
+        EnsureLocalFixedCommitment();
+        Title = ValidateTitle(title);
+        Touch(now);
+    }
 
-        var trimmed = title?.Trim() ?? string.Empty;
-        if (trimmed.Length == 0)
-        {
-            throw new DomainException("A commitment needs a title.");
-        }
+    /// <summary>Links a local fixed commitment to a project (or clears the link).</summary>
+    public void AssignToProject(ProjectId? projectId, DateTimeOffset now)
+    {
+        EnsureLocalFixedCommitment();
+        ProjectId = projectId;
+        Touch(now);
+    }
+
+    /// <summary>
+    /// Edits a local fixed commitment in one step. Validates everything before
+    /// mutating anything, so a rejected edit leaves the block untouched.
+    /// </summary>
+    public void UpdateCommitment(
+        string title,
+        DateOnly date,
+        TimeOnly startTime,
+        TimeOnly endTime,
+        RecurrenceRule? recurrence,
+        ProjectId? projectId,
+        DateTimeOffset now)
+    {
+        EnsureLocalFixedCommitment();
+        ValidateTimes(startTime, endTime);
+        var trimmed = ValidateTitle(title);
 
         Title = trimmed;
+        Date = date;
+        StartTime = startTime;
+        EndTime = endTime;
+        Recurrence = recurrence;
+        ProjectId = projectId;
         Touch(now);
     }
 
     public void SetRecurrence(RecurrenceRule? recurrence, DateTimeOffset now)
     {
-        if (Kind != BlockKind.FixedCommitment)
-        {
-            throw new DomainException("Only fixed commitments recur.");
-        }
-
+        EnsureLocalFixedCommitment();
         Recurrence = recurrence;
         Touch(now);
     }
@@ -218,11 +243,45 @@ public sealed class CalendarBlock
     public bool OccursOn(DateOnly date)
         => Recurrence is { } recurrence ? recurrence.OccursOn(date, Date) : Date == date;
 
+    /// <summary>
+    /// Validates that the occurrence on the given date can be completed or reopened:
+    /// local fixed commitments only, and only on dates the block actually occurs.
+    /// </summary>
+    public void EnsureOccurrenceCompletable(DateOnly occurrenceDate)
+    {
+        EnsureLocalFixedCommitment();
+        if (!OccursOn(occurrenceDate))
+        {
+            throw new DomainException("That commitment has no occurrence on that date.");
+        }
+    }
+
     private static void ValidateTimes(TimeOnly startTime, TimeOnly endTime)
     {
         if (endTime <= startTime)
         {
             throw new DomainException("A block must end after it starts.");
+        }
+    }
+
+    private static string ValidateTitle(string title)
+    {
+        var trimmed = title?.Trim() ?? string.Empty;
+        return trimmed.Length == 0
+            ? throw new DomainException("A commitment needs a title.")
+            : trimmed;
+    }
+
+    private void EnsureLocalFixedCommitment()
+    {
+        if (Kind != BlockKind.FixedCommitment)
+        {
+            throw new DomainException("Only fixed commitments can be edited this way.");
+        }
+
+        if (IsExternal)
+        {
+            throw new DomainException("External events are never edited by BeBoosted.");
         }
     }
 

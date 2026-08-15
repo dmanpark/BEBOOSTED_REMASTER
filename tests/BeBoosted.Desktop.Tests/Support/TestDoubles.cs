@@ -88,6 +88,11 @@ public sealed class InMemoryCalendarBlockRepository : ICalendarBlockRepository
     public IReadOnlyList<CalendarBlock> GetForTask(TaskId taskId)
         => _blocks.Where(b => b.TaskId == taskId).OrderBy(b => b.Date).ToList();
 
+    public IReadOnlyList<CalendarBlock> GetForProject(ProjectId projectId)
+        => _blocks.Where(b => b.ProjectId == projectId)
+            .OrderBy(b => b.Date).ThenBy(b => b.StartTime)
+            .ToList();
+
     public IReadOnlyList<CalendarBlock> GetElapsedWithoutOutcome(DateOnly today, TimeOnly now)
         => _blocks
             .Where(b => b.Kind == BlockKind.TaskBlock && b.Outcome == BlockOutcome.None
@@ -100,6 +105,44 @@ public sealed class InMemoryCalendarBlockRepository : ICalendarBlockRepository
             .Where(b => b.TaskId is not null && b.Outcome == BlockOutcome.None)
             .Select(b => b.TaskId!.Value)
             .ToHashSet();
+}
+
+public sealed class InMemoryCommitmentCompletionRepository : ICommitmentCompletionRepository
+{
+    private readonly Dictionary<(CalendarBlockId, DateOnly), CommitmentCompletion> _completions = [];
+
+    public void Add(CommitmentCompletion completion)
+        => _completions[(completion.BlockId, completion.OccurrenceDate)] = completion;
+
+    public void Remove(CalendarBlockId blockId, DateOnly occurrenceDate)
+        => _completions.Remove((blockId, occurrenceDate));
+
+    public CommitmentCompletion? Get(CalendarBlockId blockId, DateOnly occurrenceDate)
+        => _completions.GetValueOrDefault((blockId, occurrenceDate));
+
+    public IReadOnlyList<CommitmentCompletion> GetForBlock(CalendarBlockId blockId)
+        => _completions.Values
+            .Where(c => c.BlockId == blockId)
+            .OrderBy(c => c.OccurrenceDate)
+            .ToList();
+
+    public IReadOnlyList<CommitmentCompletion> GetBetween(DateOnly from, DateOnly to)
+        => _completions.Values
+            .Where(c => c.OccurrenceDate >= from && c.OccurrenceDate <= to)
+            .OrderBy(c => c.OccurrenceDate)
+            .ToList();
+}
+
+/// <summary>
+/// Passes the shared in-memory repositories straight through — no rollback, so
+/// atomicity itself is proven against real SQLite in BeBoosted.Tests.
+/// </summary>
+public sealed class InMemoryCalendarMutations(
+    ICalendarBlockRepository blocks,
+    ICommitmentCompletionRepository completions) : ICalendarMutations
+{
+    public void Execute(Action<ICalendarBlockRepository, ICommitmentCompletionRepository> mutation)
+        => mutation(blocks, completions);
 }
 
 public sealed class InMemoryPlanningProposalRepository : IPlanningProposalRepository
@@ -275,11 +318,21 @@ public static class TestShell
     /// <summary>Tuesday, August 11, 2026 — the date used across the design frames.</summary>
     public static readonly DateOnly DesignDate = new(2026, 8, 11);
 
+    /// <summary>A CalendarService over in-memory doubles with its own completion store.</summary>
+    public static CalendarService CreateCalendarService(
+        InMemoryCalendarBlockRepository blocks, InMemoryTaskRepository tasks, IClock clock)
+    {
+        var completions = new InMemoryCommitmentCompletionRepository();
+        return new CalendarService(
+            blocks, completions, new InMemoryCalendarMutations(blocks, completions), tasks, clock);
+    }
+
     public static ShellViewModel Create(
         InMemorySettingsStore? store = null,
         InMemoryTaskRepository? tasks = null,
         InMemoryCalendarBlockRepository? blocks = null,
         InMemoryProjectRepository? projects = null,
+        InMemoryCommitmentCompletionRepository? completions = null,
         DateOnly? today = null)
     {
         var settingsStore = store ?? new InMemorySettingsStore();
@@ -287,8 +340,11 @@ public static class TestShell
         var clock = new FakeClock(today ?? DesignDate);
         var repository = tasks ?? new InMemoryTaskRepository();
         var blockRepository = blocks ?? new InMemoryCalendarBlockRepository();
+        var completionRepository = completions ?? new InMemoryCommitmentCompletionRepository();
         var taskService = new TaskService(repository, clock);
-        var calendarService = new CalendarService(blockRepository, repository, clock);
+        var calendarService = new CalendarService(
+            blockRepository, completionRepository,
+            new InMemoryCalendarMutations(blockRepository, completionRepository), repository, clock);
         var inboxQuery = new InboxQueryService(repository, blockRepository);
         var prioritization = new InMemoryPrioritizationRepository();
         var prioritySort = new PrioritySortService(prioritization, clock);
@@ -305,13 +361,14 @@ public static class TestShell
             aiProvider, new InMemoryAiProvenanceRepository(), repository, aiPermissions, clock);
         var projectService = new ProjectService(
             projectRepo, fileRepo, resourceRepo, storage,
-            new FakeIndexer(resourceRepo, clock), repository, blockRepository, clock, aiService);
+            new FakeIndexer(resourceRepo, clock), repository, blockRepository,
+            completionRepository, clock, aiService);
         return new ShellViewModel(
-            new CalendarViewModel(settings, clock, calendarService, repository, planning),
+            new CalendarViewModel(settings, clock, calendarService, repository, planning, projectRepo),
             new InboxViewModel(taskService, inboxQuery, projectRepo, aiService, clock),
             new ProjectsViewModel(
                 projectService, projectRepo, fileRepo, resourceRepo, taskService,
-                new FakeFileReveal(), aiService),
+                calendarService, new FakeFileReveal(), aiService),
             new SettingsViewModel(new FakePaths(), aiPermissions),
             new ChatViewModel(aiService, aiPermissions, clock),
             prioritySort,

@@ -18,6 +18,7 @@ public sealed class ProjectService(
     IResourceIndexer indexer,
     ITaskRepository tasks,
     ICalendarBlockRepository blocks,
+    ICommitmentCompletionRepository completions,
     IClock clock,
     IProvenanceInvalidator? provenanceInvalidator = null)
 {
@@ -36,7 +37,10 @@ public sealed class ProjectService(
         projects.Update(project);
     }
 
-    /// <summary>Deletes the project, its Files/resources (and stored bytes), and unlinks its tasks.</summary>
+    /// <summary>
+    /// Deletes the project, its Files/resources (and stored bytes), and unlinks its
+    /// tasks and directly linked commitments — the commitments themselves survive.
+    /// </summary>
     public void DeleteProject(ProjectId id)
     {
         foreach (var file in files.GetForProject(id))
@@ -48,6 +52,12 @@ public sealed class ProjectService(
         {
             task.AssignToProject(null, clock.Now);
             tasks.Update(task);
+        }
+
+        foreach (var block in blocks.GetForProject(id).Where(b => !b.IsExternal))
+        {
+            block.AssignToProject(null, clock.Now);
+            blocks.Update(block);
         }
 
         projects.Delete(id);
@@ -139,27 +149,118 @@ public sealed class ProjectService(
         return (open, recent);
     }
 
-    /// <summary>Upcoming (pending-outcome) blocks for the project's tasks, soonest first.</summary>
-    public IReadOnlyList<(CalendarBlock Block, TaskItem Task)> GetUpcomingBlocks(ProjectId projectId)
+    /// <summary>How many completed rows the scheduled-work area keeps visible.</summary>
+    public const int RecentlyCompletedLimit = 5;
+
+    /// <summary>How far a recurring series is expanded around today.</summary>
+    private const int RecurringWindowDays = 14;
+
+    /// <summary>
+    /// The project's scheduled work: pending-outcome blocks of its tasks (future only,
+    /// as before) plus directly linked fixed commitments. Elapsed incomplete
+    /// commitments stay listed as Overdue until completed or deleted; completed
+    /// occurrences trail the active rows as a restrained recently-completed set.
+    /// </summary>
+    public IReadOnlyList<ProjectScheduledBlock> GetScheduledBlocks(ProjectId projectId)
     {
         var today = clock.Today;
         var nowTime = TimeOnly.FromDateTime(clock.Now.LocalDateTime);
-        var projectTasks = tasks.GetAll().Where(t => t.ProjectId == projectId).ToDictionary(t => t.Id);
-        var upcoming = new List<(CalendarBlock, TaskItem)>();
-        foreach (var (taskId, task) in projectTasks)
+        var rows = new List<ProjectScheduledBlock>();
+
+        foreach (var task in tasks.GetAll().Where(t => t.ProjectId == projectId))
         {
-            foreach (var block in blocks.GetForTask(taskId))
+            foreach (var block in blocks.GetForTask(task.Id))
             {
-                var isFuture = block.Date > today || (block.Date == today && block.EndTime > nowTime);
-                if (block.Outcome == BlockOutcome.None && isFuture)
+                if (block.Outcome == BlockOutcome.None && IsUpcoming(block.Date, block.EndTime, today, nowTime))
                 {
-                    upcoming.Add((block, task));
+                    rows.Add(new ProjectScheduledBlock(
+                        block, block.Date, task.Title, ProjectBlockState.Upcoming));
                 }
             }
         }
 
-        return upcoming.OrderBy(pair => pair.Item1.Date).ThenBy(pair => pair.Item1.StartTime).ToList();
+        foreach (var block in blocks.GetForProject(projectId))
+        {
+            rows.AddRange(CommitmentRows(block, today, nowTime));
+        }
+
+        var active = rows
+            .Where(row => row.State != ProjectBlockState.Done)
+            .OrderBy(row => row.Date)
+            .ThenBy(row => row.Block.StartTime);
+        var completed = rows
+            .Where(row => row.State == ProjectBlockState.Done)
+            .OrderByDescending(row => row.Date)
+            .ThenByDescending(row => row.Block.StartTime)
+            .Take(RecentlyCompletedLimit);
+        return active.Concat(completed).ToList();
     }
+
+    private IEnumerable<ProjectScheduledBlock> CommitmentRows(
+        CalendarBlock block, DateOnly today, TimeOnly nowTime)
+    {
+        var title = block.Title ?? string.Empty;
+        if (block.Recurrence is null)
+        {
+            // One-offs are never dropped: incomplete elapsed rows turn Overdue.
+            var state = completions.Get(block.Id, block.Date) is not null
+                ? ProjectBlockState.Done
+                : IsUpcoming(block.Date, block.EndTime, today, nowTime)
+                    ? ProjectBlockState.Upcoming
+                    : ProjectBlockState.Overdue;
+            yield return new ProjectScheduledBlock(block, block.Date, title, state);
+            yield break;
+        }
+
+        // Recurring series stay sparse: the next incomplete upcoming occurrence, recently
+        // completed occurrences, and — only when the most recent elapsed occurrence is
+        // still incomplete — one Overdue row for it. Completing that occurrence lets the
+        // older ones go quietly instead of resurfacing them one by one.
+        DateOnly? latestElapsed = null;
+        var latestElapsedDone = false;
+        DateOnly? nextUpcoming = null;
+        for (var date = today.AddDays(-RecurringWindowDays);
+             date <= today.AddDays(RecurringWindowDays);
+             date = date.AddDays(1))
+        {
+            if (!block.OccursOn(date))
+            {
+                continue;
+            }
+
+            var isDone = completions.Get(block.Id, date) is not null;
+            if (isDone)
+            {
+                yield return new ProjectScheduledBlock(block, date, title, ProjectBlockState.Done);
+            }
+
+            if (IsUpcoming(date, block.EndTime, today, nowTime))
+            {
+                if (!isDone)
+                {
+                    nextUpcoming ??= date;
+                }
+            }
+            else
+            {
+                latestElapsed = date;
+                latestElapsedDone = isDone;
+            }
+        }
+
+        if (latestElapsed is { } overdue && !latestElapsedDone)
+        {
+            yield return new ProjectScheduledBlock(block, overdue, title, ProjectBlockState.Overdue);
+        }
+
+        if (nextUpcoming is { } upcoming)
+        {
+            yield return new ProjectScheduledBlock(block, upcoming, title, ProjectBlockState.Upcoming);
+        }
+    }
+
+    private static bool IsUpcoming(DateOnly date, TimeOnly endTime, DateOnly today, TimeOnly now)
+        => date > today || (date == today && endTime > now);
 
     private Resource AddAndIndex(Resource resource)
     {

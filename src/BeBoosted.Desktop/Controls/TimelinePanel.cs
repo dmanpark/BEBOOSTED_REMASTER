@@ -16,10 +16,10 @@ public sealed class TimelinePanel : Panel
         AvaloniaProperty.Register<TimelinePanel, double>(nameof(HourHeight), 56);
 
     public static readonly StyledProperty<int> StartHourProperty =
-        AvaloniaProperty.Register<TimelinePanel, int>(nameof(StartHour), 6);
+        AvaloniaProperty.Register<TimelinePanel, int>(nameof(StartHour), 0);
 
     public static readonly StyledProperty<int> EndHourProperty =
-        AvaloniaProperty.Register<TimelinePanel, int>(nameof(EndHour), 23);
+        AvaloniaProperty.Register<TimelinePanel, int>(nameof(EndHour), 24);
 
     public static readonly AttachedProperty<double> StartMinutesProperty =
         AvaloniaProperty.RegisterAttached<TimelinePanel, Control, double>("StartMinutes");
@@ -66,7 +66,7 @@ public sealed class TimelinePanel : Panel
         => control.SetValue(DurationMinutesProperty, value);
 
     public TimelineGeometry Geometry
-        => new(new TimeOnly(StartHour, 0), new TimeOnly(EndHour, 0), HourHeight);
+        => new(StartHour * 60, EndHour * 60, HourHeight);
 
     protected override Size MeasureOverride(Size availableSize)
     {
@@ -91,10 +91,7 @@ public sealed class TimelinePanel : Panel
         {
             var start = Math.Max(GetStartMinutes(Children[i]), startFloor);
             var end = Math.Min(start + Math.Max(GetDurationMinutes(Children[i]), 5), EndHour * 60.0);
-            intervals.Add(new LayoutInterval(
-                i,
-                TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(start)),
-                TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(Math.Max(end, start + 1)))));
+            intervals.Add(new LayoutInterval(i, start, Math.Max(end, start + 1)));
         }
 
         var slots = OverlapLayout.Arrange(intervals);
@@ -105,8 +102,9 @@ public sealed class TimelinePanel : Panel
         {
             var child = Children[i];
             var slot = slots[i];
-            var y = geometry.YFromTime(intervals[i].Start);
-            var height = Math.Max(geometry.HeightForDuration(intervals[i].End - intervals[i].Start), 18);
+            var y = geometry.YFromMinutes(intervals[i].Start);
+            var height = Math.Max(
+                geometry.HeightForDuration(TimeSpan.FromMinutes(intervals[i].End - intervals[i].Start)), 18);
             var columnWidth = contentWidth / slot.ColumnCount;
             var x = horizontalInset + (slot.Column * columnWidth);
             var width = Math.Max(columnWidth - (slot.ColumnCount > 1 ? 2 : 0), 10);

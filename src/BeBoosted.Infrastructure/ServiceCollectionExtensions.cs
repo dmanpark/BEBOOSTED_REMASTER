@@ -31,6 +31,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITaskRepository, SqliteTaskRepository>();
         services.AddSingleton<TaskService>();
         services.AddSingleton<ICalendarBlockRepository, SqliteCalendarBlockRepository>();
+        services.AddSingleton<ICommitmentCompletionRepository, SqliteCommitmentCompletionRepository>();
+        services.AddSingleton<ICalendarMutations, SqliteCalendarMutations>();
         services.AddSingleton<CalendarService>();
         services.AddSingleton<InboxQueryService>();
         services.AddSingleton<IPrioritizationRepository, SqlitePrioritizationRepository>();

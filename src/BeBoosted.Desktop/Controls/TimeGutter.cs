@@ -12,10 +12,10 @@ public sealed class TimeGutter : Control
         AvaloniaProperty.Register<TimeGutter, double>(nameof(HourHeight), 56);
 
     public static readonly StyledProperty<int> StartHourProperty =
-        AvaloniaProperty.Register<TimeGutter, int>(nameof(StartHour), 6);
+        AvaloniaProperty.Register<TimeGutter, int>(nameof(StartHour), 0);
 
     public static readonly StyledProperty<int> EndHourProperty =
-        AvaloniaProperty.Register<TimeGutter, int>(nameof(EndHour), 23);
+        AvaloniaProperty.Register<TimeGutter, int>(nameof(EndHour), 24);
 
     private static readonly Typeface MonoTypeface =
         new(new FontFamily("avares://BeBoosted/Assets/Fonts/IBMPlexMono#IBM Plex Mono"));
@@ -46,11 +46,11 @@ public sealed class TimeGutter : Control
     }
 
     protected override Size MeasureOverride(Size availableSize)
-        => new(56, new TimelineGeometry(new TimeOnly(StartHour, 0), new TimeOnly(EndHour, 0), HourHeight).TotalHeight);
+        => new(56, new TimelineGeometry(StartHour * 60, EndHour * 60, HourHeight).TotalHeight);
 
     public override void Render(DrawingContext context)
     {
-        var geometry = new TimelineGeometry(new TimeOnly(StartHour, 0), new TimeOnly(EndHour, 0), HourHeight);
+        var geometry = new TimelineGeometry(StartHour * 60, EndHour * 60, HourHeight);
         foreach (var mark in geometry.HourMarks())
         {
             var text = new FormattedText(
@@ -60,7 +60,10 @@ public sealed class TimeGutter : Control
                 MonoTypeface,
                 11,
                 LabelBrush);
-            context.DrawText(text, new Point(Bounds.Width - text.Width - 8, geometry.YFromTime(mark) - (text.Height / 2)));
+            // Center on the hour rule, but keep the first label (12 AM at y 0) fully
+            // visible instead of half-clipped above the surface.
+            var top = Math.Max(geometry.YFromTime(mark) - (text.Height / 2), 1);
+            context.DrawText(text, new Point(Bounds.Width - text.Width - 8, top));
         }
     }
 }

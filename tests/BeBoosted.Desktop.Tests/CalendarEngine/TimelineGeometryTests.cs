@@ -4,7 +4,7 @@ namespace BeBoosted.Desktop.Tests.CalendarEngine;
 
 public sealed class TimelineGeometryTests
 {
-    private static readonly TimelineGeometry Geometry = new(new TimeOnly(6, 0), new TimeOnly(23, 0), 56);
+    private static readonly TimelineGeometry Geometry = new(6 * 60, 23 * 60, 56);
 
     [Fact]
     public void TotalHeight_CoversVisibleRange() => Assert.Equal(17 * 56, Geometry.TotalHeight);
@@ -39,4 +39,36 @@ public sealed class TimelineGeometryTests
         Assert.Equal(new TimeOnly(6, 0), marks[0]);
         Assert.Equal(new TimeOnly(22, 0), marks[^1]);
     }
+
+    // ---- Full 00:00–24:00 day (BB-QA-001) ----
+
+    private static readonly TimelineGeometry FullDay = new(0, 24 * 60, 56);
+
+    [Fact]
+    public void FullDay_TotalHeight_CoversTwentyFourHours() => Assert.Equal(24 * 56, FullDay.TotalHeight);
+
+    [Fact]
+    public void FullDay_HourMarks_CoverEveryHourOfTheDay()
+    {
+        var marks = FullDay.HourMarks().ToList();
+        Assert.Equal(24, marks.Count);
+        Assert.Equal(new TimeOnly(0, 0), marks[0]);
+        Assert.Equal(new TimeOnly(23, 0), marks[^1]);
+    }
+
+    [Theory]
+    [InlineData(0, 0, 0)]          // midnight at the very top
+    [InlineData(12, 0, 672)]
+    [InlineData(23, 0, 1288)]
+    [InlineData(23, 59, 1343.067)] // last minute stays inside the 1344 px extent
+    public void FullDay_YFromTime_MapsWholeDayLinearly(int hour, int minute, double expected)
+        => Assert.Equal(expected, FullDay.YFromTime(new TimeOnly(hour, minute)), 2);
+
+    [Fact]
+    public void FullDay_TimeFromY_ClampsBottomToLastRepresentableMinute()
+        => Assert.Equal(new TimeOnly(23, 59), FullDay.TimeFromY(99999, 15));
+
+    [Fact]
+    public void FullDay_TimeFromY_ClampsTopToMidnight()
+        => Assert.Equal(new TimeOnly(0, 0), FullDay.TimeFromY(-40, 15));
 }

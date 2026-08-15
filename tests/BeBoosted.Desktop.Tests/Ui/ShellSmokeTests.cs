@@ -103,9 +103,13 @@ public sealed class ShellSmokeTests
         var todayBlocks = window.GetVisualDescendants().OfType<CalendarBlockView>().ToList();
         Assert.Equal(5, todayBlocks.Count);
 
+        // Local fixed commitments are editable and movable, never locked.
         var fixedBlock = todayBlocks.First(v =>
             (v.DataContext as CalendarBlockViewModel)?.Title == "AP Economics");
-        Assert.False(((CalendarBlockViewModel)fixedBlock.DataContext!).IsInteractive);
+        var fixedVm = (CalendarBlockViewModel)fixedBlock.DataContext!;
+        Assert.True(fixedVm.CanEdit);
+        Assert.True(fixedVm.CanMove);
+        Assert.False(fixedVm.IsLocked);
 
         shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
         window.CaptureRenderedFrame();

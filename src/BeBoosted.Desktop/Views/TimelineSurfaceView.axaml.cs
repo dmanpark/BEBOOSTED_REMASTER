@@ -16,12 +16,15 @@ namespace BeBoosted.Desktop.Views;
 /// </summary>
 public partial class TimelineSurfaceView : UserControl
 {
-    public const int VisibleStartHour = 6;
-    public const int VisibleEndHour = 23;
+    // The timeline is one continuous 00:00–24:00 day (BB-QA-001); the initial scroll
+    // picks a useful hour, but every minute stays reachable by scrolling.
+    public const int VisibleStartHour = 0;
+    public const int VisibleEndHour = 24;
     public const double DefaultHourHeight = 56;
 
     private CalendarBlockId? _refocusBlockId;
     private bool _initialScrollDone;
+    private CalendarBlockView? _dragPreview;
 
     public TimelineSurfaceView()
     {
@@ -71,7 +74,15 @@ public partial class TimelineSurfaceView : UserControl
 
     private void ApplyGeometry()
     {
-        foreach (var panel in DaysArea.GetVisualDescendants().OfType<TimelineDecorations>())
+        foreach (var decorations in DaysArea.GetVisualDescendants().OfType<TimelineDecorations>())
+        {
+            decorations.StartHour = VisibleStartHour;
+            decorations.EndHour = VisibleEndHour;
+            decorations.HourHeight = DefaultHourHeight;
+        }
+
+        // Block panels must share the exact same geometry as the chrome behind them.
+        foreach (var panel in DaysArea.GetVisualDescendants().OfType<TimelinePanel>())
         {
             panel.StartHour = VisibleStartHour;
             panel.EndHour = VisibleEndHour;
@@ -109,6 +120,58 @@ public partial class TimelineSurfaceView : UserControl
         {
             _refocusBlockId = null;
             Dispatcher.UIThread.Post(() => target.Focus());
+        }
+    }
+
+    // ---- Cross-day drag preview (BB-QA-003) ----
+    // The per-column block subtrees clip to their own bounds, so a block dragged across a
+    // day boundary is rendered here instead: a non-interactive clone of the dragged block
+    // on the DragPreviewCanvas overlay spanning every day column.
+
+    /// <summary>
+    /// Shows (or repositions) the drag preview for <paramref name="vm"/> in the given
+    /// column at the snapped <paramref name="startMinutes"/> — exactly the day and time
+    /// a release would persist.
+    /// </summary>
+    internal void ShowDragPreview(
+        CalendarBlockViewModel vm, int column, double startMinutes, double durationMinutes)
+    {
+        var panels = DaysArea.GetVisualDescendants()
+            .OfType<TimelinePanel>()
+            .OrderBy(p => p.TranslatePoint(default, DaysArea)?.X ?? 0)
+            .ToList();
+        if (column < 0 || column >= panels.Count)
+        {
+            ClearDragPreview();
+            return;
+        }
+
+        if (_dragPreview is null || !ReferenceEquals(_dragPreview.DataContext, vm))
+        {
+            ClearDragPreview();
+            _dragPreview = new CalendarBlockView { DataContext = vm, IsHitTestVisible = false };
+            DragPreviewCanvas.Children.Add(_dragPreview);
+        }
+
+        var panel = panels[column];
+        var geometry = panel.Geometry;
+        var origin = panel.TranslatePoint(default, DragPreviewCanvas) ?? default;
+        var start = Math.Max(startMinutes, StartHour * 60.0);
+        // Mirror TimelinePanel's single-slot arrangement: 4 px horizontal inset per side.
+        _dragPreview.Width = Math.Max(panel.Bounds.Width - 8, 10);
+        _dragPreview.Height = Math.Max(
+            geometry.HeightForDuration(TimeSpan.FromMinutes(durationMinutes)), 18);
+        Canvas.SetLeft(_dragPreview, origin.X + 4);
+        Canvas.SetTop(_dragPreview, origin.Y + geometry.YFromMinutes(start));
+    }
+
+    /// <summary>Removes the drag preview; safe to call when none is shown.</summary>
+    internal void ClearDragPreview()
+    {
+        if (_dragPreview is not null)
+        {
+            DragPreviewCanvas.Children.Remove(_dragPreview);
+            _dragPreview = null;
         }
     }
 

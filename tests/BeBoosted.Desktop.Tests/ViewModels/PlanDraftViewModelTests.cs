@@ -32,7 +32,7 @@ public sealed class PlanDraftViewModelTests
             .Where(b => b.IsProposal)
             .ToList();
         Assert.Equal(4, proposals.Count); // four seeded inbox tasks, all placeable
-        Assert.All(proposals, p => Assert.True(p.IsInteractive));
+        Assert.All(proposals, p => Assert.True(p.CanMove && p.CanResize && p.CanDelete));
         Assert.Contains("4 blocks proposed", shell.Calendar.DraftSummaryText);
         Assert.Contains("4 tasks scheduled", shell.Calendar.DraftSummaryText);
         Assert.NotNull(proposals[0].Why);
@@ -109,12 +109,14 @@ public sealed class PlanDraftViewModelTests
     public void ProposalOverlappingFixedEvent_IsConflicted_AndFixedEventUnchanged()
     {
         var (shell, _, _) = CreateShell();
-        shell.Calendar.PrepareCommitmentEditorCommand.Execute(null);
-        shell.Calendar.CommitmentTitle = "Lunch";
-        shell.Calendar.CommitmentDate = new DateTimeOffset(TestShell.DesignDate.ToDateTime(TimeOnly.MinValue));
-        shell.Calendar.CommitmentStart = new TimeSpan(12, 0, 0);
-        shell.Calendar.CommitmentEnd = new TimeSpan(12, 45, 0);
-        Assert.True(shell.Calendar.TrySaveCommitment());
+        shell.Calendar.OpenNewCommitmentEditorCommand.Execute(null);
+        var editor = shell.Calendar.CommitmentEditor!;
+        editor.Title = "Lunch";
+        editor.Date = new DateTimeOffset(TestShell.DesignDate.ToDateTime(TimeOnly.MinValue));
+        editor.Start = new TimeSpan(12, 0, 0);
+        editor.End = new TimeSpan(12, 45, 0);
+        editor.SaveCommand.Execute(null);
+        Assert.Null(shell.Calendar.CommitmentEditor);
 
         shell.PlanCommand.Execute(null);
         var proposal = shell.Calendar.Days.SelectMany(d => d.Blocks).First(b => b.IsProposal);

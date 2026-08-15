@@ -43,7 +43,7 @@ public sealed class PlanningServiceTests : IDisposable
         _blocks = new SqliteCalendarBlockRepository(_database.Factory);
         _proposals = new SqlitePlanningProposalRepository(_database.Factory);
         _inbox = new InboxQueryService(_tasks, _blocks);
-        var calendar = new CalendarService(_blocks, _tasks, _clock);
+        var calendar = new CalendarService(_blocks, new SqliteCommitmentCompletionRepository(_database.Factory), new SqliteCalendarMutations(_database.Factory), _tasks, _clock);
         _service = new PlanningService(
             _proposals, _blocks, _inbox,
             new SqlitePrioritizationRepository(_database.Factory), calendar, _clock);
@@ -180,7 +180,7 @@ public sealed class PlanningServiceTests : IDisposable
     public void CreateDraft_ReportsUnplacedTasks()
     {
         // A commitment fills the whole planning window today; deadline today → unplaceable.
-        var calendar = new CalendarService(_blocks, _tasks, _clock);
+        var calendar = new CalendarService(_blocks, new SqliteCommitmentCompletionRepository(_database.Factory), new SqliteCalendarMutations(_database.Factory), _tasks, _clock);
         calendar.CreateFixedCommitment(
             "All-day", new DateOnly(2026, 8, 11), new TimeOnly(8, 0), new TimeOnly(21, 0));
         AddTask("Urgent today", 45, new DateOnly(2026, 8, 11));

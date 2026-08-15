@@ -30,13 +30,14 @@ public sealed class CalendarViewModelCalendarTests
             TestShell.SeedDesignCalendar(tasks, blocks, clock);
         }
 
-        var service = new CalendarService(blocks, tasks, clock);
+        var service = TestShell.CreateCalendarService(blocks, tasks, clock);
         var prioritization = new InMemoryPrioritizationRepository();
         var planning = new PlanningService(
             new InMemoryPlanningProposalRepository(), blocks,
             new InboxQueryService(tasks, blocks), prioritization, service, clock);
         var calendar = new CalendarViewModel(
-            new AppSettings(new InMemorySettingsStore()), clock, service, tasks, planning);
+            new AppSettings(new InMemorySettingsStore()), clock, service, tasks, planning,
+            new InMemoryProjectRepository());
         return new Context(calendar, tasks, blocks, clock, service, planning, prioritization);
     }
 
@@ -129,26 +130,29 @@ public sealed class CalendarViewModelCalendarTests
     }
 
     [Fact]
-    public void TrySaveCommitment_ValidatesAndCreates()
+    public void CommitmentEditor_ValidatesAndCreatesWeeklyRecurrence()
     {
         var context = Create();
-        context.Calendar.PrepareCommitmentEditorCommand.Execute(null);
+        context.Calendar.OpenNewCommitmentEditorCommand.Execute(null);
+        var editor = context.Calendar.CommitmentEditor!;
 
-        context.Calendar.CommitmentTitle = "";
-        Assert.False(context.Calendar.TrySaveCommitment());
-        Assert.NotNull(context.Calendar.CommitmentError);
+        editor.Title = "";
+        editor.SaveCommand.Execute(null);
+        Assert.NotNull(editor.Error);
+        Assert.NotNull(context.Calendar.CommitmentEditor);
 
-        context.Calendar.CommitmentTitle = "AP Economics";
-        context.Calendar.CommitmentStart = new TimeSpan(8, 30, 0);
-        context.Calendar.CommitmentEnd = new TimeSpan(9, 45, 0);
-        context.Calendar.CommitmentRepeatsWeekly = true;
-        foreach (var day in context.Calendar.CommitmentDays.Where(
+        editor.Title = "AP Economics";
+        editor.Start = new TimeSpan(8, 30, 0);
+        editor.End = new TimeSpan(9, 45, 0);
+        editor.RepeatsWeekly = true;
+        foreach (var day in editor.Days.Where(
             d => d.Day is DayOfWeek.Monday or DayOfWeek.Wednesday))
         {
             day.IsSelected = true;
         }
 
-        Assert.True(context.Calendar.TrySaveCommitment());
+        editor.SaveCommand.Execute(null);
+        Assert.Null(context.Calendar.CommitmentEditor);
         var block = context.Blocks.GetAll().Single();
         Assert.Equal("AP Economics", block.Title);
         Assert.Equal(

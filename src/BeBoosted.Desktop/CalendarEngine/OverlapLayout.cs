@@ -1,7 +1,10 @@
 namespace BeBoosted.Desktop.CalendarEngine;
 
-/// <summary>Input interval for overlap layout.</summary>
-public readonly record struct LayoutInterval(int Key, TimeOnly Start, TimeOnly End);
+/// <summary>
+/// Input interval for overlap layout, in minutes from midnight so an interval ending at
+/// 24:00 (which <see cref="TimeOnly"/> cannot express) stays representable.
+/// </summary>
+public readonly record struct LayoutInterval(int Key, double Start, double End);
 
 /// <summary>Horizontal slot assigned to an interval: column index within a cluster of columns.</summary>
 public readonly record struct LayoutSlot(int Column, int ColumnCount);
@@ -19,7 +22,7 @@ public static class OverlapLayout
 
         // Group into clusters of transitively-overlapping intervals.
         var cluster = new List<LayoutInterval>();
-        var clusterEnd = TimeOnly.MinValue;
+        var clusterEnd = double.NegativeInfinity;
         foreach (var interval in ordered)
         {
             if (cluster.Count > 0 && interval.Start >= clusterEnd)
@@ -45,7 +48,7 @@ public static class OverlapLayout
 
     private static void ArrangeCluster(List<LayoutInterval> cluster, Dictionary<int, LayoutSlot> result)
     {
-        var columnEnds = new List<TimeOnly>();
+        var columnEnds = new List<double>();
         var assigned = new Dictionary<int, int>(cluster.Count);
         foreach (var interval in cluster)
         {

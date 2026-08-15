@@ -1,6 +1,7 @@
 using Avalonia.Controls;
-using Avalonia.Interactivity;
+using Avalonia.Input;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using BeBoosted.Desktop.ViewModels;
 
 namespace BeBoosted.Desktop.Views;
@@ -9,6 +10,7 @@ public partial class CalendarView : UserControl
 {
     private readonly DispatcherTimer _nowTimer;
     private readonly DispatcherTimer _undoToastTimer;
+    private IInputElement? _commitmentEditorReturnFocus;
 
     public CalendarView()
     {
@@ -41,16 +43,46 @@ public partial class CalendarView : UserControl
                         _undoToastTimer.Stop();
                         _undoToastTimer.Start();
                     }
+
+                    if (e.PropertyName == nameof(CalendarViewModel.CommitmentEditor))
+                    {
+                        OnCommitmentEditorChanged(viewModel.CommitmentEditor is not null);
+                    }
                 };
             }
         };
     }
 
-    private void OnSaveCommitmentClick(object? sender, RoutedEventArgs e)
+    /// <summary>Escape closes the modal without mutating anything, even from a field.</summary>
+    private void OnCommitmentModalKeyDown(object? sender, KeyEventArgs e)
     {
-        if (DataContext is CalendarViewModel viewModel && viewModel.TrySaveCommitment())
+        if (e.Key == Key.Escape && DataContext is CalendarViewModel viewModel)
         {
-            NewCommitmentButton.Flyout?.Hide();
+            viewModel.CloseCommitmentEditor();
+            e.Handled = true;
         }
+    }
+
+    /// <summary>Initial focus goes to Title; closing returns focus to the invoker.</summary>
+    private void OnCommitmentEditorChanged(bool isOpen)
+    {
+        if (isOpen)
+        {
+            _commitmentEditorReturnFocus =
+                TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+            Dispatcher.UIThread.Post(() =>
+                this.GetVisualDescendants()
+                    .OfType<TextBox>()
+                    .FirstOrDefault(box => box.Name == "CommitmentTitleBox")
+                    ?.Focus());
+            return;
+        }
+
+        if (_commitmentEditorReturnFocus is Control { IsLoaded: true } control)
+        {
+            Dispatcher.UIThread.Post(() => control.Focus());
+        }
+
+        _commitmentEditorReturnFocus = null;
     }
 }

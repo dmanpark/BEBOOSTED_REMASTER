@@ -1,7 +1,11 @@
 namespace BeBoosted.Domain.Calendar;
 
-/// <summary>An occurrence of a block on a concrete date (recurrence expanded).</summary>
-public sealed record BlockOccurrence(CalendarBlock Block, DateOnly Date)
+/// <summary>
+/// An occurrence of a block on a concrete date (recurrence expanded).
+/// <paramref name="IsCompleted"/> reflects a fixed commitment's per-occurrence
+/// completion; task blocks track completion through their outcome instead.
+/// </summary>
+public sealed record BlockOccurrence(CalendarBlock Block, DateOnly Date, bool IsCompleted = false)
 {
     public TimeOnly StartTime => Block.StartTime;
 

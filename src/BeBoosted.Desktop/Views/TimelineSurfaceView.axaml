@@ -87,6 +87,10 @@
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
+
+        <!-- Cross-day drag preview overlay (BB-QA-003): sits above every day column, so a
+             dragged block stays visible while crossing the columns' clip boundaries. -->
+        <Canvas Name="DragPreviewCanvas" Grid.Column="1" IsHitTestVisible="False" />
       </Grid>
     </ScrollViewer>
 

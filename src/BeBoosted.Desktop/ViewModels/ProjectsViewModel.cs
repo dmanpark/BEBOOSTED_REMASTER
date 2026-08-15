@@ -21,6 +21,7 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     private readonly IProjectFileRepository _files;
     private readonly IResourceRepository _resources;
     private readonly TaskService _taskService;
+    private readonly Application.Calendar.CalendarService _calendar;
     private readonly IFileRevealService _opener;
     private readonly Application.Ai.AiService _ai;
 
@@ -30,6 +31,7 @@ public sealed partial class ProjectsViewModel : ViewModelBase
         IProjectFileRepository files,
         IResourceRepository resources,
         TaskService taskService,
+        Application.Calendar.CalendarService calendar,
         IFileRevealService opener,
         Application.Ai.AiService ai)
     {
@@ -38,6 +40,7 @@ public sealed partial class ProjectsViewModel : ViewModelBase
         _files = files;
         _resources = resources;
         _taskService = taskService;
+        _calendar = calendar;
         _opener = opener;
         _ai = ai;
         ReloadList();
@@ -45,6 +48,14 @@ public sealed partial class ProjectsViewModel : ViewModelBase
 
     /// <summary>Wired by the shell: "Ask BeBoosted about this project" expands the composer.</summary>
     public Action? AskRequested { get; set; }
+
+    /// <summary>
+    /// Raised after this surface mutates calendar data (commitment completion),
+    /// so the shell can refresh the calendar exactly once.
+    /// </summary>
+    public event Action? CalendarDataChanged;
+
+    internal void NotifyCalendarChanged() => CalendarDataChanged?.Invoke();
 
     public string? GetProjectName(Domain.ProjectId? id)
         => id is { } projectId ? _projects.GetById(projectId)?.Name : null;
@@ -119,7 +130,7 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     {
         if (_projects.GetById(id) is { } project)
         {
-            Detail = new ProjectDetailViewModel(this, project, _service, _files, _taskService);
+            Detail = new ProjectDetailViewModel(this, project, _service, _files, _taskService, _calendar);
         }
     }
 

@@ -1,9 +1,11 @@
 using BeBoosted.Domain;
 using BeBoosted.Domain.Calendar;
+using BeBoosted.Domain.Projects;
 using BeBoosted.Domain.Scheduling;
 using BeBoosted.Domain.Tasks;
 using BeBoosted.Infrastructure.Calendar;
 using BeBoosted.Infrastructure.Persistence;
+using BeBoosted.Infrastructure.Projects;
 using BeBoosted.Infrastructure.Tasks;
 using BeBoosted.Tests.Support;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -18,6 +20,7 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
     private readonly TempDatabase _database = new();
     private readonly SqliteCalendarBlockRepository _repository;
     private readonly SqliteTaskRepository _tasks;
+    private readonly SqliteProjectRepository _projects;
 
     public SqliteCalendarBlockRepositoryTests()
     {
@@ -25,6 +28,7 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
             .Apply(EmbeddedMigrations.Load());
         _repository = new SqliteCalendarBlockRepository(_database.Factory);
         _tasks = new SqliteTaskRepository(_database.Factory);
+        _projects = new SqliteProjectRepository(_database.Factory);
     }
 
     private TaskId AddTask(string title)
@@ -32,6 +36,13 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
         var task = TaskItem.Create(title, Now);
         _tasks.Add(task);
         return task.Id;
+    }
+
+    private ProjectId AddProject(string name)
+    {
+        var project = Project.Create(name, "#5B8DEF", Now);
+        _projects.Add(project);
+        return project.Id;
     }
 
     [Fact]
@@ -126,6 +137,53 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
 
         Assert.Contains(pendingTask, ids);
         Assert.DoesNotContain(resolvedTask, ids);
+    }
+
+    [Fact]
+    public void AddAndGetById_RoundTripsTheProjectLink()
+    {
+        var projectId = AddProject("Schoolwork");
+        var block = CalendarBlock.CreateFixedCommitment(
+            "AP Economics", Date, new TimeOnly(8, 30), new TimeOnly(9, 45), Now,
+            projectId: projectId);
+
+        _repository.Add(block);
+        var loaded = _repository.GetById(block.Id);
+
+        Assert.Equal(projectId, loaded!.ProjectId);
+    }
+
+    [Fact]
+    public void Update_PersistsProjectAssignment()
+    {
+        var block = CalendarBlock.CreateFixedCommitment(
+            "Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45), Now);
+        _repository.Add(block);
+
+        var projectId = AddProject("Math");
+        block.AssignToProject(projectId, Now.AddHours(1));
+        _repository.Update(block);
+        Assert.Equal(projectId, _repository.GetById(block.Id)!.ProjectId);
+
+        block.AssignToProject(null, Now.AddHours(2));
+        _repository.Update(block);
+        Assert.Null(_repository.GetById(block.Id)!.ProjectId);
+    }
+
+    [Fact]
+    public void DeletingProject_ClearsTheLink_WithoutDeletingTheCommitment()
+    {
+        var projectId = AddProject("Schoolwork");
+        var block = CalendarBlock.CreateFixedCommitment(
+            "AP Economics", Date, new TimeOnly(8, 30), new TimeOnly(9, 45), Now,
+            projectId: projectId);
+        _repository.Add(block);
+
+        _projects.Delete(projectId);
+
+        var loaded = _repository.GetById(block.Id);
+        Assert.NotNull(loaded);
+        Assert.Null(loaded.ProjectId);
     }
 
     [Fact]

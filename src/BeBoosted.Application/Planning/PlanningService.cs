@@ -89,6 +89,7 @@ public sealed class PlanningService(
         var calendarBlock = CalendarBlock.Rehydrate(
             block.Id,
             block.TaskId,
+            projectId: null,
             title: null,
             block.Date,
             block.StartTime,

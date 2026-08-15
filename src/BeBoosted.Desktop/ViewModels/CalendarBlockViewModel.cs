@@ -85,10 +85,38 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
 
     public bool IsTaskBlock => _block?.Kind == BlockKind.TaskBlock;
 
-    /// <summary>Task blocks and proposals are draggable/resizable; fixed commitments are locked.</summary>
-    public bool IsInteractive => IsTaskBlock || IsProposal;
+    public bool IsExternal => _block?.IsExternal == true;
+
+    public bool IsRecurring => _block?.Recurrence is not null;
+
+    private bool IsLocalFixedCommitment => IsFixed && !IsExternal;
+
+    // ---- Capabilities by kind and provider ----
+    // Local fixed commitments are fully editable; external (imported/synced)
+    // commitments are never mutated by BeBoosted; task blocks and proposals
+    // keep their move/resize/delete behavior but open no editor.
+
+    /// <summary>A normal click opens the commitment editor.</summary>
+    public bool CanEdit => IsLocalFixedCommitment;
+
+    public bool CanMove => IsTaskBlock || IsProposal || IsLocalFixedCommitment;
+
+    public bool CanResize => IsTaskBlock || IsProposal || IsLocalFixedCommitment;
+
+    public bool CanDelete => IsTaskBlock || IsProposal || IsLocalFixedCommitment;
+
+    /// <summary>External commitments show the lock icon and reject every mutation.</summary>
+    public bool IsLocked => IsFixed && IsExternal;
 
     public bool ShowCompletionControl => IsTaskBlock && !IsDone;
+
+    /// <summary>
+    /// The single-click done circle for local fixed commitments — never for task
+    /// blocks (they keep the multi-outcome flyout), proposals, or locked externals.
+    /// </summary>
+    public bool ShowCommitmentCompletionControl => IsLocalFixedCommitment;
+
+    public string CompletionControlName => IsDone ? $"Reopen {Title}" : $"Mark {Title} done";
 
     public double StartMinutes => StartTime.ToTimeSpan().TotalMinutes;
 
@@ -120,6 +148,7 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
                 : IsConflicted ? ", conflict"
                 : IsDone ? ", done"
                 : NeedsOutcome ? ", needs an outcome"
+                : IsLocked ? ", external commitment — locked, BeBoosted never edits it"
                 : IsFixed ? ", fixed commitment"
                 : string.Empty;
             return $"{Title}, {Date:MMMM d}, {StartTime:h\\:mm} to {EndTime:h\\:mm}{state}";
@@ -142,7 +171,11 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
     [RelayCommand]
     private void RecordDidntHappen() => _owner.RecordOutcome(Id, BlockOutcome.DidntHappen, null);
 
-    /// <summary>Delete: unschedules an approved block, or removes a proposal from the draft.</summary>
+    /// <summary>
+    /// Delete dispatch by kind: proposals leave the draft, task blocks unschedule
+    /// (reopening their task), local commitments route through the editor's
+    /// confirmation, and external commitments are never mutated.
+    /// </summary>
     [RelayCommand]
     private void Unschedule()
     {
@@ -150,9 +183,32 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
         {
             _owner.RemoveProposalBlock(Id);
         }
-        else
+        else if (IsTaskBlock)
         {
             _owner.UnscheduleBlock(Id);
+        }
+        else if (CanDelete)
+        {
+            _owner.RequestDeleteCommitment(Id);
+        }
+    }
+
+    /// <summary>Opens the commitment editor for a local fixed commitment.</summary>
+    public void Edit()
+    {
+        if (CanEdit)
+        {
+            _owner.OpenCommitmentEditorFor(Id, Date);
+        }
+    }
+
+    /// <summary>Checks this occurrence off (or reopens it) without opening the editor.</summary>
+    [RelayCommand]
+    private void ToggleCommitmentDone()
+    {
+        if (ShowCommitmentCompletionControl)
+        {
+            _owner.SetCommitmentOccurrenceDone(Id, Date, !IsDone);
         }
     }
 
@@ -171,11 +227,12 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
         if (IsProposal)
         {
             _owner.MoveProposalBlock(Id, date, start);
+            return;
         }
-        else
-        {
-            _owner.MoveBlock(Id, date, start);
-        }
+
+        // A recurring commitment moves as a whole series: the time change applies to
+        // every occurrence and the anchor date never silently follows one occurrence.
+        _owner.MoveBlock(Id, IsRecurring ? Block.Date : date, start);
     }
 
     public void ResizeTo(TimeOnly end)
@@ -192,7 +249,15 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
 
     public void Nudge(int minutes) => _owner.NudgeBlock(this, minutes);
 
-    public void NudgeDays(int days) => _owner.NudgeBlockDays(this, days);
+    public void NudgeDays(int days)
+    {
+        // Changing the day of one occurrence would rebase a recurring series — never
+        // do that silently. Day changes for a series go through the editor's Date.
+        if (!IsRecurring)
+        {
+            _owner.NudgeBlockDays(this, days);
+        }
+    }
 
     public void ResizeBy(int minutes) => _owner.ResizeBlockBy(this, minutes);
 }

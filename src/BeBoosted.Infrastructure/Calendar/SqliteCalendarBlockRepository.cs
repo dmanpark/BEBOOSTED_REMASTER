@@ -7,23 +7,40 @@ using Microsoft.Data.Sqlite;
 
 namespace BeBoosted.Infrastructure.Calendar;
 
-public sealed class SqliteCalendarBlockRepository(SqliteConnectionFactory connectionFactory)
-    : ICalendarBlockRepository
+public sealed class SqliteCalendarBlockRepository : ICalendarBlockRepository
 {
+    private readonly SqliteConnectionFactory? _connectionFactory;
+    private readonly SqliteConnection? _sharedConnection;
+    private readonly SqliteTransaction? _transaction;
+
+    public SqliteCalendarBlockRepository(SqliteConnectionFactory connectionFactory)
+        => _connectionFactory = connectionFactory;
+
+    /// <summary>Binds every operation to one shared connection and transaction.</summary>
+    internal SqliteCalendarBlockRepository(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        _sharedConnection = connection;
+        _transaction = transaction;
+    }
+
+    private SqliteSession OpenSession() => _sharedConnection is not null
+        ? new SqliteSession(_sharedConnection, _transaction, ownsConnection: false)
+        : new SqliteSession(_connectionFactory!.Open(), null, ownsConnection: true);
+
     private const string Columns =
-        "id, task_id, title, date, start_time, end_time, kind, recurrence, provider, " +
+        "id, task_id, project_id, title, date, start_time, end_time, kind, recurrence, provider, " +
         "external_id, sync_state, outcome, outcome_recorded_at, created_at, modified_at";
 
     public void Add(CalendarBlock block)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             $"""
             INSERT INTO calendar_blocks ({Columns})
-            VALUES ($id, $taskId, $title, $date, $startTime, $endTime, $kind, $recurrence,
-                    $provider, $externalId, $syncState, $outcome, $outcomeRecordedAt,
-                    $createdAt, $modifiedAt);
+            VALUES ($id, $taskId, $projectId, $title, $date, $startTime, $endTime, $kind,
+                    $recurrence, $provider, $externalId, $syncState, $outcome,
+                    $outcomeRecordedAt, $createdAt, $modifiedAt);
             """;
         Bind(command, block);
         command.ExecuteNonQuery();
@@ -31,15 +48,16 @@ public sealed class SqliteCalendarBlockRepository(SqliteConnectionFactory connec
 
     public void Update(CalendarBlock block)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             """
             UPDATE calendar_blocks SET
-                task_id = $taskId, title = $title, date = $date, start_time = $startTime,
-                end_time = $endTime, kind = $kind, recurrence = $recurrence,
-                provider = $provider, external_id = $externalId, sync_state = $syncState,
-                outcome = $outcome, outcome_recorded_at = $outcomeRecordedAt,
+                task_id = $taskId, project_id = $projectId, title = $title, date = $date,
+                start_time = $startTime, end_time = $endTime, kind = $kind,
+                recurrence = $recurrence, provider = $provider, external_id = $externalId,
+                sync_state = $syncState, outcome = $outcome,
+                outcome_recorded_at = $outcomeRecordedAt,
                 created_at = $createdAt, modified_at = $modifiedAt
             WHERE id = $id;
             """;
@@ -52,8 +70,8 @@ public sealed class SqliteCalendarBlockRepository(SqliteConnectionFactory connec
 
     public void Delete(CalendarBlockId id)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = "DELETE FROM calendar_blocks WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         command.ExecuteNonQuery();
@@ -61,8 +79,8 @@ public sealed class SqliteCalendarBlockRepository(SqliteConnectionFactory connec
 
     public CalendarBlock? GetById(CalendarBlockId id)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = $"SELECT {Columns} FROM calendar_blocks WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         using var reader = command.ExecuteReader();
@@ -91,6 +109,11 @@ public sealed class SqliteCalendarBlockRepository(SqliteConnectionFactory connec
             $"SELECT {Columns} FROM calendar_blocks WHERE task_id = $taskId ORDER BY date, start_time;",
             command => command.Parameters.AddWithValue("$taskId", taskId.ToString()));
 
+    public IReadOnlyList<CalendarBlock> GetForProject(ProjectId projectId)
+        => Query(
+            $"SELECT {Columns} FROM calendar_blocks WHERE project_id = $projectId ORDER BY date, start_time;",
+            command => command.Parameters.AddWithValue("$projectId", projectId.ToString()));
+
     public IReadOnlyList<CalendarBlock> GetElapsedWithoutOutcome(DateOnly today, TimeOnly now)
         => Query(
             $"""
@@ -107,8 +130,8 @@ public sealed class SqliteCalendarBlockRepository(SqliteConnectionFactory connec
 
     public IReadOnlySet<TaskId> GetTaskIdsWithPendingBlocks()
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             "SELECT DISTINCT task_id FROM calendar_blocks WHERE task_id IS NOT NULL AND outcome = 0;";
         using var reader = command.ExecuteReader();
@@ -123,8 +146,8 @@ public sealed class SqliteCalendarBlockRepository(SqliteConnectionFactory connec
 
     private List<CalendarBlock> Query(string sql, Action<SqliteCommand> configure)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = sql;
         configure(command);
         using var reader = command.ExecuteReader();
@@ -142,6 +165,8 @@ public sealed class SqliteCalendarBlockRepository(SqliteConnectionFactory connec
         command.Parameters.AddWithValue("$id", block.Id.ToString());
         command.Parameters.AddWithValue(
             "$taskId", block.TaskId is { } taskId ? taskId.ToString() : DBNull.Value);
+        command.Parameters.AddWithValue(
+            "$projectId", block.ProjectId is { } projectId ? projectId.ToString() : DBNull.Value);
         command.Parameters.AddWithValue("$title", block.Title is { } title ? title : DBNull.Value);
         command.Parameters.AddWithValue("$date", block.Date.ToString("O", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$startTime", block.StartTime.ToString("O", CultureInfo.InvariantCulture));
@@ -168,17 +193,18 @@ public sealed class SqliteCalendarBlockRepository(SqliteConnectionFactory connec
         => CalendarBlock.Rehydrate(
             CalendarBlockId.Parse(reader.GetString(0)),
             reader.IsDBNull(1) ? null : TaskId.Parse(reader.GetString(1)),
-            reader.IsDBNull(2) ? null : reader.GetString(2),
-            DateOnly.Parse(reader.GetString(3), CultureInfo.InvariantCulture),
-            TimeOnly.Parse(reader.GetString(4), CultureInfo.InvariantCulture),
+            reader.IsDBNull(2) ? null : ProjectId.Parse(reader.GetString(2)),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            DateOnly.Parse(reader.GetString(4), CultureInfo.InvariantCulture),
             TimeOnly.Parse(reader.GetString(5), CultureInfo.InvariantCulture),
-            (BlockKind)reader.GetInt64(6),
-            reader.IsDBNull(7) ? null : RecurrenceSerializer.Deserialize(reader.GetString(7)),
-            reader.GetString(8),
-            reader.IsDBNull(9) ? null : reader.GetString(9),
-            (int)reader.GetInt64(10),
-            (BlockOutcome)reader.GetInt64(11),
-            reader.IsDBNull(12) ? null : DateTimeOffset.Parse(reader.GetString(12), CultureInfo.InvariantCulture),
-            DateTimeOffset.Parse(reader.GetString(13), CultureInfo.InvariantCulture),
-            DateTimeOffset.Parse(reader.GetString(14), CultureInfo.InvariantCulture));
+            TimeOnly.Parse(reader.GetString(6), CultureInfo.InvariantCulture),
+            (BlockKind)reader.GetInt64(7),
+            reader.IsDBNull(8) ? null : RecurrenceSerializer.Deserialize(reader.GetString(8)),
+            reader.GetString(9),
+            reader.IsDBNull(10) ? null : reader.GetString(10),
+            (int)reader.GetInt64(11),
+            (BlockOutcome)reader.GetInt64(12),
+            reader.IsDBNull(13) ? null : DateTimeOffset.Parse(reader.GetString(13), CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse(reader.GetString(14), CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse(reader.GetString(15), CultureInfo.InvariantCulture));
 }

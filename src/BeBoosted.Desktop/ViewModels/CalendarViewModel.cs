@@ -3,6 +3,7 @@ using System.Globalization;
 using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Planning;
+using BeBoosted.Application.Projects;
 using BeBoosted.Application.Settings;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Domain;
@@ -26,6 +27,7 @@ public sealed partial class CalendarViewModel : ViewModelBase
     private readonly CalendarService _calendar;
     private readonly ITaskRepository _tasks;
     private readonly PlanningService _planning;
+    private readonly IProjectRepository _projects;
     private readonly bool _initialized;
 
     private PlanningProposal? _activeDraft;
@@ -37,13 +39,15 @@ public sealed partial class CalendarViewModel : ViewModelBase
         IClock clock,
         CalendarService calendar,
         ITaskRepository tasks,
-        PlanningService planning)
+        PlanningService planning,
+        IProjectRepository projects)
     {
         _settings = settings;
         _clock = clock;
         _calendar = calendar;
         _tasks = tasks;
         _planning = planning;
+        _projects = projects;
         VisibleDate = clock.Today;
         ViewKind = settings.GetLastCalendarView();
         _initialized = true;
@@ -148,62 +152,73 @@ public sealed partial class CalendarViewModel : ViewModelBase
         }
     }
 
-    // ---- Commitment editor (flyout) state ----
+    // ---- Commitment editor (centered modal, shared by New and Edit) ----
 
     [ObservableProperty]
-    public partial string CommitmentTitle { get; set; } = string.Empty;
+    [NotifyPropertyChangedFor(nameof(IsCommitmentEditorOpen))]
+    public partial CommitmentEditorViewModel? CommitmentEditor { get; private set; }
 
-    [ObservableProperty]
-    public partial DateTimeOffset? CommitmentDate { get; set; }
-
-    [ObservableProperty]
-    public partial TimeSpan? CommitmentStart { get; set; }
-
-    [ObservableProperty]
-    public partial TimeSpan? CommitmentEnd { get; set; }
-
-    [ObservableProperty]
-    public partial bool CommitmentRepeatsWeekly { get; set; }
-
-    public ObservableCollection<DayToggleViewModel> CommitmentDays { get; } =
-    [
-        new(DayOfWeek.Monday), new(DayOfWeek.Tuesday), new(DayOfWeek.Wednesday),
-        new(DayOfWeek.Thursday), new(DayOfWeek.Friday), new(DayOfWeek.Saturday), new(DayOfWeek.Sunday),
-    ];
-
-    [ObservableProperty]
-    public partial string? CommitmentError { get; private set; }
+    public bool IsCommitmentEditorOpen => CommitmentEditor is not null;
 
     [RelayCommand]
-    private void PrepareCommitmentEditor()
+    private void OpenNewCommitmentEditor()
+        => CommitmentEditor = new CommitmentEditorViewModel(this, BuildProjectOptions(), null, VisibleDate);
+
+    /// <summary>
+    /// Opens Edit mode with the commitment's persisted values (local only). For a
+    /// recurring series the completion checkbox targets the clicked occurrence.
+    /// </summary>
+    public void OpenCommitmentEditorFor(CalendarBlockId id, DateOnly? occurrenceDate = null)
     {
-        CommitmentTitle = string.Empty;
-        CommitmentDate = new DateTimeOffset(VisibleDate.ToDateTime(TimeOnly.MinValue));
-        CommitmentStart = new TimeSpan(9, 0, 0);
-        CommitmentEnd = new TimeSpan(10, 0, 0);
-        CommitmentRepeatsWeekly = false;
-        CommitmentError = null;
-        foreach (var day in CommitmentDays)
+        if (_calendar.GetBlock(id) is { Kind: BlockKind.FixedCommitment, IsExternal: false } block)
         {
-            day.IsSelected = false;
+            var occurrence = occurrenceDate ?? block.Date;
+            CommitmentEditor = new CommitmentEditorViewModel(
+                this, BuildProjectOptions(), block, VisibleDate,
+                _calendar.IsCommitmentOccurrenceCompleted(id, occurrence), occurrence);
         }
     }
 
-    /// <summary>Returns true when the commitment was created (the view closes its flyout).</summary>
-    public bool TrySaveCommitment()
+    /// <summary>
+    /// The one completion path both surfaces share: persists the requested state and,
+    /// only when something actually changed, reloads and announces it exactly once.
+    /// </summary>
+    public void SetCommitmentOccurrenceDone(CalendarBlockId id, DateOnly occurrenceDate, bool done)
+    {
+        if (_calendar.SetCommitmentOccurrenceCompletion(id, occurrenceDate, done))
+        {
+            Reload();
+            DataChanged?.Invoke();
+        }
+    }
+
+    public void CloseCommitmentEditor() => CommitmentEditor = null;
+
+    /// <summary>
+    /// Delete path for a local commitment (Delete key or UI): opens the editor with
+    /// the confirmation step active — deletion is never silent.
+    /// </summary>
+    public void RequestDeleteCommitment(CalendarBlockId id)
+    {
+        OpenCommitmentEditorFor(id);
+        CommitmentEditor?.RequestDeleteCommand.Execute(null);
+    }
+
+    /// <summary>Persists the editor: closes on success, keeps the error inside it otherwise.</summary>
+    internal void SaveCommitment(CommitmentEditorViewModel editor)
     {
         try
         {
-            if (CommitmentDate is not { } date || CommitmentStart is not { } start || CommitmentEnd is not { } end)
+            if (editor.Date is not { } date || editor.Start is not { } start || editor.End is not { } end)
             {
-                CommitmentError = "Pick a date, start, and end.";
-                return false;
+                editor.Error = "Pick a date, start, and end.";
+                return;
             }
 
             RecurrenceRule? recurrence = null;
-            if (CommitmentRepeatsWeekly)
+            if (editor.RepeatsWeekly)
             {
-                var days = CommitmentDays.Where(d => d.IsSelected).Select(d => d.Day).ToArray();
+                var days = editor.Days.Where(d => d.IsSelected).Select(d => d.Day).ToArray();
                 if (days.Length == 0)
                 {
                     days = [DateOnly.FromDateTime(date.Date).DayOfWeek];
@@ -212,21 +227,56 @@ public sealed partial class CalendarViewModel : ViewModelBase
                 recurrence = RecurrenceRule.Weekly(1, days);
             }
 
-            _calendar.CreateFixedCommitment(
-                CommitmentTitle,
-                DateOnly.FromDateTime(date.Date),
-                TimeOnly.FromTimeSpan(start),
-                TimeOnly.FromTimeSpan(end),
-                recurrence);
-            CommitmentError = null;
+            if (editor.BlockId is { } id)
+            {
+                // The requested completion is part of the same atomic save; the
+                // service rejects completing an occurrence this edit removes.
+                _calendar.UpdateFixedCommitment(
+                    id, editor.Title, DateOnly.FromDateTime(date.Date),
+                    TimeOnly.FromTimeSpan(start), TimeOnly.FromTimeSpan(end),
+                    recurrence, editor.SelectedProject?.Id,
+                    new CommitmentCompletionRequest(
+                        editor.OccurrenceDate ?? DateOnly.FromDateTime(date.Date),
+                        editor.IsCompleted));
+            }
+            else
+            {
+                _calendar.CreateFixedCommitment(
+                    editor.Title, DateOnly.FromDateTime(date.Date),
+                    TimeOnly.FromTimeSpan(start), TimeOnly.FromTimeSpan(end),
+                    recurrence, editor.SelectedProject?.Id);
+            }
+
+            CommitmentEditor = null;
             Reload();
-            return true;
+            DataChanged?.Invoke();
         }
         catch (DomainException exception)
         {
-            CommitmentError = exception.Message;
-            return false;
+            editor.Error = exception.Message;
         }
+    }
+
+    /// <summary>Deletes the commitment (whole series when recurring) after confirmation.</summary>
+    internal void DeleteCommitment(CommitmentEditorViewModel editor)
+    {
+        if (editor.BlockId is { } id)
+        {
+            _calendar.DeleteLocalCommitment(id);
+        }
+
+        CommitmentEditor = null;
+        Reload();
+        DataChanged?.Invoke();
+    }
+
+    private List<ProjectOptionViewModel> BuildProjectOptions()
+    {
+        var options = new List<ProjectOptionViewModel> { new(null, "No project", null) };
+        options.AddRange(_projects.GetAll()
+            .OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(p => new ProjectOptionViewModel(p.Id, p.Name, p.AccentColor)));
+        return options;
     }
 
     // ---- Navigation ----
@@ -440,10 +490,12 @@ public sealed partial class CalendarViewModel : ViewModelBase
     {
         _calendar.MoveBlock(id, date, start);
         Reload();
+        DataChanged?.Invoke();
     }
 
     public void ResizeBlockTo(CalendarBlockId id, TimeOnly end)
     {
+        var resized = true;
         try
         {
             _calendar.ResizeBlock(id, end);
@@ -451,9 +503,16 @@ public sealed partial class CalendarViewModel : ViewModelBase
         catch (DomainException)
         {
             // Resizing below the minimum keeps the previous size.
+            resized = false;
         }
 
         Reload();
+
+        // Announce only real changes — a rejected resize must not refresh listeners.
+        if (resized)
+        {
+            DataChanged?.Invoke();
+        }
     }
 
     public void RecordOutcome(CalendarBlockId id, BlockOutcome outcome, TimeSpan? remaining)
@@ -465,7 +524,7 @@ public sealed partial class CalendarViewModel : ViewModelBase
 
     public void UnscheduleBlock(CalendarBlockId id)
     {
-        _calendar.DeleteBlock(id);
+        _calendar.UnscheduleTaskBlock(id);
         Reload();
         DataChanged?.Invoke();
     }
@@ -579,7 +638,8 @@ public sealed partial class CalendarViewModel : ViewModelBase
             ?? (block.TaskId is { } taskId && titles.TryGetValue(taskId, out var info)
                 ? info.Title
                 : "(deleted task)");
-        var isDone = block.Outcome == BlockOutcome.Done;
+        // Task blocks are done through their outcome; commitments per occurrence.
+        var isDone = block.Outcome == BlockOutcome.Done || occurrence.IsCompleted;
         var elapsed = occurrence.Date < today
             || (occurrence.Date == today && block.EndTime.ToTimeSpan().TotalMinutes <= nowMinutes);
         var needsOutcome = block.Kind == BlockKind.TaskBlock && block.Outcome == BlockOutcome.None && elapsed;

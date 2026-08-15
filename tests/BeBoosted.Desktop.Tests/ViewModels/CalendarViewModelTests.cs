@@ -15,7 +15,7 @@ public sealed class CalendarViewModelTests
         var clock = new FakeClock(TestShell.DesignDate);
         var tasks = new InMemoryTaskRepository();
         var blocks = new InMemoryCalendarBlockRepository();
-        var calendarService = new CalendarService(blocks, tasks, clock);
+        var calendarService = TestShell.CreateCalendarService(blocks, tasks, clock);
         var planning = new PlanningService(
             new InMemoryPlanningProposalRepository(), blocks,
             new InboxQueryService(tasks, blocks), new InMemoryPrioritizationRepository(),
@@ -25,7 +25,8 @@ public sealed class CalendarViewModelTests
             clock,
             calendarService,
             tasks,
-            planning);
+            planning,
+            new InMemoryProjectRepository());
     }
 
     [Fact]

@@ -54,7 +54,7 @@ public sealed class CalendarBlockTests
         Assert.Equal(new TimeOnly(9, 0), block.StartTime);
 
         var external = CalendarBlock.Rehydrate(
-            CalendarBlockId.New(), null, "External", Date, new TimeOnly(9, 0), new TimeOnly(10, 0),
+            CalendarBlockId.New(), null, null, "External", Date, new TimeOnly(9, 0), new TimeOnly(10, 0),
             BlockKind.FixedCommitment, null, "google", "evt-1", 0, BlockOutcome.None, null, Now, Now);
         Assert.True(external.IsExternal);
         Assert.Throws<DomainException>(
@@ -78,6 +78,125 @@ public sealed class CalendarBlockTests
         var single = CalendarBlock.CreateForTask(TaskId.New(), Date, new TimeOnly(15, 0), new TimeOnly(16, 0), Now);
         Assert.True(single.OccursOn(Date));
         Assert.False(single.OccursOn(Date.AddDays(1)));
+    }
+
+    [Fact]
+    public void FixedCommitments_CarryAnOptionalProject()
+    {
+        var projectId = ProjectId.New();
+        var assigned = CalendarBlock.CreateFixedCommitment(
+            "AP Economics", Date, new TimeOnly(8, 30), new TimeOnly(9, 45), Now, projectId: projectId);
+        Assert.Equal(projectId, assigned.ProjectId);
+
+        var unassigned = CalendarBlock.CreateFixedCommitment(
+            "Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45), Now);
+        Assert.Null(unassigned.ProjectId);
+
+        // Task blocks derive their project from the backing task, never from the block.
+        var taskBlock = CalendarBlock.CreateForTask(
+            TaskId.New(), Date, new TimeOnly(15, 0), new TimeOnly(16, 0), Now);
+        Assert.Null(taskBlock.ProjectId);
+    }
+
+    [Fact]
+    public void AssignToProject_OnlyForLocalFixedCommitments()
+    {
+        var projectId = ProjectId.New();
+        var commitment = CalendarBlock.CreateFixedCommitment(
+            "Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45), Now);
+
+        commitment.AssignToProject(projectId, Now.AddHours(1));
+        Assert.Equal(projectId, commitment.ProjectId);
+        commitment.AssignToProject(null, Now.AddHours(2));
+        Assert.Null(commitment.ProjectId);
+
+        var taskBlock = CalendarBlock.CreateForTask(
+            TaskId.New(), Date, new TimeOnly(15, 0), new TimeOnly(16, 0), Now);
+        Assert.Throws<DomainException>(() => taskBlock.AssignToProject(projectId, Now));
+
+        var external = CalendarBlock.Rehydrate(
+            CalendarBlockId.New(), null, null, "External", Date, new TimeOnly(9, 0), new TimeOnly(10, 0),
+            BlockKind.FixedCommitment, null, "google", "evt-1", 0, BlockOutcome.None, null, Now, Now);
+        Assert.Throws<DomainException>(() => external.AssignToProject(projectId, Now));
+    }
+
+    [Fact]
+    public void UpdateCommitment_EditsAllFieldsAtomically()
+    {
+        var projectId = ProjectId.New();
+        var commitment = CalendarBlock.CreateFixedCommitment(
+            "Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45), Now);
+
+        var recurrence = RecurrenceRule.Weekly(1, DayOfWeek.Monday);
+        commitment.UpdateCommitment(
+            " Team lunch ", Date.AddDays(1), new TimeOnly(13, 0), new TimeOnly(14, 0),
+            recurrence, projectId, Now.AddHours(1));
+
+        Assert.Equal("Team lunch", commitment.Title);
+        Assert.Equal(Date.AddDays(1), commitment.Date);
+        Assert.Equal(new TimeOnly(13, 0), commitment.StartTime);
+        Assert.Equal(new TimeOnly(14, 0), commitment.EndTime);
+        Assert.Same(recurrence, commitment.Recurrence);
+        Assert.Equal(projectId, commitment.ProjectId);
+        Assert.Equal(Now.AddHours(1), commitment.ModifiedAt);
+    }
+
+    [Fact]
+    public void UpdateCommitment_ValidatesBeforeMutating()
+    {
+        var commitment = CalendarBlock.CreateFixedCommitment(
+            "Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45), Now);
+
+        // Invalid times must leave every field untouched, not just the times.
+        Assert.Throws<DomainException>(() => commitment.UpdateCommitment(
+            "Team lunch", Date.AddDays(1), new TimeOnly(14, 0), new TimeOnly(13, 0),
+            null, ProjectId.New(), Now.AddHours(1)));
+        Assert.Equal("Lunch", commitment.Title);
+        Assert.Equal(Date, commitment.Date);
+        Assert.Null(commitment.ProjectId);
+
+        Assert.Throws<DomainException>(() => commitment.UpdateCommitment(
+            " ", Date, new TimeOnly(12, 0), new TimeOnly(12, 45), null, null, Now));
+
+        var taskBlock = CalendarBlock.CreateForTask(
+            TaskId.New(), Date, new TimeOnly(15, 0), new TimeOnly(16, 0), Now);
+        Assert.Throws<DomainException>(() => taskBlock.UpdateCommitment(
+            "Nope", Date, new TimeOnly(15, 0), new TimeOnly(16, 0), null, null, Now));
+
+        var external = CalendarBlock.Rehydrate(
+            CalendarBlockId.New(), null, null, "External", Date, new TimeOnly(9, 0), new TimeOnly(10, 0),
+            BlockKind.FixedCommitment, null, "google", "evt-1", 0, BlockOutcome.None, null, Now, Now);
+        Assert.Throws<DomainException>(() => external.UpdateCommitment(
+            "Nope", Date, new TimeOnly(9, 0), new TimeOnly(10, 0), null, null, Now));
+    }
+
+    [Fact]
+    public void Rehydrate_RoundTripsTheProject()
+    {
+        var projectId = ProjectId.New();
+        var block = CalendarBlock.Rehydrate(
+            CalendarBlockId.New(), null, projectId, "AP Economics", Date,
+            new TimeOnly(8, 30), new TimeOnly(9, 45), BlockKind.FixedCommitment, null,
+            CalendarBlock.LocalProvider, null, 0, BlockOutcome.None, null, Now, Now);
+        Assert.Equal(projectId, block.ProjectId);
+    }
+
+    [Fact]
+    public void RenameAndSetRecurrence_RejectExternalCommitments_WithoutMutating()
+    {
+        var external = CalendarBlock.Rehydrate(
+            CalendarBlockId.New(), null, null, "External", Date, new TimeOnly(9, 0), new TimeOnly(10, 0),
+            BlockKind.FixedCommitment, RecurrenceRule.Weekly(1, DayOfWeek.Tuesday),
+            "google", "evt-1", 0, BlockOutcome.None, null, Now, Now);
+
+        Assert.Throws<DomainException>(() => external.Rename("Hijacked", Now.AddHours(1)));
+        Assert.Throws<DomainException>(() => external.SetRecurrence(null, Now.AddHours(1)));
+        Assert.Throws<DomainException>(() => external.SetRecurrence(
+            RecurrenceRule.Weekly(1, DayOfWeek.Friday), Now.AddHours(1)));
+
+        Assert.Equal("External", external.Title);
+        Assert.Equal([DayOfWeek.Tuesday], external.Recurrence!.DaysOfWeek);
+        Assert.Equal(Now, external.ModifiedAt);
     }
 
     [Fact]
