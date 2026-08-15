@@ -19,6 +19,7 @@ public sealed partial class TaskRowViewModel : ViewModelBase
     private readonly TaskService _service;
     private readonly IClock _clock;
     private readonly Action<TaskRowViewModel> _onRemoved;
+    private readonly Action<TaskRowViewModel>? _onEdited;
     private readonly string? _projectName;
 
     public TaskRowViewModel(
@@ -27,12 +28,14 @@ public sealed partial class TaskRowViewModel : ViewModelBase
         IClock clock,
         Action<TaskRowViewModel> onRemoved,
         IReadOnlyList<ProjectChoiceViewModel>? projectChoices = null,
-        string? projectName = null)
+        string? projectName = null,
+        Action<TaskRowViewModel>? onEdited = null)
     {
         Task = task;
         _service = service;
         _clock = clock;
         _onRemoved = onRemoved;
+        _onEdited = onEdited;
         _projectName = projectName;
         ProjectChoices = projectChoices ?? [ProjectChoiceViewModel.None];
         ResetEditFields();
@@ -128,6 +131,7 @@ public sealed partial class TaskRowViewModel : ViewModelBase
         OnPropertyChanged(nameof(Title));
         OnPropertyChanged(nameof(MetaText));
         OnPropertyChanged(nameof(HasMeta));
+        _onEdited?.Invoke(this);
     }
 
     [RelayCommand]
