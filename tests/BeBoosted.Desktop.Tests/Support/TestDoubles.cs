@@ -333,7 +333,8 @@ public static class TestShell
         InMemoryCalendarBlockRepository? blocks = null,
         InMemoryProjectRepository? projects = null,
         InMemoryCommitmentCompletionRepository? completions = null,
-        DateOnly? today = null)
+        DateOnly? today = null,
+        InMemoryPrioritizationRepository? ranks = null)
     {
         var settingsStore = store ?? new InMemorySettingsStore();
         var settings = new AppSettings(settingsStore);
@@ -346,7 +347,7 @@ public static class TestShell
             blockRepository, completionRepository,
             new InMemoryCalendarMutations(blockRepository, completionRepository), repository, clock);
         var inboxQuery = new InboxQueryService(repository, blockRepository);
-        var prioritization = new InMemoryPrioritizationRepository();
+        var prioritization = ranks ?? new InMemoryPrioritizationRepository();
         var prioritySort = new PrioritySortService(prioritization, clock);
         var planning = new PlanningService(
             new InMemoryPlanningProposalRepository(), blockRepository,

@@ -73,7 +73,7 @@ public sealed partial class ShellViewModel : ViewModelBase
         };
         Calendar.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(CalendarViewModel.ViewKind))
+            if (e.PropertyName is nameof(CalendarViewModel.ViewKind) or nameof(CalendarViewModel.VisibleDate))
             {
                 RefreshInboxRanks();
             }
@@ -140,10 +140,10 @@ public sealed partial class ShellViewModel : ViewModelBase
 
     public bool IsSortActive => ActiveSort is not null;
 
-    /// <summary>The period ranks apply to — follows the visible calendar view.</summary>
+    /// <summary>The period ranks apply to — follows the visible calendar view and date.</summary>
     public PlanningPeriod CurrentPlanningPeriod => Calendar.ViewKind == CalendarViewKind.Week
-        ? PlanningPeriod.ForWeek(_clock.Today)
-        : PlanningPeriod.ForToday(_clock.Today);
+        ? PlanningPeriod.ForWeek(Calendar.VisibleDate)
+        : PlanningPeriod.ForToday(Calendar.VisibleDate);
 
     public bool CanStartPrioritySort => Inbox.OpenCount >= 2;
 
