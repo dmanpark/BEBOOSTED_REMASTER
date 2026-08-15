@@ -209,7 +209,18 @@ public sealed class CalendarService(
     public CalendarBlock ScheduleTask(TaskId taskId, DateOnly date, TimeOnly startTime)
     {
         var task = tasks.GetById(taskId) ?? throw new DomainException($"Task {taskId} no longer exists.");
-        var duration = task.EstimatedDuration ?? DefaultTaskBlockDuration;
+        return ScheduleTask(taskId, date, startTime, task.EstimatedDuration ?? DefaultTaskBlockDuration);
+    }
+
+    /// <summary>Schedules a task with an explicit duration (manual Schedule flyout).</summary>
+    public CalendarBlock ScheduleTask(TaskId taskId, DateOnly date, TimeOnly startTime, TimeSpan duration)
+    {
+        _ = tasks.GetById(taskId) ?? throw new DomainException($"Task {taskId} no longer exists.");
+        if (duration <= TimeSpan.Zero)
+        {
+            throw new DomainException("A block needs a positive duration.");
+        }
+
         var endTime = ClampEnd(startTime, duration);
         var block = CalendarBlock.CreateForTask(taskId, date, startTime, endTime, clock.Now);
         blocks.Add(block);

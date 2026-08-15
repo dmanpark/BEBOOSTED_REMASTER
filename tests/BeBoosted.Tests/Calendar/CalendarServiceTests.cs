@@ -72,6 +72,33 @@ public sealed class CalendarServiceTests : IDisposable
     }
 
     [Fact]
+    public void ScheduleTask_WithExplicitDuration_UsesItInsteadOfTheEstimate()
+    {
+        var task = AddTask("Practice DECA role-play", TimeSpan.FromMinutes(90));
+
+        var block = _service.ScheduleTask(task.Id, Date, new TimeOnly(15, 30), TimeSpan.FromMinutes(45));
+
+        Assert.Equal(new TimeOnly(16, 15), block.EndTime);
+        Assert.DoesNotContain(_inbox.GetInboxTasks(), t => t.Id == task.Id);
+    }
+
+    [Fact]
+    public void ScheduleTask_WithExplicitDuration_ClampsAtMidnight()
+    {
+        var task = AddTask("Late work");
+        var block = _service.ScheduleTask(task.Id, Date, new TimeOnly(23, 50), TimeSpan.FromMinutes(30));
+        Assert.Equal(new TimeOnly(23, 59), block.EndTime);
+    }
+
+    [Fact]
+    public void ScheduleTask_WithNonPositiveDuration_Throws()
+    {
+        var task = AddTask("Zero work");
+        Assert.Throws<DomainException>(
+            () => _service.ScheduleTask(task.Id, Date, new TimeOnly(15, 0), TimeSpan.Zero));
+    }
+
+    [Fact]
     public void MoveAndResize_PersistAcrossReload()
     {
         var task = AddTask("Draft essay outline", TimeSpan.FromMinutes(60));
