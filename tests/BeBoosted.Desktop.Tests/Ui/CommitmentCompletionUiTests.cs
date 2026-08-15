@@ -48,6 +48,8 @@ public sealed class CommitmentCompletionUiTests
         var shell = TestShell.Create(tasks: tasks, blocks: blocks, projects: projects);
         var window = new MainWindow { DataContext = shell, Width = 1440, Height = 960 };
         window.Show();
+        // Timeline blocks live on the Week surface; Today shows the Daily list.
+        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
         window.CaptureRenderedFrame();
         return new Fixture(window, shell, blocks, stats.Id);
     }

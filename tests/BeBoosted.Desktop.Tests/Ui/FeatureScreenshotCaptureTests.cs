@@ -47,10 +47,17 @@ public sealed class FeatureScreenshotCaptureTests
             window.Show();
             window.CaptureRenderedFrame();
 
+            // The Today view's priority-first Daily list.
+            Capture(window, directory!, $"daily-list-{width}x{height}.png");
+
             // New commitment dialog.
             shell.Calendar.OpenNewCommitmentEditorCommand.Execute(null);
             Capture(window, directory!, $"commitment-editor-new-{width}x{height}.png");
             shell.Calendar.CloseCommitmentEditor();
+
+            // Timeline block states render on the Week surface.
+            shell.Calendar.ViewKind = CalendarViewKind.Week;
+            window.CaptureRenderedFrame();
 
             // Linked commitment used across the completion states.
             var stats = CalendarBlock.CreateFixedCommitment(
@@ -91,9 +98,7 @@ public sealed class FeatureScreenshotCaptureTests
             shell.NavigateCommand.Execute(AppSection.Calendar);
 
             // Week view with an editable local commitment (and everything else).
-            shell.Calendar.ViewKind = CalendarViewKind.Week;
             Capture(window, directory!, $"calendar-week-editable-commitment-{width}x{height}.png");
-            shell.Calendar.ViewKind = CalendarViewKind.Today;
 
             // External commitment locked state (no completion circle): scroll into view.
             scroller = surface.FindControl<ScrollViewer>("Scroller")!;

@@ -34,6 +34,8 @@ public sealed class CalendarBlockInteractionTests
         var shell = TestShell.Create(tasks: tasks, blocks: blocks);
         var window = new MainWindow { DataContext = shell, Width = 1440, Height = 960 };
         window.Show();
+        // Timeline blocks live on the Week surface; Today shows the Daily list.
+        shell.Calendar.ViewKind = CalendarViewKind.Week;
         window.CaptureRenderedFrame();
         return (window, shell, blocks);
     }

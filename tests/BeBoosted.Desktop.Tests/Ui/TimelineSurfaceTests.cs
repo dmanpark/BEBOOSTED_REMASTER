@@ -22,6 +22,7 @@ public sealed class TimelineSurfaceTests
 {
     private const double FullDayHeight = 24 * TimelineSurfaceView.DefaultHourHeight;
 
+    // The timeline lives on the Week view; Today renders the Daily list instead.
     private static (MainWindow Window, ShellViewModel Shell) CreateShellWindow(
         double width = 1440, double height = 960)
     {
@@ -32,6 +33,7 @@ public sealed class TimelineSurfaceTests
         var shell = TestShell.Create(tasks: tasks, blocks: blocks);
         var window = new MainWindow { DataContext = shell, Width = width, Height = height };
         window.Show();
+        shell.Calendar.ViewKind = CalendarViewKind.Week;
         window.CaptureRenderedFrame();
         return (window, shell);
     }
@@ -46,20 +48,13 @@ public sealed class TimelineSurfaceTests
     [AvaloniaTheory]
     [InlineData(1440, 960)]
     [InlineData(1280, 800)]
-    public void Timeline_CoversTheFullDay_InTodayAndWeek(double width, double height)
+    public void Timeline_CoversTheFullDay_InWeekView(double width, double height)
     {
-        var (window, shell) = CreateShellWindow(width, height);
+        var (window, _) = CreateShellWindow(width, height);
         var (surface, scroller) = FindSurface(window);
 
         Assert.Equal(0, surface.StartHour);
         Assert.Equal(24, surface.EndHour);
-        Assert.True(
-            scroller.Extent.Height >= FullDayHeight,
-            $"Today extent {scroller.Extent.Height} misses the {FullDayHeight} px day");
-
-        shell.Calendar.ViewKind = CalendarViewKind.Week;
-        window.CaptureRenderedFrame();
-        (_, scroller) = FindSurface(window);
         Assert.True(
             scroller.Extent.Height >= FullDayHeight,
             $"Week extent {scroller.Extent.Height} misses the {FullDayHeight} px day");
@@ -81,14 +76,10 @@ public sealed class TimelineSurfaceTests
         window.Close();
     }
 
-    [AvaloniaTheory]
-    [InlineData(CalendarViewKind.Today)]
-    [InlineData(CalendarViewKind.Week)]
-    public void BottomScroll_ExposesTheCompleteElevenPmHour(CalendarViewKind kind)
+    [AvaloniaFact]
+    public void BottomScroll_ExposesTheCompleteElevenPmHour()
     {
-        var (window, shell) = CreateShellWindow();
-        shell.Calendar.ViewKind = kind;
-        window.CaptureRenderedFrame();
+        var (window, _) = CreateShellWindow();
         var (_, scroller) = FindSurface(window);
 
         scroller.ScrollToEnd();
@@ -130,19 +121,18 @@ public sealed class TimelineSurfaceTests
     }
 
     [AvaloniaFact]
-    public void SwitchingViews_KeepsTheScrollOffsetValid()
+    public void SwitchingViews_KeepsTheWeekScrollOffsetValid()
     {
+        // Week → Today (Daily list) → back to Week must leave a usable offset.
         var (window, shell) = CreateShellWindow();
         var (_, scroller) = FindSurface(window);
         scroller.ScrollToEnd();
         window.CaptureRenderedFrame();
 
-        shell.Calendar.ViewKind = CalendarViewKind.Week;
-        window.CaptureRenderedFrame();
-        (_, scroller) = FindSurface(window);
-        AssertOffsetWithinExtent(scroller);
-
         shell.Calendar.ViewKind = CalendarViewKind.Today;
+        window.CaptureRenderedFrame();
+
+        shell.Calendar.ViewKind = CalendarViewKind.Week;
         window.CaptureRenderedFrame();
         (_, scroller) = FindSurface(window);
         AssertOffsetWithinExtent(scroller);

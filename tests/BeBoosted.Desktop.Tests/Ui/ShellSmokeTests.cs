@@ -89,7 +89,7 @@ public sealed class ShellSmokeTests
     }
 
     [AvaloniaFact]
-    public void Calendar_RendersSeededBlocks_TodayAndWeek()
+    public void Calendar_TodayShowsDailyList_WeekRendersSeededBlocks()
     {
         var clock = new FakeClock(TestShell.DesignDate);
         var tasks = new InMemoryTaskRepository();
@@ -100,16 +100,13 @@ public sealed class ShellSmokeTests
         window.Show();
         window.CaptureRenderedFrame();
 
-        var todayBlocks = window.GetVisualDescendants().OfType<CalendarBlockView>().ToList();
-        Assert.Equal(5, todayBlocks.Count);
-
-        // Local fixed commitments are editable and movable, never locked.
-        var fixedBlock = todayBlocks.First(v =>
-            (v.DataContext as CalendarBlockViewModel)?.Title == "AP Economics");
-        var fixedVm = (CalendarBlockViewModel)fixedBlock.DataContext!;
-        Assert.True(fixedVm.CanEdit);
-        Assert.True(fixedVm.CanMove);
-        Assert.False(fixedVm.IsLocked);
+        // Today is a priority-first list: no hourly timeline blocks, daily rows instead.
+        Assert.DoesNotContain(
+            window.GetVisualDescendants().OfType<CalendarBlockView>(),
+            view => view.IsEffectivelyVisible);
+        Assert.NotNull(FindText(window, "Today's tasks"));
+        Assert.Equal(4, shell.Calendar.Daily.ScheduledRows.Count);
+        Assert.Single(shell.Calendar.Daily.CompletedRows);
 
         shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
         window.CaptureRenderedFrame();
@@ -117,6 +114,14 @@ public sealed class ShellSmokeTests
         // Mon–Fri classes (5) + Lunch + DECA meeting + SAT + dinner + 3 task blocks = 12
         Assert.Equal(12, weekBlocks.Count);
         Assert.NotNull(FindText(window, "TUE 11"));
+
+        // Local fixed commitments stay editable and movable on the Week timeline.
+        var fixedVm = (CalendarBlockViewModel)weekBlocks
+            .First(v => (v.DataContext as CalendarBlockViewModel)?.Title == "AP Economics")
+            .DataContext!;
+        Assert.True(fixedVm.CanEdit);
+        Assert.True(fixedVm.CanMove);
+        Assert.False(fixedVm.IsLocked);
     }
 
     private static T? FindDescendant<T>(Window window)
