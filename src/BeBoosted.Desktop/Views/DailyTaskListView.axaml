@@ -107,6 +107,14 @@
     <Style Selector="ToggleButton#CompletedToggle:checked Path#CompletedChevron">
       <Setter Property="RenderTransform" Value="rotate(90deg)" />
     </Style>
+    <Style Selector="ToggleButton#CompletedToggle:pointerover /template/ Border#PART_CompletedBorder">
+      <Setter Property="Background" Value="{DynamicResource BrushHoverWash}" />
+    </Style>
+    <Style Selector="ToggleButton#CompletedToggle:focus-visible /template/ Border#PART_CompletedBorder">
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+      <Setter Property="BorderThickness" Value="1.5" />
+      <Setter Property="BoxShadow" Value="0 0 0 3 #8CC8F24A" />
+    </Style>
 
     <Style Selector="Border.statusChip">
       <Setter Property="Background" Value="Transparent" />
@@ -272,7 +280,8 @@
                      ToolTip.Tip="{Binding PriorityAccessibleText}" />
 
           <!-- Title, badges, and inline metadata -->
-          <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"
+                      ClipToBounds="True">
             <!-- A commitment's title opens its editor -->
             <Button Classes="link" IsVisible="{Binding CanEditCommitment}"
                     Command="{Binding EditCommitmentCommand}"
@@ -294,7 +303,7 @@
                   IsVisible="{Binding IsLocked}" VerticalAlignment="Center"
                   ToolTip.Tip="External commitment — locked. BeBoosted never edits it." />
             <TextBlock Classes="meta" Text="{Binding ProjectName}"
-                       IsVisible="{Binding HasProject}" VerticalAlignment="Center" />
+                       IsVisible="{Binding ShowProjectLabel}" VerticalAlignment="Center" />
             <TextBlock Classes="meta" Text="{Binding MetaText}"
                        IsVisible="{Binding HasMeta}" VerticalAlignment="Center" />
             <Border Background="{StaticResource BrushLimeWash}"
@@ -563,7 +572,18 @@
                     IsVisible="{Binding HasCompleted}"
                     Background="Transparent" BorderThickness="0" Padding="12,0"
                     Height="34" Margin="0,26,0,0" HorizontalAlignment="Left"
+                    Cursor="Hand"
                     AutomationProperties.Name="Completed section">
+        <ToggleButton.Template>
+          <ControlTemplate>
+            <Border Name="PART_CompletedBorder" Background="{TemplateBinding Background}"
+                    CornerRadius="{StaticResource RadiusControl}">
+              <ContentPresenter Content="{TemplateBinding Content}"
+                                Padding="{TemplateBinding Padding}"
+                                VerticalContentAlignment="Center" />
+            </Border>
+          </ControlTemplate>
+        </ToggleButton.Template>
         <StackPanel Orientation="Horizontal" Spacing="8">
           <Path Name="CompletedChevron" Classes="icon" Data="{StaticResource IconChevronRight}"
                 Width="9" Height="9" StrokeThickness="1.5"

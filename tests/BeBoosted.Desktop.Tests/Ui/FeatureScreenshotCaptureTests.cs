@@ -116,6 +116,33 @@ public sealed class FeatureScreenshotCaptureTests
         }
     }
 
+    /// <summary>The 1100×720 minimum window: Daily list and Week timeline, no clipping.</summary>
+    [AvaloniaFact]
+    public void CaptureMinimumWindowScreens()
+    {
+        var directory = Environment.GetEnvironmentVariable("BEBOOSTED_SCREENSHOT_DIR");
+        Assert.SkipWhen(string.IsNullOrWhiteSpace(directory), "BEBOOSTED_SCREENSHOT_DIR is not set");
+        Directory.CreateDirectory(directory!);
+
+        var clock = new FakeClock(TestShell.DesignDate);
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        TestShell.SeedDesignCalendar(tasks, blocks, clock);
+        foreach (var task in TestShell.SeededTasks(clock).GetAll())
+        {
+            tasks.Add(task);
+        }
+
+        var shell = TestShell.Create(tasks: tasks, blocks: blocks);
+        var window = new MainWindow { DataContext = shell, Width = 1100, Height = 720 };
+        window.Show();
+        Capture(window, directory!, "daily-list-1100x720.png");
+
+        shell.Calendar.ViewKind = CalendarViewKind.Week;
+        Capture(window, directory!, "calendar-week-1100x720.png");
+        window.Close();
+    }
+
     private static void Capture(MainWindow window, string directory, string fileName)
     {
         var frame = window.CaptureRenderedFrame();

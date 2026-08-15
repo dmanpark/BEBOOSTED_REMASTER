@@ -213,10 +213,13 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
     public bool IsProposal => Kind == DailyRowKind.Proposal;
 
-    /// <summary>The unscheduled row metadata line: project · deadline · duration.</summary>
-    public string MetaText => TaskRow?.MetaText ?? string.Empty;
+    /// <summary>Bare-task rows show the full metadata line: project · deadline · duration.</summary>
+    public string MetaText => Kind == DailyRowKind.Task ? TaskRow?.MetaText ?? string.Empty : string.Empty;
 
     public bool HasMeta => MetaText.Length > 0;
+
+    /// <summary>Block-backed rows show just the project; the metadata line already covers Task rows.</summary>
+    public bool ShowProjectLabel => HasProject && Kind != DailyRowKind.Task;
 
     // ---- Time (metadata, right-aligned) ----
 
