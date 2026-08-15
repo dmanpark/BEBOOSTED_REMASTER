@@ -102,14 +102,17 @@
       </StackPanel>
     </Border>
 
-    <!-- Timeline surface (Today: one lane, Week: seven) -->
+    <!-- Center surface: Today shows the priority-first Daily list; Week keeps the timeline -->
     <Panel>
-      <views:TimelineSurfaceView />
+      <views:TimelineSurfaceView IsVisible="{Binding IsWeekView}" />
+      <views:DailyTaskListView Name="DailyList"
+                               DataContext="{Binding Daily}"
+                               IsVisible="{Binding IsActive}" />
 
-      <!-- Floating plan-draft summary: the calendar remains the review surface -->
+      <!-- Floating plan-draft summary (Week only; Today gets an inline banner) -->
       <Border Width="308" HorizontalAlignment="Right" VerticalAlignment="Top"
               Margin="0,16,18,0"
-              IsVisible="{Binding HasDraft}"
+              IsVisible="{Binding ShowFloatingDraftCard}"
               Background="{StaticResource BrushPaperWhite}"
               BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
               CornerRadius="{StaticResource RadiusDrawer}"

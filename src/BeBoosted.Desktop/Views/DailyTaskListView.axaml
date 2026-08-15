@@ -1,0 +1,590 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             xmlns:views="using:BeBoosted.Desktop.Views"
+             x:Class="BeBoosted.Desktop.Views.DailyTaskListView"
+             x:DataType="vm:DailyListViewModel">
+
+  <UserControl.Styles>
+
+    <!-- 54px row rhythm on thin rules; the left rail carries the priority tier -->
+    <Style Selector="Border.dailyRow">
+      <Setter Property="MinHeight" Value="54" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushRuleFaint}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Border.dailyRow:pointerover">
+      <Setter Property="Background" Value="{DynamicResource BrushHoverWash}" />
+    </Style>
+    <Style Selector="Border.dailyRow:focus-visible">
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1.5" />
+    </Style>
+
+    <Style Selector="Border.priorityRail">
+      <Setter Property="Width" Value="3" />
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Border.priorityRail.p1">
+      <Setter Property="Background" Value="{DynamicResource BrushGraphite}" />
+    </Style>
+    <Style Selector="Border.priorityRail.p2">
+      <Setter Property="Background" Value="{DynamicResource BrushGraphite40}" />
+    </Style>
+    <Style Selector="Border.priorityRail.p3">
+      <Setter Property="Background" Value="{DynamicResource BrushRuleMedium}" />
+    </Style>
+
+    <!-- Square 18px done control, lime when checked -->
+    <Style Selector="Button.dailyCheck">
+      <Setter Property="Width" Value="18" />
+      <Setter Property="Height" Value="18" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderStrong}" />
+      <Setter Property="BorderThickness" Value="1.5" />
+    </Style>
+    <Style Selector="Button.dailyCheck:pointerover /template/ Border#PART_ButtonBorder">
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    </Style>
+    <Style Selector="Button.dailyCheck.checked">
+      <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    </Style>
+
+    <!-- Quiet row actions: dimmed at rest, full on hover or keyboard focus, always hit-testable -->
+    <Style Selector="StackPanel.rowActions">
+      <Setter Property="Opacity" Value="0.45" />
+    </Style>
+    <Style Selector="Border.dailyRow:pointerover StackPanel.rowActions">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Border.dailyRow:focus-within StackPanel.rowActions">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+
+    <!-- Title weight follows the tier; completed rows strike through -->
+    <Style Selector="TextBlock.rowTitle">
+      <Setter Property="FontSize" Value="{DynamicResource TextSizeBodyLarge}" />
+      <Setter Property="FontWeight" Value="Normal" />
+    </Style>
+    <Style Selector="TextBlock.rowTitle.p1">
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.rowTitle.p2">
+      <Setter Property="FontWeight" Value="Medium" />
+    </Style>
+    <Style Selector="TextBlock.rowTitle.done">
+      <Setter Property="TextDecorations" Value="Strikethrough" />
+    </Style>
+
+    <Style Selector="TextBlock.sectionLabel">
+      <Setter Property="FontSize" Value="{DynamicResource TextSizeSmall}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="LetterSpacing" Value="1" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushPencilGray}" />
+    </Style>
+
+    <!-- Underlined text action (the mockup's Schedule affordance) -->
+    <Style Selector="Button.underline">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Height" Value="NaN" />
+      <Setter Property="Padding" Value="2,1" />
+    </Style>
+    <Style Selector="Button.underline TextBlock">
+      <Setter Property="TextDecorations" Value="Underline" />
+      <Setter Property="FontFamily" Value="{DynamicResource FontMono}" />
+      <Setter Property="FontSize" Value="{DynamicResource TextSizeSmall}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushPencilGray}" />
+    </Style>
+    <Style Selector="Button.underline:pointerover TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource BrushGraphite}" />
+    </Style>
+
+    <Style Selector="ToggleButton#CompletedToggle:checked Path#CompletedChevron">
+      <Setter Property="RenderTransform" Value="rotate(90deg)" />
+    </Style>
+
+    <Style Selector="Border.statusChip">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Border.statusChip.proposal">
+      <Setter Property="Background" Value="{DynamicResource BrushLimeWash}" />
+    </Style>
+
+    <!-- Add-task affordance rows -->
+    <Style Selector="Button.addTask">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Height" Value="44" />
+      <Setter Property="Padding" Value="12,0" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushPencilGray}" />
+      <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Button.addTask:pointerover /template/ Border#PART_ButtonBorder">
+      <Setter Property="Background" Value="{DynamicResource BrushHoverWash}" />
+    </Style>
+    <Style Selector="Button.addTask:pointerover">
+      <Setter Property="Foreground" Value="{DynamicResource BrushGraphite}" />
+    </Style>
+
+  </UserControl.Styles>
+
+  <UserControl.DataTemplates>
+    <!-- One template renders every row kind; capability flags gate the controls. -->
+    <DataTemplate DataType="vm:DailyRowViewModel">
+      <Border Classes="dailyRow"
+              Classes.done="{Binding IsDone}"
+              Focusable="True"
+              AutomationProperties.Name="{Binding AccessibleName}">
+        <Grid ColumnDefinitions="3,12,26,34,*,Auto,Auto,150" Margin="0,0,12,0">
+
+          <Border Grid.Column="0" Classes="priorityRail"
+                  Classes.p1="{Binding IsP1}" Classes.p2="{Binding IsP2}" Classes.p3="{Binding IsP3}" />
+
+          <!-- Completion cluster -->
+          <Panel Grid.Column="2" VerticalAlignment="Center">
+            <!-- Local commitment occurrence: one click checks off, another reopens -->
+            <Button Classes="dailyCheck" Classes.checked="{Binding IsDone}"
+                    IsVisible="{Binding ShowCommitmentCheck}"
+                    Command="{Binding ToggleDoneCommand}"
+                    AutomationProperties.Name="{Binding CompletionControlName}"
+                    ToolTip.Tip="{Binding CompletionControlName}">
+              <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
+                    StrokeThickness="1.8" IsVisible="{Binding IsDone}" />
+            </Button>
+
+            <!-- Unscheduled/completed task: direct complete or reopen -->
+            <Button Classes="dailyCheck" Classes.checked="{Binding IsDone}"
+                    IsVisible="{Binding ShowTaskCheck}"
+                    Command="{Binding ToggleDoneCommand}"
+                    AutomationProperties.Name="{Binding CompletionControlName}"
+                    ToolTip.Tip="{Binding CompletionControlName}">
+              <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
+                    StrokeThickness="1.8" IsVisible="{Binding IsDone}" />
+            </Button>
+
+            <!-- Approved task block: the outcome choices, never a binary checkbox -->
+            <Button Classes="dailyCheck"
+                    IsVisible="{Binding ShowOutcomeControl}"
+                    AutomationProperties.Name="{Binding OutcomeControlName}"
+                    ToolTip.Tip="Record outcome">
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedLeft" ShowMode="Standard">
+                  <StackPanel Width="228" Spacing="6" Margin="2">
+                    <Button Classes="primary" HorizontalAlignment="Stretch" Content="Done"
+                            Command="{Binding RecordDoneCommand}" Click="OnFlyoutActionClick" />
+                    <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusControl}" Padding="8,7">
+                      <StackPanel Spacing="6">
+                        <TextBlock Text="Needs more time" FontWeight="Medium" />
+                        <DockPanel>
+                          <Button DockPanel.Dock="Right" Content="Save" Margin="6,0,0,0"
+                                  Command="{Binding RecordNeedsMoreTimeCommand}"
+                                  Click="OnFlyoutActionClick" />
+                          <NumericUpDown Value="{Binding RemainingMinutes}" Minimum="5" Maximum="720"
+                                         Increment="5" FormatString="0"
+                                         AutomationProperties.Name="Remaining minutes" />
+                        </DockPanel>
+                        <TextBlock Classes="meta" Text="returns to Inbox with the time left" />
+                      </StackPanel>
+                    </Border>
+                    <Button HorizontalAlignment="Stretch" Content="Didn't happen"
+                            Command="{Binding RecordDidntHappenCommand}" Click="OnFlyoutActionClick" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+
+            <!-- A resolved block keeps its outcome: static marker, no invented reopen -->
+            <Border Width="18" Height="18" CornerRadius="5"
+                    Background="{StaticResource BrushHighlighterLime}"
+                    BorderBrush="{StaticResource BrushGraphite}" BorderThickness="1.5"
+                    IsVisible="{Binding ShowDoneBlockMarker}">
+              <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
+                    StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+
+            <!-- Pending proposal: approve / remove / why -->
+            <Button Classes="icon" Width="20" Height="20" CornerRadius="5"
+                    Background="{StaticResource BrushHighlighterLime}"
+                    IsVisible="{Binding ShowProposalActions}"
+                    AutomationProperties.Name="{Binding Title, StringFormat='Proposal actions for {0}'}"
+                    ToolTip.Tip="Approve, remove, or see why">
+              <Path Classes="icon" Data="{StaticResource IconSpark}" Width="11" Height="11"
+                    StrokeThickness="1.4" />
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedLeft" ShowMode="Standard">
+                  <StackPanel Width="300" Spacing="0" Margin="2">
+                    <StackPanel Spacing="3" Margin="4,4,4,10">
+                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                      <TextBlock Classes="meta" Text="proposed — not yet on your calendar" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="4,0,4,12">
+                      <Button Classes="primary" Content="Approve this block" Height="30"
+                              Command="{Binding ApproveProposalCommand}" Click="OnFlyoutActionClick" />
+                      <Button Content="Remove" Height="30"
+                              Command="{Binding RemoveProposalCommand}" Click="OnFlyoutActionClick" />
+                    </StackPanel>
+                    <!-- Why: user-relevant evidence, never chain-of-thought -->
+                    <Border Background="{StaticResource BrushWorkbenchCream}"
+                            BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,1,0,0"
+                            Margin="-14,0,-14,-14" Padding="18,12,18,16" CornerRadius="0,0,8,8">
+                      <StackPanel Spacing="8">
+                        <DockPanel IsVisible="{Binding Why.Deadline, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                          <TextBlock Classes="metaLabel" Text="DEADLINE" Width="88" />
+                          <TextBlock Text="{Binding Why.Deadline}" FontSize="{StaticResource TextSizeSmall}"
+                                     TextWrapping="Wrap" />
+                        </DockPanel>
+                        <DockPanel>
+                          <TextBlock Classes="metaLabel" Text="DURATION" Width="88" />
+                          <TextBlock Text="{Binding Why.Duration}" FontSize="{StaticResource TextSizeSmall}"
+                                     TextWrapping="Wrap" />
+                        </DockPanel>
+                        <DockPanel IsVisible="{Binding Why.Priority, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                          <TextBlock Classes="metaLabel" Text="PRIORITY" Width="88" />
+                          <TextBlock Text="{Binding Why.Priority}" FontSize="{StaticResource TextSizeSmall}"
+                                     TextWrapping="Wrap" />
+                        </DockPanel>
+                        <DockPanel>
+                          <TextBlock Classes="metaLabel" Text="OPEN TIME" Width="88" />
+                          <TextBlock Text="{Binding Why.Availability}" FontSize="{StaticResource TextSizeSmall}"
+                                     TextWrapping="Wrap" />
+                        </DockPanel>
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+          </Panel>
+
+          <!-- Priority marker -->
+          <TextBlock Grid.Column="3" Classes="mono" VerticalAlignment="Center"
+                     FontSize="{StaticResource TextSizeMeta}" FontWeight="SemiBold"
+                     Text="{Binding PriorityText}"
+                     Foreground="{StaticResource BrushGraphite}"
+                     ToolTip.Tip="{Binding PriorityAccessibleText}" />
+
+          <!-- Title, badges, and inline metadata -->
+          <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+            <!-- A commitment's title opens its editor -->
+            <Button Classes="link" IsVisible="{Binding CanEditCommitment}"
+                    Command="{Binding EditCommitmentCommand}"
+                    AutomationProperties.Name="{Binding Title, StringFormat='Edit commitment {0}'}">
+              <TextBlock Classes="rowTitle" Classes.done="{Binding IsDone}"
+                         FontWeight="SemiBold" Text="{Binding Title}"
+                         TextTrimming="CharacterEllipsis" />
+            </Button>
+            <TextBlock Classes="rowTitle"
+                       Classes.p1="{Binding IsP1}" Classes.p2="{Binding IsP2}"
+                       Classes.done="{Binding IsDone}"
+                       Text="{Binding Title}" TextTrimming="CharacterEllipsis"
+                       VerticalAlignment="Center"
+                       IsVisible="{Binding !CanEditCommitment}" />
+            <TextBlock Classes="meta" Text="{Binding SessionLabel}"
+                       IsVisible="{Binding HasSessionLabel}" VerticalAlignment="Center" />
+            <Path Classes="icon" Data="{StaticResource IconLock}" Width="11" Height="11"
+                  StrokeThickness="1.2" Stroke="{StaticResource BrushPencilGray}"
+                  IsVisible="{Binding IsLocked}" VerticalAlignment="Center"
+                  ToolTip.Tip="External commitment — locked. BeBoosted never edits it." />
+            <TextBlock Classes="meta" Text="{Binding ProjectName}"
+                       IsVisible="{Binding HasProject}" VerticalAlignment="Center" />
+            <TextBlock Classes="meta" Text="{Binding MetaText}"
+                       IsVisible="{Binding HasMeta}" VerticalAlignment="Center" />
+            <Border Background="{StaticResource BrushLimeWash}"
+                    BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                    CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
+                    IsVisible="{Binding IsAiOrigin}"
+                    ToolTip.Tip="Created by BeBoosted — provenance retained">
+              <TextBlock Classes="meta" Text="AI added" Foreground="{StaticResource BrushGraphite}" />
+            </Border>
+            <Border Background="{StaticResource BrushWorkbenchCream}"
+                    BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
+                    CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
+                    IsVisible="{Binding NeedsReview}"
+                    ToolTip.Tip="A source this task was based on changed or was removed">
+              <TextBlock Classes="meta" Text="Needs review" />
+            </Border>
+            <Border Background="{StaticResource BrushWorkbenchCream}"
+                    BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                    CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
+                    IsVisible="{Binding NeedsOutcome}"
+                    ToolTip.Tip="This block has elapsed — record what happened">
+              <TextBlock Classes="meta" Text="Needs outcome" />
+            </Border>
+            <Border Background="Transparent"
+                    BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
+                    CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
+                    IsVisible="{Binding IsConflicted}"
+                    ToolTip.Tip="Overlaps another block on this day">
+              <TextBlock Classes="meta" Text="conflict" />
+            </Border>
+          </StackPanel>
+
+          <!-- Quiet per-kind actions -->
+          <StackPanel Grid.Column="5" Classes="rowActions" Orientation="Horizontal" Spacing="2"
+                      VerticalAlignment="Center" Margin="8,0">
+            <Button Classes="icon" Width="26" Height="26"
+                    IsVisible="{Binding CanEditCommitment}"
+                    Command="{Binding EditCommitmentCommand}"
+                    AutomationProperties.Name="{Binding Title, StringFormat='Edit {0}'}"
+                    ToolTip.Tip="Edit commitment">
+              <Path Classes="icon" Data="{StaticResource IconEdit}" Width="12" Height="12"
+                    StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+            </Button>
+
+            <Button Classes="icon" Width="26" Height="26"
+                    IsVisible="{Binding ShowTaskEditAction}"
+                    AutomationProperties.Name="{Binding Title, StringFormat='Edit task {0}'}"
+                    ToolTip.Tip="Edit task details">
+              <Path Classes="icon" Data="{StaticResource IconEdit}" Width="12" Height="12"
+                    StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+                  <views:TaskEditFlyoutView DataContext="{Binding TaskRow}" />
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+
+            <Button Classes="icon" Width="26" Height="26"
+                    IsVisible="{Binding ShowChangeTimeAction}"
+                    AutomationProperties.Name="{Binding ChangeTimeActionName}"
+                    ToolTip.Tip="Change time">
+              <Path Classes="icon" Data="{StaticResource IconClock}" Width="12" Height="12"
+                    StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard"
+                        Opened="OnScheduleFlyoutOpened">
+                  <views:ScheduleFlyoutContent DataContext="{Binding ScheduleEditor}" />
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+
+            <Button Classes="icon" Width="26" Height="26"
+                    IsVisible="{Binding ShowUnscheduleAction}"
+                    Command="{Binding UnscheduleCommand}"
+                    AutomationProperties.Name="{Binding Title, StringFormat='Unschedule {0}'}"
+                    ToolTip.Tip="Unschedule — the task returns to Unscheduled">
+              <Path Classes="icon" Data="{StaticResource IconClose}" Width="10" Height="10"
+                    StrokeThickness="1.4" Stroke="{StaticResource BrushPencilGray}" />
+            </Button>
+          </StackPanel>
+
+          <!-- Status chip (proposals keep the lime-wash signature) -->
+          <Border Grid.Column="6" Classes="statusChip"
+                  Classes.proposal="{Binding IsProposal}"
+                  BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                  CornerRadius="4" Padding="6,1" VerticalAlignment="Center"
+                  IsVisible="{Binding HasStatus}">
+            <TextBlock Classes="meta" Text="{Binding StatusText}" />
+          </Border>
+
+          <!-- Right-aligned time, or the Schedule action for unscheduled work -->
+          <Panel Grid.Column="7" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="10,0,0,0">
+            <TextBlock Classes="mono" FontSize="{StaticResource TextSizeSmall}"
+                       Text="{Binding TimeText}" TextAlignment="Right"
+                       IsVisible="{Binding !ShowScheduleAction}" />
+            <Button Classes="underline" IsVisible="{Binding ShowScheduleAction}"
+                    AutomationProperties.Name="{Binding ScheduleActionName}">
+              <TextBlock Text="Schedule" />
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard"
+                        Opened="OnScheduleFlyoutOpened">
+                  <views:ScheduleFlyoutContent DataContext="{Binding ScheduleEditor}" />
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+          </Panel>
+
+        </Grid>
+      </Border>
+    </DataTemplate>
+  </UserControl.DataTemplates>
+
+  <ScrollViewer Name="DailyScroller" Background="{StaticResource BrushPaperWhite}"
+                HorizontalScrollBarVisibility="Disabled">
+    <StackPanel MaxWidth="880" Margin="24,40,24,28">
+
+      <!-- Heading + progress -->
+      <StackPanel Orientation="Horizontal" Spacing="14" Margin="12,0,12,22">
+        <TextBlock Name="DailyHeading" Text="{Binding HeadingText}"
+                   FontSize="{StaticResource TextSizeSectionTitle}" FontWeight="SemiBold" />
+        <TextBlock Classes="meta" Text="{Binding ProgressText}"
+                   VerticalAlignment="Bottom" Margin="0,0,0,4" />
+      </StackPanel>
+
+      <!-- Compact inline plan-draft banner (the Week view keeps its floating card) -->
+      <Border IsVisible="{Binding ShowDraftBanner}"
+              Background="{StaticResource BrushLimeWash}"
+              BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+              CornerRadius="{StaticResource RadiusControl}"
+              Padding="14,10" Margin="12,0,12,18">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8"
+                      VerticalAlignment="Center">
+            <Button Classes="primary" Height="28" Content="Approve plan"
+                    Command="{Binding Owner.ApproveDraftCommand}" />
+            <Button Height="28" Content="Discard draft"
+                    Command="{Binding Owner.DiscardDraftCommand}" />
+          </StackPanel>
+          <StackPanel Spacing="2" VerticalAlignment="Center">
+            <TextBlock Text="{Binding DraftTitle}" FontWeight="SemiBold"
+                       FontSize="{StaticResource TextSizeBody}" />
+            <TextBlock Classes="meta" Text="{Binding DraftSummaryText}" TextWrapping="Wrap" />
+          </StackPanel>
+        </DockPanel>
+      </Border>
+
+      <!-- ============ SCHEDULED ============ -->
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="12,0,12,8"
+                  AutomationProperties.Name="Scheduled section">
+        <TextBlock Classes="sectionLabel" Text="SCHEDULED" />
+        <TextBlock Classes="meta" Text="{Binding ScheduledCount}" />
+      </StackPanel>
+      <Border BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,1,0,0">
+        <StackPanel>
+          <ItemsControl Name="ScheduledList" ItemsSource="{Binding ScheduledRows}" />
+          <TextBlock Classes="secondary" Text="Nothing scheduled for this day."
+                     FontSize="{StaticResource TextSizeBody}" Margin="12,14,12,4"
+                     IsVisible="{Binding IsScheduledEmpty}" />
+
+          <!-- Add task (create + schedule on this date) -->
+          <Button Classes="addTask" IsVisible="{Binding !IsAddingScheduled}"
+                  Command="{Binding BeginAddScheduledCommand}"
+                  AutomationProperties.Name="Add scheduled task">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Path Classes="icon" Data="{StaticResource IconPlus}" Width="12" Height="12"
+                    StrokeThickness="1.5" Stroke="{StaticResource BrushPencilGray}" />
+              <TextBlock Text="Add task" FontSize="{StaticResource TextSizeBody}"
+                         Foreground="{StaticResource BrushPencilGray}" />
+            </StackPanel>
+          </Button>
+          <Border IsVisible="{Binding IsAddingScheduled}"
+                  BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
+                  Padding="12,10">
+            <StackPanel Spacing="8">
+              <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6"
+                            VerticalAlignment="Center" Margin="10,0,0,0">
+                  <Button Height="28" Content="Cancel" Command="{Binding CancelAddScheduledCommand}" />
+                  <Button Classes="primary" Height="28" Content="Add"
+                          Command="{Binding ConfirmAddScheduledCommand}"
+                          AutomationProperties.Name="Add and schedule task" />
+                </StackPanel>
+                <TextBox Name="ScheduledAddTitleBox" Text="{Binding NewScheduledTitle}"
+                         PlaceholderText="What needs doing?"
+                         AutomationProperties.Name="New scheduled task title" />
+              </DockPanel>
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <TimePicker SelectedTime="{Binding NewScheduledStart}" MinuteIncrement="15"
+                            ClockIdentifier="12HourClock"
+                            AutomationProperties.Name="Start time" />
+                <NumericUpDown Value="{Binding NewScheduledDurationMinutes}"
+                               Minimum="5" Maximum="720" Increment="15" FormatString="0"
+                               Width="120"
+                               AutomationProperties.Name="Duration minutes" />
+                <ComboBox ItemsSource="{Binding ProjectChoices}"
+                          SelectedItem="{Binding NewScheduledProject}"
+                          MinWidth="140"
+                          AutomationProperties.Name="Project">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ProjectChoiceViewModel">
+                      <TextBlock Text="{Binding Name}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </StackPanel>
+              <TextBlock Foreground="{StaticResource BrushInkHover}"
+                         FontSize="{StaticResource TextSizeSmall}"
+                         Text="{Binding ScheduledAddError}" TextWrapping="Wrap"
+                         IsVisible="{Binding ScheduledAddError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            </StackPanel>
+          </Border>
+          <!-- A captured task that could not be scheduled is reported, never lost -->
+          <TextBlock FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap"
+                     Margin="12,8,12,0"
+                     Text="{Binding ScheduledAddNotice}"
+                     IsVisible="{Binding ScheduledAddNotice, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </StackPanel>
+      </Border>
+
+      <!-- ============ UNSCHEDULED ============ -->
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="12,34,12,8"
+                  AutomationProperties.Name="Unscheduled section">
+        <TextBlock Classes="sectionLabel" Text="UNSCHEDULED" />
+        <TextBlock Classes="meta" Text="{Binding UnscheduledCount}" />
+      </StackPanel>
+      <Border BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,1,0,0">
+        <StackPanel>
+          <ItemsControl Name="UnscheduledList" ItemsSource="{Binding UnscheduledRows}" />
+          <TextBlock Classes="secondary" Text="No unscheduled tasks."
+                     FontSize="{StaticResource TextSizeBody}" Margin="12,14,12,4"
+                     IsVisible="{Binding IsUnscheduledEmpty}" />
+
+          <!-- Add task (inline capture) -->
+          <Button Classes="addTask" IsVisible="{Binding !IsAddingUnscheduled}"
+                  Command="{Binding BeginAddUnscheduledCommand}"
+                  AutomationProperties.Name="Add unscheduled task">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Path Classes="icon" Data="{StaticResource IconPlus}" Width="12" Height="12"
+                    StrokeThickness="1.5" Stroke="{StaticResource BrushPencilGray}" />
+              <TextBlock Text="Add task" FontSize="{StaticResource TextSizeBody}"
+                         Foreground="{StaticResource BrushPencilGray}" />
+            </StackPanel>
+          </Button>
+          <Border IsVisible="{Binding IsAddingUnscheduled}"
+                  BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
+                  Padding="12,7">
+            <TextBox Name="UnscheduledAddBox" Text="{Binding NewUnscheduledTitle}"
+                     PlaceholderText="Capture a task — Enter saves, Escape cancels"
+                     KeyDown="OnUnscheduledAddKeyDown"
+                     AutomationProperties.Name="New task title">
+              <TextBox.KeyBindings>
+                <KeyBinding Gesture="Enter" Command="{Binding ConfirmAddUnscheduledCommand}" />
+              </TextBox.KeyBindings>
+            </TextBox>
+          </Border>
+        </StackPanel>
+      </Border>
+
+      <!-- All done -->
+      <TextBlock Classes="secondary" Text="Everything for this day is complete."
+                 FontSize="{StaticResource TextSizeBody}" Margin="12,26,12,0"
+                 IsVisible="{Binding IsAllComplete}" />
+
+      <!-- ============ COMPLETED (collapsed by default) ============ -->
+      <ToggleButton Name="CompletedToggle" IsChecked="{Binding IsCompletedExpanded}"
+                    IsVisible="{Binding HasCompleted}"
+                    Background="Transparent" BorderThickness="0" Padding="12,0"
+                    Height="34" Margin="0,26,0,0" HorizontalAlignment="Left"
+                    AutomationProperties.Name="Completed section">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Path Name="CompletedChevron" Classes="icon" Data="{StaticResource IconChevronRight}"
+                Width="9" Height="9" StrokeThickness="1.5"
+                Stroke="{StaticResource BrushPencilGray}"
+                RenderTransformOrigin="50%,50%" />
+          <TextBlock Classes="sectionLabel" Text="COMPLETED" />
+          <TextBlock Classes="meta" Text="{Binding CompletedCount}" />
+          <Border Width="16" Height="16" CornerRadius="4"
+                  Background="{StaticResource BrushHighlighterLime}">
+            <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
+                  StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+        </StackPanel>
+      </ToggleButton>
+      <Border BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,1,0,0"
+              Margin="0,8,0,0" Opacity="0.62"
+              IsVisible="{Binding IsCompletedExpanded}">
+        <ItemsControl Name="CompletedList" ItemsSource="{Binding CompletedRows}" />
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+
+</UserControl>
