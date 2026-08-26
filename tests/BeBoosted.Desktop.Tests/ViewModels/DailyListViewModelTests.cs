@@ -388,22 +388,26 @@ public sealed class DailyListViewModelTests
     }
 
     /// <summary>
-    /// A previously "needs more time" session's row shows as done once its parent
-    /// Task is completed as a whole later — <c>BuildOccurrenceRow</c>'s isDone falls
-    /// back to <c>task?.IsCompleted</c> even though this session's own Outcome is
-    /// still NeedsMoreTime (task completion only auto-resolves None-outcome
-    /// sessions; see <c>CalendarService.ApplyAggregateCompletion</c>). Progress
-    /// counting reads the same <c>row.IsDone</c> the UI renders, so the two never
-    /// disagree: this pins that the session counts as done here, matching its
-    /// checked/strikethrough display, rather than being silently dropped from
-    /// both the numerator and denominator.
+    /// A previously "needs more time" session's row still shows as done once its
+    /// parent Task is completed as a whole later — <c>BuildOccurrenceRow</c>'s
+    /// isDone falls back to <c>task?.IsCompleted</c> even though this session's own
+    /// Outcome is still NeedsMoreTime (task completion only auto-resolves
+    /// None-outcome sessions; see <c>CalendarService.ApplyAggregateCompletion</c>).
+    /// Display is out of scope and unchanged. The count, however, must NOT be keyed
+    /// off that display value: this session's own Outcome never became Done, so
+    /// the counting loop's one-off "done" arm skips it (see the mixed-outcome test
+    /// below for the case where skipping it here actually matters). The single unit
+    /// for this task is instead picked up by the later completed-task sweep, since
+    /// no session ever contributed one. "1 of 1" is therefore correct here for the
+    /// right reason — attributed through <c>completedTaskCount</c>, not through a
+    /// session that was never actually marked Done.
     /// </summary>
     [Fact]
-    public void SessionShowingDoneViaCompletedParentTask_CountsAsDone_MatchingItsDisplay()
+    public void TaskCompletedWhileItsOnlySessionIsNeedsMoreTime_CountsThroughTheTaskSweep()
     {
         var context = Create();
         var task = AddTask(context, "Elapsed work", TimeSpan.FromMinutes(60));
-        context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        var session = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
         context.Calendar.Reload();
         var row = context.Daily.ScheduledRows.Single();
         row.RemainingMinutes = 45;
@@ -418,8 +422,51 @@ public sealed class DailyListViewModelTests
         context.Calendar.Reload();
 
         var completed = context.Daily.CompletedRows.Single();
-        Assert.True(completed.IsDone);
+        Assert.True(completed.IsDone); // display: unaffected, still shows checked
+        // The session's own Outcome was never flipped to Done by task completion.
+        Assert.Equal(BlockOutcome.NeedsMoreTime, context.Blocks.GetById(session.Id)!.Outcome);
         Assert.Empty(context.Daily.UnscheduledRows); // the task itself is now complete
+        Assert.Equal("1 of 1 complete", context.Daily.ProgressText);
+    }
+
+    /// <summary>
+    /// The regression this task exists to fix: a Task with two sessions — one
+    /// already Done, one resolved NeedsMoreTime — completed as a whole. Before the
+    /// fix, the NeedsMoreTime session's row also rendered as done (the same
+    /// task?.IsCompleted fallback as above) and the counting loop's one-off "done"
+    /// arm was keyed off <c>row.IsDone</c>, so it counted a SECOND unit for a task
+    /// that only ever did one unit of actually-completed work: "2 of 2" instead of
+    /// "1 of 1". Keying the one-off "done" increment off the session's own
+    /// <c>block.Outcome == BlockOutcome.Done</c> instead fixes this: the
+    /// NeedsMoreTime session contributes nothing here, and the completed-task
+    /// sweep is suppressed by <c>doneTaskIds</c> because the Done session already
+    /// contributed the task's one unit.
+    /// </summary>
+    [Fact]
+    public void MultiSessionTaskWithMixedOutcomes_CompletedAsWhole_CountsOneUnitNotTwo()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        var sessionA = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        var sessionB = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(19, 0));
+        context.Calendar.Reload();
+        context.Daily.ScheduledRows.Single(r => r.BlockId == sessionA.Id)
+            .ToggleDoneCommand.Execute(null); // session A -> Done
+        var rowB = context.Daily.ScheduledRows.Single(r => r.BlockId == sessionB.Id);
+        rowB.RemainingMinutes = 30;
+        rowB.RecordNeedsMoreTimeCommand.Execute(null); // session B -> NeedsMoreTime
+        context.Calendar.Reload();
+        // Sanity check before completing the whole task: A is one done unit, and
+        // the task is back in Unscheduled (both its sessions are now resolved) as
+        // one open unit of remaining work.
+        Assert.Equal("1 of 2 complete", context.Daily.ProgressText);
+
+        context.Service.CompleteTask(task.Id);
+        context.Calendar.Reload();
+
+        Assert.Equal(BlockOutcome.Done, context.Blocks.GetById(sessionA.Id)!.Outcome);
+        Assert.Equal(BlockOutcome.NeedsMoreTime, context.Blocks.GetById(sessionB.Id)!.Outcome);
+        Assert.Empty(context.Daily.UnscheduledRows);
         Assert.Equal("1 of 1 complete", context.Daily.ProgressText);
     }
 

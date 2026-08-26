@@ -134,9 +134,19 @@ public sealed partial class DailyListViewModel : ViewModelBase
 
         var scheduled = new List<DailyRowViewModel>();
         var completed = new List<DailyRowViewModel>();
-        // Suppresses the later completed-task sweep: a task already represented by a
-        // done session today must not be counted a second time as a completed task.
+        // Suppresses the later completed-task sweep from adding a second row for a
+        // task already represented today by one of its own session rows — display
+        // dedup only. Populated whenever a one-off session's row renders done,
+        // whatever the reason (its own Outcome, or the parent Task being completed
+        // as a whole) — two rows for the same task on the same day would be a
+        // display bug even when only one of them is a counted unit.
         var doneTaskIds = new HashSet<TaskId>();
+        // Suppresses the later completed-task sweep's *count* for a task whose own
+        // Done session already contributed its unit — separate from doneTaskIds
+        // above, because a session can render done (task?.IsCompleted fallback in
+        // BuildOccurrenceRow) without its own Outcome ever having become Done; only
+        // an actual Done session should stop the sweep from counting the task.
+        var doneCountedTaskIds = new HashSet<TaskId>();
         var openOccurrenceCount = 0;
         var doneOccurrenceCount = 0;
         var openSessionCount = 0;
@@ -156,12 +166,25 @@ public sealed partial class DailyListViewModel : ViewModelBase
                 }
                 else if (!block.IsExternal)
                 {
-                    // Every done session is its own unit of work — a task with two
-                    // done sessions today is two units, not one.
-                    doneSessionCount++;
                     if (block.TaskId is { } doneId)
                     {
                         doneTaskIds.Add(doneId);
+                    }
+
+                    // Counted strictly off this session's own Outcome, not row.IsDone:
+                    // a sibling session still resolved NeedsMoreTime/DidntHappen also
+                    // renders row.IsDone = true once the whole Task is completed (the
+                    // OR in BuildOccurrenceRow), but its Outcome never became Done, so
+                    // it must not add a second counted unit here. Every session
+                    // actually marked Done is its own unit of work — a task with two
+                    // Done sessions today is two units, not one.
+                    if (block.Outcome == BlockOutcome.Done)
+                    {
+                        doneSessionCount++;
+                        if (block.TaskId is { } countedId)
+                        {
+                            doneCountedTaskIds.Add(countedId);
+                        }
                     }
                 }
             }
@@ -226,12 +249,21 @@ public sealed partial class DailyListViewModel : ViewModelBase
         {
             if (task.IsCompleted
                 && task.CompletedAt is { } at
-                && DateOnly.FromDateTime(at.LocalDateTime) == date
-                && !doneTaskIds.Contains(task.Id))
+                && DateOnly.FromDateTime(at.LocalDateTime) == date)
             {
-                completed.Add(BuildTaskRow(task, ranks, isDone: true));
-                doneTaskIds.Add(task.Id);
-                completedTaskCount++;
+                // HashSet.Add returns false when the id was already present, so each
+                // guard fires only the first time a task earns it today — display and
+                // count are independent decisions and can disagree (see the
+                // NeedsMoreTime-then-completed-task regression test).
+                if (doneTaskIds.Add(task.Id))
+                {
+                    completed.Add(BuildTaskRow(task, ranks, isDone: true));
+                }
+
+                if (doneCountedTaskIds.Add(task.Id))
+                {
+                    completedTaskCount++;
+                }
             }
         }
 
