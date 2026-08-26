@@ -1230,4 +1230,68 @@ public sealed class DailyListViewModelTests
         Assert.Equal(string.Empty, row.ParentMetaText);
         Assert.False(row.HasParentMetaText);
     }
+
+    /// <summary>Pins the other no-dangling-separator case: a project with no deadline
+    /// or estimate stops there — no trailing "· " left hanging.</summary>
+    [Fact]
+    public void ATitledSessionRow_WhoseParentHasOnlyAProject_ExposesJustTheProjectInParentMetaText()
+    {
+        var context = Create();
+        var schoolwork = Project.Create("Schoolwork", "#5B8DEF", context.Clock.Now);
+        context.Projects.Add(schoolwork);
+        var task = AddTask(context, "Read Jane Eyre 1-20", projectId: schoolwork.Id);
+        context.Service.AddSession(
+            task.Id,
+            new TaskScheduleRequest(Date, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "Jane Eyre 1-10"));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single();
+
+        Assert.True(row.HasParentTitle);
+        Assert.Equal("Schoolwork", row.ParentMetaText);
+        Assert.True(row.HasParentMetaText);
+    }
+
+    /// <summary>
+    /// Regression for the duplicate-project bug: with both a project and a deadline,
+    /// the second line is title · ParentMetaText only (no separate project segment),
+    /// so the project must appear in ParentMetaText exactly once — never doubled with
+    /// a project segment rendered alongside it.
+    /// </summary>
+    [Fact]
+    public void ATitledSessionRow_WhoseParentHasBothProjectAndDeadline_ExposesTheProjectExactlyOnce()
+    {
+        var context = Create();
+        var schoolwork = Project.Create("Schoolwork", "#5B8DEF", context.Clock.Now);
+        context.Projects.Add(schoolwork);
+        var task = AddTask(
+            context, "Read Jane Eyre 1-20", projectId: schoolwork.Id, deadline: Date.AddDays(2)); // Thu
+        context.Service.AddSession(
+            task.Id,
+            new TaskScheduleRequest(Date, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "Jane Eyre 1-10"));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single();
+
+        Assert.True(row.HasParentTitle);
+        Assert.Equal("Schoolwork · Thu", row.ParentMetaText);
+        Assert.True(row.HasParentMetaText);
+        // The project shows up nowhere else on this row's second line: no separate
+        // project segment is rendered when there's a parent title, so it can only
+        // ever appear the once, inside ParentMetaText.
+        Assert.Equal(1, CountOccurrences(row.ParentMetaText, "Schoolwork"));
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
+    }
 }
