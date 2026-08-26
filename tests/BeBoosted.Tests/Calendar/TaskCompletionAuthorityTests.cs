@@ -232,14 +232,14 @@ public sealed class TaskCompletionAuthorityTests : IDisposable
         Assert.Equal(BlockOutcome.None, _blocks.GetById(sibling.Id)!.Outcome);
     }
 
-    // ---- RecordOutcome(Done) shares the authoritative aggregate transition ----
+    // ---- RecordOutcome(Done) resolves only that session ----
 
     /// <summary>
-    /// Recording one pending session Done completes the Task through the same
-    /// aggregate rule as CompleteTask: every pending one-off sibling resolves too.
+    /// Recording one session Done is a statement about that session alone: its
+    /// siblings stay pending and the Task stays open until the user completes it.
     /// </summary>
     [Fact]
-    public void RecordOutcomeDone_ResolvesEveryPendingOneOffSibling()
+    public void RecordOutcomeDone_LeavesSiblingsPending_AndTheTaskOpen()
     {
         var task = AddTask("College essay");
         var recorded = AddSession(task.Id, dayOffset: 0, startHour: 9);
@@ -247,60 +247,49 @@ public sealed class TaskCompletionAuthorityTests : IDisposable
 
         _service.RecordOutcome(recorded.Id, BlockOutcome.Done);
 
-        Assert.True(_tasks.GetById(task.Id)!.IsCompleted);
+        Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
         Assert.Equal(BlockOutcome.Done, _blocks.GetById(recorded.Id)!.Outcome);
-        Assert.Equal(BlockOutcome.Done, _blocks.GetById(sibling.Id)!.Outcome);
+        Assert.Equal(BlockOutcome.None, _blocks.GetById(sibling.Id)!.Outcome);
 
-        // The whole aggregate survives an application restart.
         var restarted = new SqliteCalendarBlockRepository(_database.Factory);
-        Assert.Equal(BlockOutcome.Done, restarted.GetById(sibling.Id)!.Outcome);
-        Assert.True(new SqliteTaskRepository(_database.Factory).GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.None, restarted.GetById(sibling.Id)!.Outcome);
+        Assert.False(new SqliteTaskRepository(_database.Factory).GetById(task.Id)!.IsCompleted);
     }
 
+    /// <summary>Sessions resolve independently, in whichever order the day went.</summary>
     [Fact]
-    public void RecordOutcomeDone_ResolvesOnlyPendingSiblings_PreservingResolvedHistory()
+    public void RecordOutcomeDone_OnBothSessions_ResolvesEachIndependently()
     {
         var task = AddTask("College essay");
-        var missed = AddSession(task.Id, dayOffset: -1, startHour: 9);
-        _service.RecordOutcome(missed.Id, BlockOutcome.DidntHappen);
-        var recorded = AddSession(task.Id, dayOffset: 0, startHour: 9);
-        var pending = AddSession(task.Id, dayOffset: 1, startHour: 15);
+        var first = AddSession(task.Id, dayOffset: 0, startHour: 9);
+        var second = AddSession(task.Id, dayOffset: 1, startHour: 15);
 
-        _service.RecordOutcome(recorded.Id, BlockOutcome.Done);
+        _service.RecordOutcome(second.Id, BlockOutcome.Done);
+        _service.RecordOutcome(first.Id, BlockOutcome.Done);
 
-        Assert.Equal(BlockOutcome.DidntHappen, _blocks.GetById(missed.Id)!.Outcome);
-        Assert.Equal(BlockOutcome.Done, _blocks.GetById(recorded.Id)!.Outcome);
-        Assert.Equal(BlockOutcome.Done, _blocks.GetById(pending.Id)!.Outcome);
+        Assert.Equal(BlockOutcome.Done, _blocks.GetById(first.Id)!.Outcome);
+        Assert.Equal(BlockOutcome.Done, _blocks.GetById(second.Id)!.Outcome);
+        Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
     }
 
     /// <summary>
-    /// A repeating sibling forbids global completion, so recording the one-off Done
-    /// must be rejected before anything — block, Task, or rows — changes.
+    /// The guard existed only to protect whole-task completion. A local session
+    /// outcome is compatible with a repeating sibling series.
     /// </summary>
     [Fact]
-    public void RecordOutcomeDone_WithARepeatingSibling_IsRejected_ChangingNothing()
+    public void RecordOutcomeDone_WithARepeatingSibling_IsAllowed()
     {
-        var task = AddTask("Mixed task");
+        var task = AddTask("Reading");
         var oneOff = AddSession(task.Id, dayOffset: 0, startHour: 9);
         var repeating = CalendarBlock.CreateTaskSession(
-            task.Id, Tuesday, new TimeOnly(16, 0), new TimeOnly(17, 0), _clock.Now,
+            task.Id, Tuesday, new TimeOnly(18, 0), new TimeOnly(19, 0), _clock.Now,
             RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
         _blocks.Add(repeating);
-        _service.CompleteOccurrence(repeating.Id, Tuesday);
 
-        Assert.Throws<DomainException>(
-            () => _service.RecordOutcome(oneOff.Id, BlockOutcome.Done));
+        _service.RecordOutcome(oneOff.Id, BlockOutcome.Done);
 
+        Assert.Equal(BlockOutcome.Done, _blocks.GetById(oneOff.Id)!.Outcome);
         Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
-        Assert.Equal(BlockOutcome.None, _blocks.GetById(oneOff.Id)!.Outcome);
-        Assert.NotNull(_blocks.GetById(repeating.Id)!.Recurrence);
-        Assert.True(_service.IsOccurrenceCompleted(repeating.Id, Tuesday));
-
-        // Still open and untouched after an application restart.
-        Assert.False(new SqliteTaskRepository(_database.Factory).GetById(task.Id)!.IsCompleted);
-        Assert.Equal(
-            BlockOutcome.None,
-            new SqliteCalendarBlockRepository(_database.Factory).GetById(oneOff.Id)!.Outcome);
     }
 
     [Fact]
@@ -310,38 +299,6 @@ public sealed class TaskCompletionAuthorityTests : IDisposable
         var recorded = AddSession(task.Id, dayOffset: 0, startHour: 9);
         var sibling = AddSession(task.Id, dayOffset: 1, startHour: 15);
         var service = CreateService(new FailingNthBlockWriteMutations(_database.Factory, failOnUpdate: 1));
-
-        Assert.Throws<InvalidOperationException>(
-            () => service.RecordOutcome(recorded.Id, BlockOutcome.Done));
-
-        Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
-        Assert.Equal(BlockOutcome.None, _blocks.GetById(recorded.Id)!.Outcome);
-        Assert.Equal(BlockOutcome.None, _blocks.GetById(sibling.Id)!.Outcome);
-    }
-
-    [Fact]
-    public void RecordOutcomeDone_FailingSiblingSessionWrite_RollsBackEverything()
-    {
-        var task = AddTask("College essay");
-        var recorded = AddSession(task.Id, dayOffset: 0, startHour: 9);
-        var sibling = AddSession(task.Id, dayOffset: 1, startHour: 15);
-        var service = CreateService(new FailingNthBlockWriteMutations(_database.Factory, failOnUpdate: 2));
-
-        Assert.Throws<InvalidOperationException>(
-            () => service.RecordOutcome(recorded.Id, BlockOutcome.Done));
-
-        Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
-        Assert.Equal(BlockOutcome.None, _blocks.GetById(recorded.Id)!.Outcome);
-        Assert.Equal(BlockOutcome.None, _blocks.GetById(sibling.Id)!.Outcome);
-    }
-
-    [Fact]
-    public void RecordOutcomeDone_FailingTaskWrite_RollsBackEverySessionWrite()
-    {
-        var task = AddTask("College essay");
-        var recorded = AddSession(task.Id, dayOffset: 0, startHour: 9);
-        var sibling = AddSession(task.Id, dayOffset: 1, startHour: 15);
-        var service = CreateService(new FailingTaskWriteMutations(_database.Factory));
 
         Assert.Throws<InvalidOperationException>(
             () => service.RecordOutcome(recorded.Id, BlockOutcome.Done));

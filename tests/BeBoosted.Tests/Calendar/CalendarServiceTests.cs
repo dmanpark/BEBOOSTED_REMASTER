@@ -133,14 +133,14 @@ public sealed class CalendarServiceTests : IDisposable
     }
 
     [Fact]
-    public void RecordOutcome_Done_CompletesTheTask()
+    public void RecordOutcome_Done_ResolvesTheSessionWithoutCompletingTheTask()
     {
         var task = AddTask("Review economics chapter", TimeSpan.FromMinutes(45));
         var block = _service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
 
         _service.RecordOutcome(block.Id, BlockOutcome.Done);
 
-        Assert.True(_tasks.GetById(task.Id)!.IsCompleted);
+        Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
         Assert.Equal(BlockOutcome.Done, _blocks.GetById(block.Id)!.Outcome);
     }
 

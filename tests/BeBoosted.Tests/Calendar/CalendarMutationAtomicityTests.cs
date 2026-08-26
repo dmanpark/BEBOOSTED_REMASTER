@@ -128,22 +128,9 @@ public sealed class CalendarMutationAtomicityTests : IDisposable
     }
 
     /// <summary>
-    /// Recording an outcome must persist the session outcome and the task effect as
-    /// one transaction: a failing task write leaves the session's outcome unrecorded.
+    /// Needs more time must persist the session outcome and the task effect as one
+    /// transaction: a failing task write leaves the session's outcome unrecorded too.
     /// </summary>
-    [Fact]
-    public void RecordOutcome_Done_FailingTaskWrite_RollsBackTheBlockOutcome()
-    {
-        var (task, session) = AddOpenTaskWithSession();
-        var service = CreateService(new FailingTaskWriteMutations(_database.Factory));
-
-        Assert.Throws<InvalidOperationException>(
-            () => service.RecordOutcome(session.Id, BlockOutcome.Done));
-
-        Assert.Equal(BlockOutcome.None, _blocks.GetById(session.Id)!.Outcome);
-        Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
-    }
-
     [Fact]
     public void RecordOutcome_NeedsMoreTime_FailingTaskWrite_RollsBackBothHalves()
     {

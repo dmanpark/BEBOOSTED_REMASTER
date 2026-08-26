@@ -514,10 +514,11 @@ public sealed class CalendarService(
 
     /// <summary>
     /// Records a one-off session outcome and applies its task effect as one atomic
-    /// mutation: Done completes the task; Needs more time updates the remaining
-    /// estimate and sends the task back to the Inbox; Didn't happen leaves the task
-    /// open for replanning. Everything validates before anything persists, and any
-    /// failure rolls both the session outcome and the task effect back together.
+    /// mutation. Done resolves that session alone — the Task stays open and its
+    /// sibling sessions stay pending, so a Task with several sessions is finished
+    /// one sitting at a time. Needs more time updates the remaining estimate and
+    /// sends the task back to the Inbox; Didn't happen leaves the task open for
+    /// replanning. Everything validates before anything persists.
     /// </summary>
     public void RecordOutcome(CalendarBlockId id, BlockOutcome outcome, TimeSpan? remaining = null)
     {
@@ -525,7 +526,6 @@ public sealed class CalendarService(
 
         // An orphaned local session must fail without changing the block.
         TaskItem? task = null;
-        IReadOnlyList<CalendarBlock> siblings = [];
         if (block is { IsExternal: false, Kind: BlockKind.TaskSession })
         {
             task = block.TaskId is { } taskId ? tasks.GetById(taskId) : null;
@@ -533,27 +533,15 @@ public sealed class CalendarService(
             {
                 throw new DomainException("That session's task no longer exists.");
             }
-
-            siblings = blocks.GetForTask(task.Id).Where(s => s.Id != block.Id).ToList();
-        }
-
-        // Whole-aggregate validation before anything mutates: Done completes the
-        // Task, and a repeating sibling forbids global completion.
-        if (outcome == BlockOutcome.Done && siblings.Any(s => s.Recurrence is not null))
-        {
-            throw new DomainException("A repeating task completes per occurrence, not as a whole.");
         }
 
         block.RecordOutcome(outcome, clock.Now); // local one-off validation in the domain
 
-        var touchedSiblings = new List<CalendarBlock>();
         switch (outcome)
         {
             case BlockOutcome.Done:
-                // The same aggregate transition as CompleteTask: every still-pending
-                // one-off sibling resolves as Done together with the Task.
-                touchedSiblings = ApplyAggregateCompletion(
-                    task!, siblings, completed: true, clock.Now, out _);
+                // A session's Done is local to that session. Whole-task completion
+                // stays with CompleteTask / UpdateTaskDetails.
                 break;
             case BlockOutcome.NeedsMoreTime:
                 task!.RecordNeedsMoreTime(
@@ -567,12 +555,7 @@ public sealed class CalendarService(
         mutations.Execute((blockRepo, _, taskRepo) =>
         {
             blockRepo.Update(block);
-            foreach (var sibling in touchedSiblings)
-            {
-                blockRepo.Update(sibling);
-            }
-
-            if (outcome != BlockOutcome.DidntHappen)
+            if (outcome == BlockOutcome.NeedsMoreTime)
             {
                 taskRepo.Update(task!);
             }
