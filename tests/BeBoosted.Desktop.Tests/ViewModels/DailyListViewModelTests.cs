@@ -1282,6 +1282,30 @@ public sealed class DailyListViewModelTests
         Assert.Equal(1, CountOccurrences(row.ParentMetaText, "Schoolwork"));
     }
 
+    /// <summary>
+    /// An external synced event carries its own title (CalendarBlock.cs:72-76) but
+    /// has no TaskId, so task is always null here and parentTitle stays null too.
+    /// This pins that behavior directly rather than relying on the IsExternal guard
+    /// alone: a future refactor that reads block.Title for the parent instead of
+    /// task?.Title would otherwise start showing the event's own title as its
+    /// "parent task" with nothing to catch it.
+    /// </summary>
+    [Fact]
+    public void ExternalEventRow_HasNoParentTitle_EvenThoughItCarriesItsOwnTitle()
+    {
+        var context = Create();
+        context.Blocks.Add(CalendarBlock.Rehydrate(
+            CalendarBlockId.New(), null, "Imported standup", Date,
+            new TimeOnly(13, 30), new TimeOnly(14, 0), BlockKind.ExternalEvent, null,
+            "google", "evt-1", 0, BlockOutcome.None, null, context.Clock.Now, context.Clock.Now));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single(r => r.Title == "Imported standup");
+
+        Assert.Null(row.ParentTitle);
+        Assert.False(row.HasParentTitle);
+    }
+
     private static int CountOccurrences(string text, string value)
     {
         var count = 0;
