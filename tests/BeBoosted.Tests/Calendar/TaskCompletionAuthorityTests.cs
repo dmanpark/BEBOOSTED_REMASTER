@@ -630,5 +630,44 @@ public sealed class TaskCompletionAuthorityTests : IDisposable
             => inner.GetTaskIdsWithPendingBlocks();
     }
 
+    [Fact]
+    public void ClearSessionOutcome_RestoresOneSession_WithoutDisturbingItsSibling()
+    {
+        var task = AddTask("College essay");
+        var first = AddSession(task.Id, dayOffset: 0, startHour: 9);
+        var second = AddSession(task.Id, dayOffset: 1, startHour: 15);
+        _service.RecordOutcome(first.Id, BlockOutcome.Done);
+        _service.RecordOutcome(second.Id, BlockOutcome.Done);
+
+        Assert.True(_service.ClearSessionOutcome(first.Id));
+
+        Assert.Equal(BlockOutcome.None, _blocks.GetById(first.Id)!.Outcome);
+        Assert.Equal(BlockOutcome.Done, _blocks.GetById(second.Id)!.Outcome);
+        Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
+    }
+
+    [Fact]
+    public void ClearSessionOutcome_OnAnAlreadyClearSession_IsAQuietNoOp()
+    {
+        var task = AddTask();
+        var session = AddSession(task.Id, dayOffset: 0, startHour: 9);
+
+        Assert.False(_service.ClearSessionOutcome(session.Id));
+        Assert.Equal(BlockOutcome.None, _blocks.GetById(session.Id)!.Outcome);
+    }
+
+    [Fact]
+    public void ClearSessionOutcome_SurvivesRestart()
+    {
+        var task = AddTask();
+        var session = AddSession(task.Id, dayOffset: 0, startHour: 9);
+        _service.RecordOutcome(session.Id, BlockOutcome.Done);
+
+        Assert.True(_service.ClearSessionOutcome(session.Id));
+
+        var restarted = new SqliteCalendarBlockRepository(_database.Factory);
+        Assert.Equal(BlockOutcome.None, restarted.GetById(session.Id)!.Outcome);
+    }
+
     public void Dispose() => _database.Dispose();
 }

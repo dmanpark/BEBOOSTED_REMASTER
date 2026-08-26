@@ -562,6 +562,24 @@ public sealed class CalendarService(
         });
     }
 
+    /// <summary>
+    /// Takes back one session's outcome, leaving its siblings and its Task alone —
+    /// the per-session inverse of RecordOutcome. Returns false when the session
+    /// carried no outcome, so callers announce nothing.
+    /// </summary>
+    public bool ClearSessionOutcome(CalendarBlockId id)
+    {
+        var block = Require(id);
+        if (block.Outcome == BlockOutcome.None)
+        {
+            return false;
+        }
+
+        block.ClearOutcome(clock.Now); // rejects external events in the domain
+        mutations.Execute((blockRepo, _, _) => blockRepo.Update(block));
+        return true;
+    }
+
     /// <summary>Expands recurring blocks into concrete occurrences for the visible range.</summary>
     public IReadOnlyList<BlockOccurrence> GetOccurrences(DateOnly from, DateOnly to)
     {
