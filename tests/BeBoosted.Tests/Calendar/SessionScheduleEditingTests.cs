@@ -226,5 +226,43 @@ public sealed class SessionScheduleEditingTests : IDisposable
         Assert.Contains("no longer exists", exception.Message);
     }
 
+    [Fact]
+    public void AddSession_WithATitle_PersistsIt()
+    {
+        var task = AddTask("Read Jane Eyre 1-20");
+
+        var session = _service.AddSession(
+            task.Id,
+            new TaskScheduleRequest(
+                Anchor, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "Jane Eyre 1-10"));
+
+        Assert.Equal("Jane Eyre 1-10", session.Title);
+        var restarted = new SqliteCalendarBlockRepository(_database.Factory);
+        Assert.Equal("Jane Eyre 1-10", restarted.GetById(session.Id)!.Title);
+    }
+
+    [Fact]
+    public void UpdateSessionSchedule_RetitlesTheSession_AndBlankClearsIt()
+    {
+        var task = AddTask("Read Jane Eyre 1-20");
+        var session = _service.AddSession(
+            task.Id,
+            new TaskScheduleRequest(
+                Anchor, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "Jane Eyre 1-10"));
+
+        _service.UpdateSessionSchedule(
+            task.Id, session.Id,
+            new TaskScheduleRequest(
+                Anchor, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "Jane Eyre 1-12"));
+        Assert.Equal("Jane Eyre 1-12", _blocks.GetById(session.Id)!.Title);
+
+        _service.UpdateSessionSchedule(
+            task.Id, session.Id,
+            new TaskScheduleRequest(
+                Anchor, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "   "));
+
+        Assert.Null(_blocks.GetById(session.Id)!.Title);
+    }
+
     public void Dispose() => _database.Dispose();
 }

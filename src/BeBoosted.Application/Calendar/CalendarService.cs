@@ -7,9 +7,13 @@ using BeBoosted.Domain.Tasks;
 
 namespace BeBoosted.Application.Calendar;
 
-/// <summary>A Task's requested schedule: one session, optionally repeating.</summary>
+/// <summary>
+/// A session's schedule. <paramref name="Title"/> names this one sitting
+/// ("Jane Eyre 1-10"); null or blank falls back to the Task's title.
+/// </summary>
 public sealed record TaskScheduleRequest(
-    DateOnly Date, TimeOnly StartTime, TimeOnly EndTime, RecurrenceRule? Recurrence);
+    DateOnly Date, TimeOnly StartTime, TimeOnly EndTime, RecurrenceRule? Recurrence,
+    string? Title = null);
 
 /// <summary>
 /// The editor's requested completion state, applied atomically with the other fields.
@@ -140,6 +144,7 @@ public sealed class CalendarService(
         var now = clock.Now;
         session.Reschedule(schedule.Date, schedule.StartTime, schedule.EndTime, now);
         session.SetRecurrence(schedule.Recurrence, now);
+        session.Retitle(schedule.Title, now);
 
         // Conversion reconciliation: a repeating schedule forbids global completion,
         // and a conversion never completes anything.
@@ -194,7 +199,7 @@ public sealed class CalendarService(
 
         var block = CalendarBlock.CreateTaskSession(
             taskId, schedule.Date, schedule.StartTime, schedule.EndTime, clock.Now,
-            schedule.Recurrence);
+            schedule.Recurrence, schedule.Title);
         blocks.Add(block);
         return block;
     }
@@ -244,7 +249,7 @@ public sealed class CalendarService(
     private CalendarBlock BuildSession(TaskId taskId, TaskScheduleRequest schedule)
         => CalendarBlock.CreateTaskSession(
             taskId, schedule.Date, schedule.StartTime, schedule.EndTime, clock.Now,
-            schedule.Recurrence);
+            schedule.Recurrence, schedule.Title);
 
     private static void RemoveSession(
         ICalendarBlockRepository blockRepo,
