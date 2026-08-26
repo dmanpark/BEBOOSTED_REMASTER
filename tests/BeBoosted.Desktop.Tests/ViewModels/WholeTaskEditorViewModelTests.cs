@@ -236,7 +236,6 @@ public sealed class WholeTaskEditorViewModelTests
         Assert.Equal(
             [
                 "This task repeats — complete each occurrence from the calendar or its session view.",
-                "One-off sessions can't be marked Done while a repeating schedule remains.",
                 "Session numbers count one-off sessions only; the repeating schedule has no number.",
             ],
             mixedEditor.ScheduleNotes);

@@ -549,7 +549,6 @@ public sealed partial class WholeTaskEditorViewModel : ViewModelBase
         };
         if (oneOffCount > 0)
         {
-            notes.Add("One-off sessions can't be marked Done while a repeating schedule remains.");
             notes.Add(repeatingCount == 1
                 ? "Session numbers count one-off sessions only; the repeating schedule has no number."
                 : "Session numbers count one-off sessions only; repeating schedules have no number.");
