@@ -175,6 +175,57 @@ public sealed class ShellProjectRefreshTests
     }
 
     /// <summary>
+    /// The project page completes a one-off session against its block. Routing it
+    /// through the occurrence path would throw — a one-off has no occurrences.
+    /// </summary>
+    [Fact]
+    public void CompletingAOneOffSessionFromTheProjectPage_ResolvesThatSessionOnly()
+    {
+        var (shell, blocks, tasks) = CreateShell();
+        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
+        var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
+        var clock = new FakeClock(TestShell.DesignDate);
+        var sibling = CalendarBlock.CreateTaskSession(
+            task.Id, Tomorrow, new TimeOnly(19, 0), new TimeOnly(20, 0), clock.Now);
+        blocks.Add(sibling);
+        shell.Projects.Detail!.Refresh();
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        Assert.Equal(2, shell.Projects.Detail!.ScheduledBlocks.Count);
+
+        shell.Projects.Detail.ScheduledBlocks.Single(r => r.BlockId == blockId)
+            .ToggleCompletionCommand.Execute(null);
+
+        var done = Assert.Single(shell.Projects.Detail!.CompletedScheduledBlocks);
+        Assert.Equal(blockId, done.BlockId);
+        Assert.Equal(BlockOutcome.None, blocks.GetById(sibling.Id)!.Outcome);
+        Assert.False(tasks.GetById(task.Id)!.IsCompleted);
+    }
+
+    /// <summary>
+    /// The branch on the toggle exists to protect this: a repeating row must keep
+    /// completing per occurrence through the same path as before, and must never
+    /// throw now that one-off rows also carry a completion control.
+    /// </summary>
+    [Fact]
+    public void CompletingARepeatingSessionFromTheProjectPage_StillCompletesPerOccurrence()
+    {
+        var (shell, blocks, tasks) = CreateShell();
+        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks, repeating: true);
+        shell.NavigateCommand.Execute(AppSection.Projects);
+
+        var row = shell.Projects.Detail!.ScheduledBlocks.Single(r => r.BlockId == blockId);
+        Assert.True(row.IsRepeating);
+        row.ToggleCompletionCommand.Execute(null);
+
+        var done = Assert.Single(shell.Projects.Detail!.CompletedScheduledBlocks);
+        Assert.Equal(blockId, done.BlockId);
+        Assert.True(done.IsRepeating);
+
+        done.ToggleCompletionCommand.Execute(null);
+        Assert.Empty(shell.Projects.Detail!.CompletedScheduledBlocks);
+    }
+
+    /// <summary>
     /// Completing a scheduled one-off from the project detail must reconcile the
     /// Task and its session outcome together, exactly like the canonical editor.
     /// </summary>

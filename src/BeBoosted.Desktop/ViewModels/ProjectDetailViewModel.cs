@@ -2,6 +2,8 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using Avalonia.Media;
 using BeBoosted.Application.Projects;
+using BeBoosted.Domain;
+using BeBoosted.Domain.Calendar;
 using BeBoosted.Domain.Projects;
 using BeBoosted.Domain.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -194,6 +196,31 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// One one-off session's completion, recorded against the block. The Task stays
+    /// open — only the Task's own control completes it.
+    /// </summary>
+    internal void SetSessionCompletion(Domain.CalendarBlockId blockId, bool completed)
+    {
+        try
+        {
+            if (completed)
+            {
+                _calendar.RecordOutcome(blockId, BlockOutcome.Done);
+            }
+            else if (!_calendar.ClearSessionOutcome(blockId))
+            {
+                return;
+            }
+        }
+        catch (DomainException)
+        {
+            return; // a stale row: the service mutated nothing
+        }
+
+        _owner.NotifyTasksMutated();
+    }
+
+    /// <summary>
     /// Whole-task completion from a project row: the authoritative service path
     /// reconciles the Task with its one-off sessions, then one announcement through
     /// the central chain refreshes every dependent — including this detail — exactly
@@ -337,15 +364,26 @@ public sealed partial class ScheduledBlockRowViewModel : ViewModelBase
     /// <summary>End time passed without completion — quietly flagged, never hidden.</summary>
     public bool IsOverdue => _row.State == Application.Projects.ProjectBlockState.Overdue;
 
-    /// <summary>Only repeating sessions toggle per occurrence from the project page.</summary>
-    public bool HasCompletionControl
-        => _row.Block.Recurrence is not null && !_row.Block.IsExternal;
+    /// <summary>Every local session completes here; external events never do.</summary>
+    public bool HasCompletionControl => !_row.Block.IsExternal;
+
+    /// <summary>A repeating session completes per occurrence; a one-off by outcome.</summary>
+    public bool IsRepeating => _row.Block.Recurrence is not null;
 
     public string CompletionControlName => IsDone ? $"Reopen {Title}" : $"Mark {Title} done";
 
     [RelayCommand]
     private void ToggleCompletion()
-        => _owner.SetOccurrenceCompletion(_row.Block.Id, Date, !IsDone);
+    {
+        if (IsRepeating)
+        {
+            _owner.SetOccurrenceCompletion(_row.Block.Id, Date, !IsDone);
+        }
+        else
+        {
+            _owner.SetSessionCompletion(_row.Block.Id, !IsDone);
+        }
+    }
 
     /// <summary>External events sync in read-only; only task sessions open the editor.</summary>
     public bool CanEdit => !_row.Block.IsExternal;
