@@ -134,10 +134,13 @@ public sealed partial class DailyListViewModel : ViewModelBase
 
         var scheduled = new List<DailyRowViewModel>();
         var completed = new List<DailyRowViewModel>();
+        // Suppresses the later completed-task sweep: a task already represented by a
+        // done session today must not be counted a second time as a completed task.
         var doneTaskIds = new HashSet<TaskId>();
         var openOccurrenceCount = 0;
         var doneOccurrenceCount = 0;
-        var openTaskIds = new HashSet<TaskId>();
+        var openSessionCount = 0;
+        var doneSessionCount = 0;
 
         foreach (var occurrence in occurrences.Where(o => o.Date == date))
         {
@@ -151,9 +154,15 @@ public sealed partial class DailyListViewModel : ViewModelBase
                 {
                     doneOccurrenceCount++;
                 }
-                else if (!block.IsExternal && block.TaskId is { } doneId)
+                else if (!block.IsExternal)
                 {
-                    doneTaskIds.Add(doneId);
+                    // Every done session is its own unit of work — a task with two
+                    // done sessions today is two units, not one.
+                    doneSessionCount++;
+                    if (block.TaskId is { } doneId)
+                    {
+                        doneTaskIds.Add(doneId);
+                    }
                 }
             }
             else if (row.HasRecordedOutcome)
@@ -175,9 +184,10 @@ public sealed partial class DailyListViewModel : ViewModelBase
                 {
                     openOccurrenceCount++;
                 }
-                else if (block.TaskId is { } openId)
+                else
                 {
-                    openTaskIds.Add(openId);
+                    // Every unresolved session is its own unit of remaining work.
+                    openSessionCount++;
                 }
             }
         }
@@ -197,6 +207,7 @@ public sealed partial class DailyListViewModel : ViewModelBase
 
         var proposalTaskIds = proposals.Select(p => p.TaskId).ToHashSet();
         var unscheduled = new List<DailyRowViewModel>();
+        var openTaskCount = 0;
         foreach (var task in _inboxQuery.GetInboxTasks())
         {
             if (proposalTaskIds.Contains(task.Id))
@@ -205,9 +216,12 @@ public sealed partial class DailyListViewModel : ViewModelBase
             }
 
             unscheduled.Add(BuildTaskRow(task, ranks, isDone: false));
-            openTaskIds.Add(task.Id);
+            // A task only reaches Unscheduled once every session is resolved, so it
+            // never overlaps with a session counted above — its own unit of work.
+            openTaskCount++;
         }
 
+        var completedTaskCount = 0;
         foreach (var task in _tasks.GetAll())
         {
             if (task.IsCompleted
@@ -217,12 +231,12 @@ public sealed partial class DailyListViewModel : ViewModelBase
             {
                 completed.Add(BuildTaskRow(task, ranks, isDone: true));
                 doneTaskIds.Add(task.Id);
+                completedTaskCount++;
             }
         }
 
-        openTaskIds.ExceptWith(doneTaskIds);
-        var done = doneOccurrenceCount + doneTaskIds.Count;
-        var total = done + openOccurrenceCount + openTaskIds.Count;
+        var done = doneOccurrenceCount + doneSessionCount + completedTaskCount;
+        var total = done + openOccurrenceCount + openSessionCount + openTaskCount;
         ProgressText = $"{done} of {total} complete";
 
         Replace(ScheduledRows, SortScheduled(scheduled));

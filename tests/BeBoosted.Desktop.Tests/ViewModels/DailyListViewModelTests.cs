@@ -334,7 +334,7 @@ public sealed class DailyListViewModelTests
     // ---- Progress ----
 
     [Fact]
-    public void Progress_CountsAndDeduplicatesByTaskId()
+    public void Progress_CountsSessionsOccurrencesAndTasks()
     {
         var context = Create();
         // Open repeating occurrence (counts 1 open) + completed one (counts 1 done).
@@ -346,7 +346,7 @@ public sealed class DailyListViewModelTests
             CalendarBlockId.New(), null, "Imported", Date,
             new TimeOnly(13, 0), new TimeOnly(13, 30), BlockKind.ExternalEvent, null,
             "google", "evt-2", 0, BlockOutcome.None, null, context.Clock.Now, context.Clock.Now));
-        // One task with two open blocks: one open item, not two.
+        // One task with two open sessions: two open units of work, not one.
         var split = AddTask(context, "Split work", TimeSpan.FromMinutes(30));
         context.Service.ScheduleTask(split.Id, Date, new TimeOnly(15, 0));
         context.Service.ScheduleTask(split.Id, Date, new TimeOnly(19, 0));
@@ -360,8 +360,67 @@ public sealed class DailyListViewModelTests
 
         context.Calendar.Reload();
 
-        // Done: run occurrence + "Done item" = 2. Open: class + split + inbox = 3. Total 5.
-        Assert.Equal("2 of 5 complete", context.Daily.ProgressText);
+        // Done: run occurrence + "Done item" = 2.
+        // Open: class + split's two sessions + inbox item = 4. Total 6.
+        Assert.Equal("2 of 6 complete", context.Daily.ProgressText);
+    }
+
+    /// <summary>
+    /// The whole point of per-session completion: a task with two sessions is two
+    /// units of work, so the day's progress counts sessions, not tasks.
+    /// </summary>
+    [Fact]
+    public void ProgressCountsSessions_SoATaskWithTwoSessionsIsTwoUnits()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        var morning = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Service.AddSession(
+            task.Id,
+            new TaskScheduleRequest(Date, new TimeOnly(19, 0), new TimeOnly(20, 0), null));
+        context.Calendar.Reload();
+        Assert.Equal("0 of 2 complete", context.Daily.ProgressText);
+
+        context.Daily.ScheduledRows.Single(r => r.BlockId == morning.Id)
+            .ToggleDoneCommand.Execute(null);
+
+        Assert.Equal("1 of 2 complete", context.Daily.ProgressText);
+    }
+
+    /// <summary>
+    /// A previously "needs more time" session's row shows as done once its parent
+    /// Task is completed as a whole later — <c>BuildOccurrenceRow</c>'s isDone falls
+    /// back to <c>task?.IsCompleted</c> even though this session's own Outcome is
+    /// still NeedsMoreTime (task completion only auto-resolves None-outcome
+    /// sessions; see <c>CalendarService.ApplyAggregateCompletion</c>). Progress
+    /// counting reads the same <c>row.IsDone</c> the UI renders, so the two never
+    /// disagree: this pins that the session counts as done here, matching its
+    /// checked/strikethrough display, rather than being silently dropped from
+    /// both the numerator and denominator.
+    /// </summary>
+    [Fact]
+    public void SessionShowingDoneViaCompletedParentTask_CountsAsDone_MatchingItsDisplay()
+    {
+        var context = Create();
+        var task = AddTask(context, "Elapsed work", TimeSpan.FromMinutes(60));
+        context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+        var row = context.Daily.ScheduledRows.Single();
+        row.RemainingMinutes = 45;
+        row.RecordNeedsMoreTimeCommand.Execute(null);
+        context.Calendar.Reload();
+        Assert.Equal("0 of 1 complete", context.Daily.ProgressText);
+
+        // The user completes the whole task later, despite the session's earlier
+        // "needs more time" mark — this never happens through the session's own
+        // outcome actions, only through the task-level Complete path.
+        context.Service.CompleteTask(task.Id);
+        context.Calendar.Reload();
+
+        var completed = context.Daily.CompletedRows.Single();
+        Assert.True(completed.IsDone);
+        Assert.Empty(context.Daily.UnscheduledRows); // the task itself is now complete
+        Assert.Equal("1 of 1 complete", context.Daily.ProgressText);
     }
 
     // ---- Selected-date rank refresh, heading, empty states ----
