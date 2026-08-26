@@ -69,8 +69,11 @@ public sealed class CalendarBlock
     /// <summary>The owning Task for sessions; always null for external events.</summary>
     public TaskId? TaskId { get; }
 
-    /// <summary>External events carry their own title; sessions display their Task's.</summary>
-    public string? Title { get; }
+    /// <summary>
+    /// External events carry their own title. A session may carry an optional one of
+    /// its own; when null it displays its Task's title.
+    /// </summary>
+    public string? Title { get; private set; }
 
     public DateOnly Date { get; private set; }
 
@@ -109,11 +112,12 @@ public sealed class CalendarBlock
         TimeOnly startTime,
         TimeOnly endTime,
         DateTimeOffset now,
-        RecurrenceRule? recurrence = null)
+        RecurrenceRule? recurrence = null,
+        string? title = null)
     {
         ValidateTimes(startTime, endTime);
         return new CalendarBlock(
-            CalendarBlockId.New(), taskId, null, date, startTime, endTime,
+            CalendarBlockId.New(), taskId, NormalizeTitle(title), date, startTime, endTime,
             BlockKind.TaskSession, recurrence, LocalProvider, null, 0,
             BlockOutcome.None, null, now, now);
     }
@@ -187,6 +191,20 @@ public sealed class CalendarBlock
         Touch(now);
     }
 
+    /// <summary>
+    /// Names this session for the day it covers ("Jane Eyre 1-10"). Blank clears the
+    /// name, and the row falls back to the Task's title.
+    /// </summary>
+    public void Retitle(string? title, DateTimeOffset now)
+    {
+        EnsureLocalSession();
+        Title = NormalizeTitle(title);
+        Touch(now);
+    }
+
+    private static string? NormalizeTitle(string? title)
+        => string.IsNullOrWhiteSpace(title) ? null : title.Trim();
+
     /// <summary>Whether an occurrence of this block lands on the given date.</summary>
     public bool OccursOn(DateOnly date)
         => Recurrence is { } recurrence ? recurrence.OccursOn(date, Date) : Date == date;
@@ -200,7 +218,8 @@ public sealed class CalendarBlock
         EnsureLocalSession();
         if (Recurrence is null)
         {
-            throw new DomainException("A one-off session completes its Task, not an occurrence.");
+            throw new DomainException(
+                "A one-off session records an outcome, not an occurrence completion.");
         }
 
         if (!OccursOn(occurrenceDate))

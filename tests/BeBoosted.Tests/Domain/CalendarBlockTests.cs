@@ -154,4 +154,42 @@ public sealed class CalendarBlockTests
         Assert.Equal("External", external.Title);
         Assert.Null(external.TaskId);
     }
+
+    [Fact]
+    public void Retitle_TrimsTheTitle_AndTouchesModifiedAt()
+    {
+        var session = CalendarBlock.CreateTaskSession(
+            TaskId.New(), new DateOnly(2026, 8, 25),
+            new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
+
+        session.Retitle("  Jane Eyre 1-10  ", Now.AddMinutes(5));
+
+        Assert.Equal("Jane Eyre 1-10", session.Title);
+        Assert.Equal(Now.AddMinutes(5), session.ModifiedAt);
+    }
+
+    [Fact]
+    public void Retitle_BlankBecomesNull_SoTheRowFallsBackToTheTaskTitle()
+    {
+        var session = CalendarBlock.CreateTaskSession(
+            TaskId.New(), new DateOnly(2026, 8, 25),
+            new TimeOnly(9, 0), new TimeOnly(10, 0), Now, null, "Jane Eyre 1-10");
+        Assert.Equal("Jane Eyre 1-10", session.Title);
+
+        session.Retitle("   ", Now);
+
+        Assert.Null(session.Title);
+    }
+
+    [Fact]
+    public void Retitle_OnAnExternalEvent_IsRejected()
+    {
+        var external = CalendarBlock.Rehydrate(
+            CalendarBlockId.New(), null, "Dentist", new DateOnly(2026, 8, 25),
+            new TimeOnly(9, 0), new TimeOnly(10, 0), BlockKind.ExternalEvent, null,
+            "google", "evt-1", 0, BlockOutcome.None, null, Now, Now);
+
+        Assert.Throws<DomainException>(() => external.Retitle("Mine now", Now));
+        Assert.Equal("Dentist", external.Title);
+    }
 }
