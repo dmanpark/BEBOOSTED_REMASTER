@@ -233,7 +233,9 @@ public sealed class DailyListUiTests
 
         Assert.Empty(shell.Calendar.Daily.ScheduledRows);
         Assert.Single(shell.Calendar.Daily.CompletedRows);
-        Assert.True(tasks.GetById(task.Id)!.IsCompleted);
+        // The menu resolves the session it was opened from, not the whole task.
+        Assert.Equal(BlockOutcome.Done, blocks.GetAll().Single().Outcome);
+        Assert.False(tasks.GetById(task.Id)!.IsCompleted);
     }
 
     [AvaloniaFact]

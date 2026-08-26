@@ -185,7 +185,11 @@ public sealed class DailyListViewModelTests
         Assert.Equal(
             ["Stats homework", "Imported standup", "Econ chapter 6", "Scholarship review"],
             daily.ScheduledRows.Select(r => r.Title).ToArray());
-        Assert.Equal(["Email advisor"], daily.UnscheduledRows.Select(r => r.Title).ToArray());
+        // "Morning reading" holds two rows now: its one session is settled history in
+        // Completed, while the task itself is still open and back in Unscheduled.
+        Assert.Equal(
+            ["Email advisor", "Morning reading"],
+            daily.UnscheduledRows.Select(r => r.Title).ToArray());
         Assert.Equal(
             ["Morning reading", "Morning run", "Order textbooks"],
             daily.CompletedRows.Select(r => r.Title).OrderBy(t => t).ToArray());
@@ -490,7 +494,9 @@ public sealed class DailyListViewModelTests
         Assert.Equal("Elapsed work", completedRow.Title);
         Assert.True(completedRow.ShowSessionCheck);
         Assert.True(completedRow.CanReopen); // a mis-click is taken back from this page
-        Assert.True(context.Tasks.GetById(task.Id)!.IsCompleted);
+        // The session resolved, not the task: the task returns to Unscheduled.
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal("Elapsed work", context.Daily.UnscheduledRows.Single().Title);
     }
 
     // ---- Scheduled sessions: one-click done and undo ----
@@ -510,7 +516,7 @@ public sealed class DailyListViewModelTests
         var completed = context.Daily.CompletedRows.Single();
         Assert.Equal("Elapsed work", completed.Title);
         Assert.True(completed.IsDone);
-        Assert.True(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted); // the session only
     }
 
     [Fact]
@@ -526,7 +532,7 @@ public sealed class DailyListViewModelTests
         row.ToggleDoneCommand.Execute(null);
 
         Assert.True(context.Daily.CompletedRows.Single().IsDone);
-        Assert.True(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted); // the session only
     }
 
     [Fact]
@@ -566,17 +572,17 @@ public sealed class DailyListViewModelTests
 
         Assert.Empty(context.Daily.ScheduledRows);
         Assert.True(context.Daily.CompletedRows.Single().IsDone);
-        Assert.True(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted); // the session only
         Assert.Equal(BlockOutcome.Done, context.Blocks.GetById(block.Id)!.Outcome);
         Assert.Equal(3, changes); // exactly one announcement per click, both directions
     }
 
     /// <summary>
-    /// Done is a whole-Task statement, so a repeating sibling forbids it. The
-    /// service would reject it anyway; the row must not even offer it.
+    /// A one-off session's Done is local, so a repeating sibling no longer blocks it.
+    /// The gate and its explanatory note are gone with the aggregate rule.
     /// </summary>
     [Fact]
-    public void SessionRowWhoseTaskAlsoRepeats_CannotToggleDone()
+    public void MixedScheduleSessionRow_CompletesNormally_DespiteARepeatingSibling()
     {
         var context = Create();
         var task = AddTask(context, "Mixed work");
@@ -587,41 +593,44 @@ public sealed class DailyListViewModelTests
         context.Calendar.Reload();
 
         var row = context.Daily.ScheduledRows.Single(r => r.BlockId == session.Id);
-        Assert.False(row.CanToggleSessionDone);
-        Assert.False(row.ToggleDoneCommand.CanExecute(null));
+        Assert.True(row.ShowSessionCheck);
+        Assert.True(row.ShowSessionOutcomeAction);
+        Assert.True(row.ToggleDoneCommand.CanExecute(null));
+        Assert.True(row.RecordDoneCommand.CanExecute(null));
+        Assert.True(row.RecordNeedsMoreTimeCommand.CanExecute(null));
+        Assert.True(row.RecordDidntHappenCommand.CanExecute(null));
 
-        row.ToggleDoneCommand.Execute(null); // a direct invocation records nothing
+        row.ToggleDoneCommand.Execute(null);
 
+        Assert.Contains(context.Daily.CompletedRows, r => r.BlockId == session.Id);
         Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
-        Assert.Equal(BlockOutcome.None, context.Blocks.GetById(session.Id)!.Outcome);
     }
 
     /// <summary>
-    /// Undo is never gated on the repeating rule: SetTaskCompletion allows reopening
-    /// unconditionally so a globally-completed repeating Task can recover, and the
-    /// row must not seal that path off.
+    /// Undo is never gated on a repeating sibling either: the done one-off takes its
+    /// own outcome back, and the repeating session is not part of that transaction.
     /// </summary>
     [Fact]
-    public void GloballyCompletedTaskWithARepeatingSibling_CanStillBeToggledBack()
+    public void DoneSessionRow_WithARepeatingSibling_CanStillBeToggledBack()
     {
         var context = Create();
         var task = AddTask(context, "Mixed work");
         var session = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
         context.Calendar.Reload();
         context.Daily.ScheduledRows.Single().ToggleDoneCommand.Execute(null); // done while solo
-        // A repeating sibling appears afterwards: the Task is now globally complete
-        // AND repeating — the corrupted shape reopening exists to rescue.
-        context.Blocks.Add(CalendarBlock.CreateTaskSession(
+        var repeating = CalendarBlock.CreateTaskSession(
             task.Id, Date, new TimeOnly(16, 0), new TimeOnly(17, 0), context.Clock.Now,
-            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday)));
+            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
+        context.Blocks.Add(repeating); // a repeating sibling appears afterwards
         context.Calendar.Reload();
 
         var completed = context.Daily.CompletedRows.Single(r => r.BlockId == session.Id);
-        Assert.True(completed.CanToggleSessionDone); // undo stays open
+        Assert.True(completed.ToggleDoneCommand.CanExecute(null)); // undo stays open
         completed.ToggleDoneCommand.Execute(null);
 
         Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
         Assert.Equal(BlockOutcome.None, context.Blocks.GetById(session.Id)!.Outcome);
+        Assert.Contains(context.Daily.ScheduledRows, r => r.BlockId == session.Id);
     }
 
     [Fact]
@@ -635,8 +644,7 @@ public sealed class DailyListViewModelTests
         var row = context.Daily.ScheduledRows.Single();
         Assert.True(row.ShowSessionCheck);
         Assert.True(row.ShowSessionOutcomeAction);
-        Assert.True(row.CanToggleSessionDone);
-        Assert.False(row.ShowSessionCheckBlockedNote);
+        Assert.True(row.ToggleDoneCommand.CanExecute(null));
 
         row.ToggleDoneCommand.Execute(null);
 
@@ -1040,34 +1048,48 @@ public sealed class DailyListViewModelTests
         Assert.DoesNotContain(context.Daily.CompletedRows, r => r.Title == "Evening run");
     }
 
-    /// <summary>
-    /// Done is decided from the whole Task aggregate: a one-off session row whose
-    /// sibling repeats keeps its outcome flyout, but the global Done choice yields
-    /// to an explanatory note. The other outcomes stay valid.
-    /// </summary>
+    // ---- Per-session completion: one session at a time, never the whole task ----
+
     [Fact]
-    public void MixedScheduleSessionRow_OffersOutcomes_ButNeverGlobalDone()
+    public void MarkingOneSessionDone_LeavesTheOtherScheduled_AndTheTaskOutOfUnscheduled()
     {
         var context = Create();
-        var task = AddTask(context, "Mixed work");
-        var session = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
-        context.Blocks.Add(CalendarBlock.CreateTaskSession(
-            task.Id, Date, new TimeOnly(16, 0), new TimeOnly(17, 0), context.Clock.Now,
-            BeBoosted.Domain.Scheduling.RecurrenceRule.Weekly(1, DayOfWeek.Tuesday)));
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        var morning = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Service.ScheduleTask(task.Id, Date, new TimeOnly(19, 0));
         context.Calendar.Reload();
+        Assert.Equal(2, context.Daily.ScheduledRows.Count);
 
-        var row = context.Daily.ScheduledRows.Single(r => r.BlockId == session.Id);
-        Assert.True(row.ShowSessionCheck);
-        Assert.False(row.CanToggleSessionDone); // present but disabled
-        Assert.True(row.ShowSessionCheckBlockedNote);
-        Assert.True(row.ShowSessionOutcomeAction);
-        Assert.False(row.CanRecordDone);
-        Assert.False(row.RecordDoneCommand.CanExecute(null));
-        Assert.True(row.RecordNeedsMoreTimeCommand.CanExecute(null));
-        Assert.True(row.RecordDidntHappenCommand.CanExecute(null));
-        Assert.True(row.ShowRepeatingCompletionNote);
-        Assert.Equal(
-            "This task repeats — complete each repeating occurrence separately.",
-            row.RepeatingCompletionNote);
+        context.Daily.ScheduledRows.Single(r => r.BlockId == morning.Id)
+            .ToggleDoneCommand.Execute(null);
+
+        Assert.Single(context.Daily.ScheduledRows);
+        Assert.Single(context.Daily.CompletedRows);
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Empty(context.Daily.UnscheduledRows); // still held by the evening session
+    }
+
+    [Fact]
+    public void UndoingOneSession_ReturnsItToScheduled_WithoutDisturbingItsSibling()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        var morning = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        var evening = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(19, 0));
+        context.Calendar.Reload();
+        context.Daily.ScheduledRows.Single(r => r.BlockId == morning.Id)
+            .ToggleDoneCommand.Execute(null);
+        context.Daily.ScheduledRows.Single(r => r.BlockId == evening.Id)
+            .ToggleDoneCommand.Execute(null);
+        Assert.Equal(2, context.Daily.CompletedRows.Count);
+        Assert.Single(context.Daily.UnscheduledRows); // both resolved: the task is back
+
+        context.Daily.CompletedRows.Single(r => r.BlockId == morning.Id)
+            .ToggleDoneCommand.Execute(null);
+
+        Assert.Single(context.Daily.ScheduledRows);
+        Assert.Single(context.Daily.CompletedRows);
+        Assert.Equal(BlockOutcome.Done, context.Blocks.GetById(evening.Id)!.Outcome);
+        Assert.Empty(context.Daily.UnscheduledRows);
     }
 }

@@ -1114,6 +1114,26 @@ public sealed partial class CalendarViewModel : ViewModelBase
         DataChanged?.Invoke();
     }
 
+    /// <summary>Takes back one session's outcome; a no-op announces nothing.</summary>
+    public void ClearSessionOutcome(CalendarBlockId id)
+    {
+        try
+        {
+            if (!_calendar.ClearSessionOutcome(id))
+            {
+                return;
+            }
+        }
+        catch (DomainException exception)
+        {
+            ShowNotice(exception.Message);
+            return;
+        }
+
+        Reload();
+        DataChanged?.Invoke();
+    }
+
     public void UnscheduleBlock(CalendarBlockId id)
     {
         _calendar.UnscheduleSession(id);

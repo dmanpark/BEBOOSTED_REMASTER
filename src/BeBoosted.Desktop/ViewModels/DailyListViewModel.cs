@@ -280,9 +280,6 @@ public sealed partial class DailyListViewModel : ViewModelBase
 
         if (task is not null && block is { IsExternal: false, Recurrence: null })
         {
-            // Done is a whole-Task statement: a repeating sibling scopes it away.
-            row.TaskRepeats = _calendar.GetSessionsForTask(task.Id)
-                .Any(s => s.Recurrence is not null);
             row.TaskRow = CreateTaskRow(task);
             if (!isDone)
             {
@@ -394,16 +391,22 @@ public sealed partial class DailyListViewModel : ViewModelBase
 
     internal void ReopenRow(DailyRowViewModel row)
     {
-        if (row.Kind == DailyRowKind.Obligation && row.BlockId is { } blockId)
+        if (row.Kind == DailyRowKind.Obligation && row.BlockId is { } occurrenceId)
         {
-            _owner.SetOccurrenceDone(blockId, row.Date, done: false);
+            _owner.SetOccurrenceDone(occurrenceId, row.Date, done: false);
         }
-        else if (row.Kind is DailyRowKind.Task or DailyRowKind.Session
+        else if (row.Kind == DailyRowKind.Session && row.BlockId is { } sessionId)
+        {
+            // Per-session: this session's outcome only. Its siblings and its Task
+            // are untouched.
+            _owner.ClearSessionOutcome(sessionId);
+        }
+        else if (row.Kind == DailyRowKind.Task
             && row.TaskId is { } taskId
             && _calendar.ReopenTask(taskId))
         {
-            // Reopening clears every Done one-off session of the Task — the exact
-            // inverse of marking one done, which resolves them all together.
+            // Reopening a Task still clears every Done one-off session of it — the
+            // inverse of completing the Task, which resolves them all together.
             _owner.NotifyTasksMutated();
         }
     }

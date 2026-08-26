@@ -115,12 +115,12 @@ public sealed class CalendarBlockCapabilityTests
     }
 
     /// <summary>
-    /// Defense in depth for stale UI or a race: the rejected Done never throws
-    /// through the view-model boundary, mutates nothing, announces no change, and
-    /// surfaces the rejection as a plain notice (no Undo offer).
+    /// A session's Done is local to that session, so a repeating sibling no longer
+    /// makes it a rejected transition: the view-model boundary records it, announces
+    /// the change exactly once, leaves the Task open, and raises no notice.
     /// </summary>
     [Fact]
-    public void RecordingDone_OnAMixedSchedule_IsRejectedSafely_AtTheViewModelBoundary()
+    public void RecordingDone_OnAMixedSchedule_ResolvesOnlyThatSession_AtTheViewModelBoundary()
     {
         var context = Create();
         var (oneOff, taskId) = AddMixedScheduleTask(context);
@@ -131,14 +131,12 @@ public sealed class CalendarBlockCapabilityTests
             () => context.Calendar.RecordOutcome(oneOff.Id, BlockOutcome.Done, null));
 
         Assert.Null(exception);
-        Assert.Equal(0, changes);
+        Assert.Equal(1, changes);
+        Assert.Equal(BlockOutcome.Done, context.Blocks.GetById(oneOff.Id)!.Outcome);
         Assert.False(context.Tasks.GetById(taskId)!.IsCompleted);
-        Assert.Equal(BlockOutcome.None, context.Blocks.GetById(oneOff.Id)!.Outcome);
 
-        // Surfaced, not swallowed — and it is a notice, not an undoable approval.
-        Assert.True(context.Calendar.IsUndoToastVisible);
-        Assert.Contains("repeating", context.Calendar.UndoToastText);
-        Assert.False(context.Calendar.IsUndoAvailable);
+        // Nothing was rejected, so nothing is announced as a notice.
+        Assert.False(context.Calendar.IsUndoToastVisible);
     }
 
     [Fact]

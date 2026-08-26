@@ -280,35 +280,6 @@ public sealed partial class DailyRowViewModel : ViewModelBase
     public bool ShowSessionOutcomeAction
         => Kind == DailyRowKind.Session && !IsDone && !HasRecordedOutcome;
 
-    /// <summary>This one-off session's Task also has a repeating session somewhere.</summary>
-    public bool TaskRepeats { get; internal set; }
-
-    /// <summary>
-    /// Done is a whole-Task statement: while any sibling session repeats, this
-    /// one-off may not record Done (the other outcomes stay valid).
-    /// </summary>
-    public bool CanRecordDone => !TaskRepeats;
-
-    /// <summary>
-    /// Done is a whole-Task statement: while any sibling session repeats, this one-off
-    /// may not record it. Undo stays open even then — reopening is deliberately
-    /// unconditional so a globally-completed repeating Task can recover. Always true
-    /// for non-Session rows, which never carry a repeating sibling.
-    /// </summary>
-    public bool CanToggleSessionDone => !TaskRepeats || IsDone;
-
-    public bool ShowRepeatingCompletionNote => TaskRepeats;
-
-    public string RepeatingCompletionNote
-        => "This task repeats — complete each repeating occurrence separately.";
-
-    /// <summary>
-    /// A disabled control raises no tooltip, so the blocked checkbox needs its own
-    /// hit-testable surface to carry the explanation. Scoped to the blocked case only —
-    /// a done repeating-sibling row keeps its checkbox live for the undo.
-    /// </summary>
-    public bool ShowSessionCheckBlockedNote => ShowSessionCheck && !CanToggleSessionDone;
-
     public bool CanReopen => IsDone
         && (Kind is DailyRowKind.Task or DailyRowKind.Session
             || (Kind == DailyRowKind.Obligation && !IsExternal));
@@ -393,7 +364,7 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
     /// <summary>The row's checkbox: complete/reopen a task or a scheduled session,
     /// or check off one occurrence of a repeating schedule.</summary>
-    [RelayCommand(CanExecute = nameof(CanToggleSessionDone))]
+    [RelayCommand]
     private void ToggleDone()
     {
         switch (Kind)
@@ -408,8 +379,7 @@ public sealed partial class DailyRowViewModel : ViewModelBase
                 _owner.CompleteTask(this);
                 break;
             case DailyRowKind.Session:
-                // Done on a session is the same aggregate transition as completing the
-                // Task, recorded against the block that carried the work.
+                // A session's Done is local to that session; the Task stays open.
                 _owner.RecordOutcome(this, BlockOutcome.Done, null);
                 break;
         }
@@ -436,7 +406,7 @@ public sealed partial class DailyRowViewModel : ViewModelBase
     [ObservableProperty]
     public partial decimal RemainingMinutes { get; set; } = 30;
 
-    [RelayCommand(CanExecute = nameof(CanRecordDone))]
+    [RelayCommand]
     private void RecordDone() => _owner.RecordOutcome(this, BlockOutcome.Done, null);
 
     [RelayCommand]

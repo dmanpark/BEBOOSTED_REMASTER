@@ -53,10 +53,6 @@
       <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
       <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
     </Style>
-    <Style Selector="Button.dailyCheck:disabled">
-      <Setter Property="Opacity" Value="0.4" />
-      <Setter Property="BorderBrush" Value="{DynamicResource BrushRuleMedium}" />
-    </Style>
 
     <!-- The priority marker doubles as the re-rank affordance; it must read as text -->
     <Style Selector="Button.priorityMarker">
@@ -198,18 +194,12 @@
             <!-- Scheduled task session: the same checkbox as every other row -->
             <Button Classes="dailyCheck" Classes.checked="{Binding IsDone}"
                     IsVisible="{Binding ShowSessionCheck}"
-                    IsEnabled="{Binding CanToggleSessionDone}"
                     Command="{Binding ToggleDoneCommand}"
                     AutomationProperties.Name="{Binding CompletionControlName}"
                     ToolTip.Tip="{Binding CompletionControlName}">
               <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
                     StrokeThickness="1.8" IsVisible="{Binding IsDone}" />
             </Button>
-
-            <!-- A disabled control raises no tooltip: this surface explains the block -->
-            <Border Width="18" Height="18" Background="Transparent"
-                    IsVisible="{Binding ShowSessionCheckBlockedNote}"
-                    ToolTip.Tip="{Binding RepeatingCompletionNote}" />
 
             <!-- Pending proposal: approve / remove / why -->
             <Button Classes="icon" Width="20" Height="20" CornerRadius="5"

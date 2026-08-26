@@ -125,7 +125,10 @@ public sealed class CalendarViewModelCalendarTests
 
         context.Calendar.RecordOutcome(block.Id, BlockOutcome.Done, null);
         Assert.False(context.Calendar.HasReviewNotice);
-        Assert.True(context.Tasks.GetById(task.Id)!.IsCompleted);
+        // The notice clears because the session now carries an outcome, not because
+        // the task closed: a session's Done is local to that session.
+        Assert.Equal(BlockOutcome.Done, context.Blocks.GetById(block.Id)!.Outcome);
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
     }
 
     [Fact]
