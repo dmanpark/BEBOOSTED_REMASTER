@@ -53,6 +53,24 @@
       <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
       <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
     </Style>
+    <Style Selector="Button.dailyCheck:disabled">
+      <Setter Property="Opacity" Value="0.4" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushRuleMedium}" />
+    </Style>
+
+    <!-- The priority marker doubles as the re-rank affordance; it must read as text -->
+    <Style Selector="Button.priorityMarker">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="2,0" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+    <Style Selector="Button.priorityMarker:pointerover">
+      <Setter Property="Background" Value="{DynamicResource BrushRuleMedium}" />
+    </Style>
+    <Style Selector="Button.priorityMarker:disabled">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
 
     <!-- Quiet row actions: dimmed at rest, full on hover or keyboard focus, always hit-testable -->
     <Style Selector="StackPanel.rowActions">
@@ -157,9 +175,9 @@
 
           <!-- Completion cluster -->
           <Panel Grid.Column="2" VerticalAlignment="Center">
-            <!-- Local commitment occurrence: one click checks off, another reopens -->
+            <!-- Repeating task occurrence: one click checks off, another reopens -->
             <Button Classes="dailyCheck" Classes.checked="{Binding IsDone}"
-                    IsVisible="{Binding ShowCommitmentCheck}"
+                    IsVisible="{Binding ShowOccurrenceCheck}"
                     Command="{Binding ToggleDoneCommand}"
                     AutomationProperties.Name="{Binding CompletionControlName}"
                     ToolTip.Tip="{Binding CompletionControlName}">
@@ -177,46 +195,21 @@
                     StrokeThickness="1.8" IsVisible="{Binding IsDone}" />
             </Button>
 
-            <!-- Approved task block: the outcome choices, never a binary checkbox -->
-            <Button Classes="dailyCheck"
-                    IsVisible="{Binding ShowOutcomeControl}"
-                    AutomationProperties.Name="{Binding OutcomeControlName}"
-                    ToolTip.Tip="Record outcome">
-              <Button.Flyout>
-                <Flyout Placement="BottomEdgeAlignedLeft" ShowMode="Standard">
-                  <StackPanel Width="228" Spacing="6" Margin="2">
-                    <Button Classes="primary" HorizontalAlignment="Stretch" Content="Done"
-                            Command="{Binding RecordDoneCommand}" Click="OnFlyoutActionClick" />
-                    <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
-                            CornerRadius="{StaticResource RadiusControl}" Padding="8,7">
-                      <StackPanel Spacing="6">
-                        <TextBlock Text="Needs more time" FontWeight="Medium" />
-                        <DockPanel>
-                          <Button DockPanel.Dock="Right" Content="Save" Margin="6,0,0,0"
-                                  Command="{Binding RecordNeedsMoreTimeCommand}"
-                                  Click="OnFlyoutActionClick" />
-                          <NumericUpDown Value="{Binding RemainingMinutes}" Minimum="5" Maximum="720"
-                                         Increment="5" FormatString="0"
-                                         AutomationProperties.Name="Remaining minutes" />
-                        </DockPanel>
-                        <TextBlock Classes="meta" Text="returns to Inbox with the time left" />
-                      </StackPanel>
-                    </Border>
-                    <Button HorizontalAlignment="Stretch" Content="Didn't happen"
-                            Command="{Binding RecordDidntHappenCommand}" Click="OnFlyoutActionClick" />
-                  </StackPanel>
-                </Flyout>
-              </Button.Flyout>
+            <!-- Scheduled task session: the same checkbox as every other row -->
+            <Button Classes="dailyCheck" Classes.checked="{Binding IsDone}"
+                    IsVisible="{Binding ShowSessionCheck}"
+                    IsEnabled="{Binding CanToggleSessionDone}"
+                    Command="{Binding ToggleDoneCommand}"
+                    AutomationProperties.Name="{Binding CompletionControlName}"
+                    ToolTip.Tip="{Binding CompletionControlName}">
+              <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
+                    StrokeThickness="1.8" IsVisible="{Binding IsDone}" />
             </Button>
 
-            <!-- A resolved block keeps its outcome: static marker, no invented reopen -->
-            <Border Width="18" Height="18" CornerRadius="5"
-                    Background="{StaticResource BrushHighlighterLime}"
-                    BorderBrush="{StaticResource BrushGraphite}" BorderThickness="1.5"
-                    IsVisible="{Binding ShowDoneBlockMarker}">
-              <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
-                    StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
-            </Border>
+            <!-- A disabled control raises no tooltip: this surface explains the block -->
+            <Border Width="18" Height="18" Background="Transparent"
+                    IsVisible="{Binding ShowSessionCheckBlockedNote}"
+                    ToolTip.Tip="{Binding RepeatingCompletionNote}" />
 
             <!-- Pending proposal: approve / remove / why -->
             <Button Classes="icon" Width="20" Height="20" CornerRadius="5"
@@ -272,36 +265,54 @@
             </Button>
           </Panel>
 
-          <!-- Priority marker -->
-          <TextBlock Grid.Column="3" Classes="mono" VerticalAlignment="Center"
-                     FontSize="{StaticResource TextSizeMeta}" FontWeight="SemiBold"
-                     Text="{Binding PriorityText}"
-                     Foreground="{StaticResource BrushGraphite}"
-                     ToolTip.Tip="{Binding PriorityAccessibleText}" />
+          <!-- Priority marker — click to re-rank when the row carries a rank -->
+          <Panel Grid.Column="3" VerticalAlignment="Center">
+            <Button Classes="priorityMarker"
+                    IsEnabled="{Binding CanRerank}"
+                    Command="{Binding RerankCommand}"
+                    AutomationProperties.Name="{Binding Title, StringFormat='Re-rank {0}'}"
+                    ToolTip.Tip="{Binding PriorityAccessibleText}">
+              <TextBlock Classes="mono" Text="{Binding PriorityText}"
+                         FontSize="{StaticResource TextSizeMeta}" FontWeight="SemiBold"
+                         Foreground="{StaticResource BrushGraphite}" />
+            </Button>
+            <!-- A disabled control raises no tooltip: this surface explains the dash -->
+            <Border Background="Transparent"
+                    IsVisible="{Binding ShowUnrankedNote}"
+                    ToolTip.Tip="{Binding PriorityAccessibleText}" />
+          </Panel>
 
           <!-- Title, badges, and inline metadata -->
           <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"
                       ClipToBounds="True">
-            <!-- A commitment's title opens its editor -->
-            <Button Classes="link" IsVisible="{Binding CanEditCommitment}"
-                    Command="{Binding EditCommitmentCommand}"
-                    AutomationProperties.Name="{Binding Title, StringFormat='Edit commitment {0}'}">
+            <!-- An obligation row's title opens the Task editor -->
+            <Button Classes="link" IsVisible="{Binding CanEditRow}"
+                    Command="{Binding EditRowCommand}"
+                    AutomationProperties.Name="{Binding Title, StringFormat='Edit task {0}'}">
               <TextBlock Classes="rowTitle" Classes.done="{Binding IsDone}"
                          FontWeight="SemiBold" Text="{Binding Title}"
                          TextTrimming="CharacterEllipsis" />
             </Button>
+            <!-- The source row stays marked while its task's editor is open (frame 3a). -->
+            <Border IsVisible="{Binding IsEditing}"
+                    Background="{StaticResource BrushLimeWash}"
+                    BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
+                    CornerRadius="{StaticResource RadiusSmall}" Padding="6,1"
+                    VerticalAlignment="Center">
+              <TextBlock Classes="mono" FontSize="{StaticResource TextSizeMeta}" Text="Editing" />
+            </Border>
             <TextBlock Classes="rowTitle"
                        Classes.p1="{Binding IsP1}" Classes.p2="{Binding IsP2}"
                        Classes.done="{Binding IsDone}"
                        Text="{Binding Title}" TextTrimming="CharacterEllipsis"
                        VerticalAlignment="Center"
-                       IsVisible="{Binding !CanEditCommitment}" />
+                       IsVisible="{Binding !CanEditRow}" />
             <TextBlock Classes="meta" Text="{Binding SessionLabel}"
                        IsVisible="{Binding HasSessionLabel}" VerticalAlignment="Center" />
             <Path Classes="icon" Data="{StaticResource IconLock}" Width="11" Height="11"
                   StrokeThickness="1.2" Stroke="{StaticResource BrushPencilGray}"
                   IsVisible="{Binding IsLocked}" VerticalAlignment="Center"
-                  ToolTip.Tip="External commitment — locked. BeBoosted never edits it." />
+                  ToolTip.Tip="Synced event — locked. BeBoosted never edits it." />
             <TextBlock Classes="meta" Text="{Binding ProjectName}"
                        IsVisible="{Binding ShowProjectLabel}" VerticalAlignment="Center" />
             <TextBlock Classes="meta" Text="{Binding MetaText}"
@@ -340,25 +351,22 @@
           <StackPanel Grid.Column="5" Classes="rowActions" Orientation="Horizontal" Spacing="2"
                       VerticalAlignment="Center" Margin="8,0">
             <Button Classes="icon" Width="26" Height="26"
-                    IsVisible="{Binding CanEditCommitment}"
-                    Command="{Binding EditCommitmentCommand}"
+                    IsVisible="{Binding CanEditRow}"
+                    Command="{Binding EditRowCommand}"
                     AutomationProperties.Name="{Binding Title, StringFormat='Edit {0}'}"
-                    ToolTip.Tip="Edit commitment">
+                    ToolTip.Tip="Edit task">
               <Path Classes="icon" Data="{StaticResource IconEdit}" Width="12" Height="12"
                     StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
             </Button>
 
+            <!-- Every task row edits through the one canonical Task editor. -->
             <Button Classes="icon" Width="26" Height="26"
                     IsVisible="{Binding ShowTaskEditAction}"
+                    Command="{Binding EditRowCommand}"
                     AutomationProperties.Name="{Binding Title, StringFormat='Edit task {0}'}"
-                    ToolTip.Tip="Edit task details">
+                    ToolTip.Tip="Edit task">
               <Path Classes="icon" Data="{StaticResource IconEdit}" Width="12" Height="12"
                     StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
-              <Button.Flyout>
-                <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
-                  <views:TaskEditFlyoutView DataContext="{Binding TaskRow}" />
-                </Flyout>
-              </Button.Flyout>
             </Button>
 
             <Button Classes="icon" Width="26" Height="26"
@@ -382,6 +390,38 @@
                     ToolTip.Tip="Unschedule — the task returns to Unscheduled">
               <Path Classes="icon" Data="{StaticResource IconClose}" Width="10" Height="10"
                     StrokeThickness="1.4" Stroke="{StaticResource BrushPencilGray}" />
+            </Button>
+
+            <!-- The other outcomes: quiet, never competing with the checkbox -->
+            <Button Classes="icon" Width="26" Height="26"
+                    IsVisible="{Binding ShowSessionOutcomeAction}"
+                    AutomationProperties.Name="{Binding OutcomeControlName}"
+                    ToolTip.Tip="Needs more time, or didn't happen">
+              <Path Classes="icon" Data="{StaticResource IconMore}" Width="12" Height="12"
+                    StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+                  <StackPanel Width="228" Spacing="6" Margin="2">
+                    <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusControl}" Padding="8,7">
+                      <StackPanel Spacing="6">
+                        <TextBlock Text="Needs more time" FontWeight="Medium" />
+                        <DockPanel>
+                          <Button DockPanel.Dock="Right" Content="Save" Margin="6,0,0,0"
+                                  Command="{Binding RecordNeedsMoreTimeCommand}"
+                                  Click="OnFlyoutActionClick" />
+                          <NumericUpDown Value="{Binding RemainingMinutes}" Minimum="5" Maximum="720"
+                                         Increment="5" FormatString="0"
+                                         AutomationProperties.Name="Remaining minutes" />
+                        </DockPanel>
+                        <TextBlock Classes="meta" Text="returns to Inbox with the time left" />
+                      </StackPanel>
+                    </Border>
+                    <Button HorizontalAlignment="Stretch" Content="Didn't happen"
+                            Command="{Binding RecordDidntHappenCommand}" Click="OnFlyoutActionClick" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
             </Button>
           </StackPanel>
 
@@ -463,9 +503,9 @@
                      FontSize="{StaticResource TextSizeBody}" Margin="12,14,12,4"
                      IsVisible="{Binding IsScheduledEmpty}" />
 
-          <!-- Add task (create + schedule on this date) -->
-          <Button Classes="addTask" IsVisible="{Binding !IsAddingScheduled}"
-                  Command="{Binding BeginAddScheduledCommand}"
+          <!-- Add task: the one canonical Task editor, prefilled for this date -->
+          <Button Classes="addTask"
+                  Command="{Binding AddScheduledTaskCommand}"
                   AutomationProperties.Name="Add scheduled task">
             <StackPanel Orientation="Horizontal" Spacing="10">
               <Path Classes="icon" Data="{StaticResource IconPlus}" Width="12" Height="12"
@@ -474,52 +514,6 @@
                          Foreground="{StaticResource BrushPencilGray}" />
             </StackPanel>
           </Button>
-          <Border IsVisible="{Binding IsAddingScheduled}"
-                  BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
-                  Padding="12,10">
-            <StackPanel Spacing="8">
-              <DockPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6"
-                            VerticalAlignment="Center" Margin="10,0,0,0">
-                  <Button Height="28" Content="Cancel" Command="{Binding CancelAddScheduledCommand}" />
-                  <Button Classes="primary" Height="28" Content="Add"
-                          Command="{Binding ConfirmAddScheduledCommand}"
-                          AutomationProperties.Name="Add and schedule task" />
-                </StackPanel>
-                <TextBox Name="ScheduledAddTitleBox" Text="{Binding NewScheduledTitle}"
-                         PlaceholderText="What needs doing?"
-                         AutomationProperties.Name="New scheduled task title" />
-              </DockPanel>
-              <StackPanel Orientation="Horizontal" Spacing="10">
-                <TimePicker SelectedTime="{Binding NewScheduledStart}" MinuteIncrement="15"
-                            ClockIdentifier="12HourClock"
-                            AutomationProperties.Name="Start time" />
-                <NumericUpDown Value="{Binding NewScheduledDurationMinutes}"
-                               Minimum="5" Maximum="720" Increment="15" FormatString="0"
-                               Width="120"
-                               AutomationProperties.Name="Duration minutes" />
-                <ComboBox ItemsSource="{Binding ProjectChoices}"
-                          SelectedItem="{Binding NewScheduledProject}"
-                          MinWidth="140"
-                          AutomationProperties.Name="Project">
-                  <ComboBox.ItemTemplate>
-                    <DataTemplate x:DataType="vm:ProjectChoiceViewModel">
-                      <TextBlock Text="{Binding Name}" />
-                    </DataTemplate>
-                  </ComboBox.ItemTemplate>
-                </ComboBox>
-              </StackPanel>
-              <TextBlock Foreground="{StaticResource BrushInkHover}"
-                         FontSize="{StaticResource TextSizeSmall}"
-                         Text="{Binding ScheduledAddError}" TextWrapping="Wrap"
-                         IsVisible="{Binding ScheduledAddError, Converter={x:Static ObjectConverters.IsNotNull}}" />
-            </StackPanel>
-          </Border>
-          <!-- A captured task that could not be scheduled is reported, never lost -->
-          <TextBlock FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap"
-                     Margin="12,8,12,0"
-                     Text="{Binding ScheduledAddNotice}"
-                     IsVisible="{Binding ScheduledAddNotice, Converter={x:Static ObjectConverters.IsNotNull}}" />
         </StackPanel>
       </Border>
 
@@ -536,9 +530,9 @@
                      FontSize="{StaticResource TextSizeBody}" Margin="12,14,12,4"
                      IsVisible="{Binding IsUnscheduledEmpty}" />
 
-          <!-- Add task (inline capture) -->
-          <Button Classes="addTask" IsVisible="{Binding !IsAddingUnscheduled}"
-                  Command="{Binding BeginAddUnscheduledCommand}"
+          <!-- Add task: the same canonical Task editor, with scheduling off -->
+          <Button Classes="addTask"
+                  Command="{Binding AddUnscheduledTaskCommand}"
                   AutomationProperties.Name="Add unscheduled task">
             <StackPanel Orientation="Horizontal" Spacing="10">
               <Path Classes="icon" Data="{StaticResource IconPlus}" Width="12" Height="12"
@@ -547,18 +541,6 @@
                          Foreground="{StaticResource BrushPencilGray}" />
             </StackPanel>
           </Button>
-          <Border IsVisible="{Binding IsAddingUnscheduled}"
-                  BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
-                  Padding="12,7">
-            <TextBox Name="UnscheduledAddBox" Text="{Binding NewUnscheduledTitle}"
-                     PlaceholderText="Capture a task — Enter saves, Escape cancels"
-                     KeyDown="OnUnscheduledAddKeyDown"
-                     AutomationProperties.Name="New task title">
-              <TextBox.KeyBindings>
-                <KeyBinding Gesture="Enter" Command="{Binding ConfirmAddUnscheduledCommand}" />
-              </TextBox.KeyBindings>
-            </TextBox>
-          </Border>
         </StackPanel>
       </Border>
 

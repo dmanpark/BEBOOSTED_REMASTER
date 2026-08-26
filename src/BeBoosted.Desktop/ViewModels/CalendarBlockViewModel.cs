@@ -8,9 +8,9 @@ using CommunityToolkit.Mvvm.Input;
 namespace BeBoosted.Desktop.ViewModels;
 
 /// <summary>
-/// One rendered block on the timeline: an approved/fixed calendar block, or a pending
-/// draft proposal (lime wash, dashed) that is movable, resizable, removable, and
-/// individually approvable before it ever touches the approved calendar.
+/// One rendered block on the timeline: a task session, a read-only external synced
+/// event, or a pending draft proposal (lime wash, dashed) that is movable, resizable,
+/// removable, and individually approvable before it ever touches the approved calendar.
 /// </summary>
 public sealed partial class CalendarBlockViewModel : ViewModelBase
 {
@@ -26,7 +26,8 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
         ProposedBlock? proposal,
         bool isConflicted,
         bool isDone,
-        bool needsOutcome)
+        bool needsOutcome,
+        bool taskRepeats = false)
     {
         _owner = owner;
         _block = block;
@@ -36,6 +37,7 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
         IsConflicted = isConflicted;
         IsDone = isDone;
         NeedsOutcome = needsOutcome;
+        TaskRepeats = taskRepeats;
     }
 
     public static CalendarBlockViewModel ForBlock(
@@ -44,8 +46,11 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
         string title,
         bool isConflicted,
         bool isDone,
-        bool needsOutcome)
-        => new(owner, title, occurrence.Date, occurrence.Block, null, isConflicted, isDone, needsOutcome);
+        bool needsOutcome,
+        bool taskRepeats = false)
+        => new(
+            owner, title, occurrence.Date, occurrence.Block, null, isConflicted, isDone,
+            needsOutcome, taskRepeats);
 
     public static CalendarBlockViewModel ForProposal(
         CalendarViewModel owner,
@@ -81,40 +86,56 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
 
     public TimeOnly EndTime => _block?.EndTime ?? _proposal!.EndTime;
 
-    public bool IsFixed => _block?.Kind == BlockKind.FixedCommitment;
-
-    public bool IsTaskBlock => _block?.Kind == BlockKind.TaskBlock;
-
     public bool IsExternal => _block?.IsExternal == true;
 
     public bool IsRecurring => _block?.Recurrence is not null;
 
-    private bool IsLocalFixedCommitment => IsFixed && !IsExternal;
+    private bool IsLocalSession => _block is { Kind: BlockKind.TaskSession, IsExternal: false };
+
+    /// <summary>Local task sessions carry the project-accent edge.</summary>
+    public bool IsSession => IsLocalSession;
 
     // ---- Capabilities by kind and provider ----
-    // Local fixed commitments are fully editable; external (imported/synced)
-    // commitments are never mutated by BeBoosted; task blocks and proposals
-    // keep their move/resize/delete behavior but open no editor.
+    // Local task sessions are fully editable; external (imported/synced) events are
+    // never mutated by BeBoosted; proposals keep their move/resize/remove behavior
+    // but open no editor.
 
-    /// <summary>A normal click opens the commitment editor.</summary>
-    public bool CanEdit => IsLocalFixedCommitment;
+    /// <summary>A normal click opens the Task editor.</summary>
+    public bool CanEdit => IsLocalSession;
 
-    public bool CanMove => IsTaskBlock || IsProposal || IsLocalFixedCommitment;
+    public bool CanMove => IsProposal || IsLocalSession;
 
-    public bool CanResize => IsTaskBlock || IsProposal || IsLocalFixedCommitment;
+    public bool CanResize => IsProposal || IsLocalSession;
 
-    public bool CanDelete => IsTaskBlock || IsProposal || IsLocalFixedCommitment;
+    public bool CanDelete => IsProposal || IsLocalSession;
 
-    /// <summary>External commitments show the lock icon and reject every mutation.</summary>
-    public bool IsLocked => IsFixed && IsExternal;
+    /// <summary>External events show the lock icon and reject every mutation.</summary>
+    public bool IsLocked => IsExternal;
 
-    public bool ShowCompletionControl => IsTaskBlock && !IsDone;
+    /// <summary>One-off sessions record what happened through the outcome flyout.</summary>
+    public bool ShowCompletionControl => IsLocalSession && !IsRecurring && !IsDone;
+
+    /// <summary>This one-off's Task also has a repeating session somewhere.</summary>
+    public bool TaskRepeats { get; }
 
     /// <summary>
-    /// The single-click done circle for local fixed commitments — never for task
-    /// blocks (they keep the multi-outcome flyout), proposals, or locked externals.
+    /// Done is a whole-Task statement: while any sibling session repeats, the Task
+    /// completes per occurrence, so this one-off may not record Done. (Needs more
+    /// time and Didn't happen stay valid — they never complete the Task.)
     /// </summary>
-    public bool ShowCommitmentCompletionControl => IsLocalFixedCommitment;
+    public bool CanRecordDone => !TaskRepeats;
+
+    public bool ShowRepeatingCompletionNote => TaskRepeats;
+
+    public string RepeatingCompletionNote
+        => "This task repeats — complete each repeating occurrence separately.";
+
+    /// <summary>
+    /// The single-click done circle for repeating sessions (completes one occurrence)
+    /// — never for one-off sessions (they keep the multi-outcome flyout), proposals,
+    /// or locked external events.
+    /// </summary>
+    public bool ShowOccurrenceCompletionControl => IsLocalSession && IsRecurring;
 
     public string CompletionControlName => IsDone ? $"Reopen {Title}" : $"Mark {Title} done";
 
@@ -134,8 +155,8 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
                 return $"{start} – {end} · Proposed";
             }
 
-            return IsFixed
-                ? $"{start} – {end} · Fixed"
+            return IsExternal
+                ? $"{start} – {end} · Synced"
                 : $"{start} – {end} · {TaskRowViewModel.FormatDuration(EndTime - StartTime)}";
         }
     }
@@ -148,8 +169,8 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
                 : IsConflicted ? ", conflict"
                 : IsDone ? ", done"
                 : NeedsOutcome ? ", needs an outcome"
-                : IsLocked ? ", external commitment — locked, BeBoosted never edits it"
-                : IsFixed ? ", fixed commitment"
+                : IsLocked ? ", synced event — locked, BeBoosted never edits it"
+                : IsRecurring ? ", repeating task"
                 : string.Empty;
             return $"{Title}, {Date:MMMM d}, {StartTime:h\\:mm} to {EndTime:h\\:mm}{state}";
         }
@@ -160,7 +181,7 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
 
     // ---- Outcomes (approved task blocks) ----
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanRecordDone))]
     private void RecordDone() => _owner.RecordOutcome(Id, BlockOutcome.Done, null);
 
     [RelayCommand]
@@ -172,9 +193,9 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
     private void RecordDidntHappen() => _owner.RecordOutcome(Id, BlockOutcome.DidntHappen, null);
 
     /// <summary>
-    /// Delete dispatch by kind: proposals leave the draft, task blocks unschedule
-    /// (reopening their task), local commitments route through the editor's
-    /// confirmation, and external commitments are never mutated.
+    /// Delete dispatch by kind: proposals leave the draft, one-off sessions
+    /// unschedule (their task stays open), repeating sessions route through the
+    /// editor's confirmation, and external events are never mutated.
     /// </summary>
     [RelayCommand]
     private void Unschedule()
@@ -183,32 +204,36 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
         {
             _owner.RemoveProposalBlock(Id);
         }
-        else if (IsTaskBlock)
+        else if (IsLocalSession && !IsRecurring)
         {
             _owner.UnscheduleBlock(Id);
         }
         else if (CanDelete)
         {
-            _owner.RequestDeleteCommitment(Id);
+            _owner.RequestDeleteBlock(Id, Date);
         }
     }
 
-    /// <summary>Opens the commitment editor for a local fixed commitment.</summary>
+    /// <summary>Opens the Task editor for a local session.</summary>
+    /// <summary>The block being edited keeps its lime halo behind the scrim (frame 3b).</summary>
+    [ObservableProperty]
+    public partial bool IsBeingEdited { get; internal set; }
+
     public void Edit()
     {
         if (CanEdit)
         {
-            _owner.OpenCommitmentEditorFor(Id, Date);
+            _owner.OpenTaskEditorForBlock(Id, Date);
         }
     }
 
     /// <summary>Checks this occurrence off (or reopens it) without opening the editor.</summary>
     [RelayCommand]
-    private void ToggleCommitmentDone()
+    private void ToggleOccurrenceDone()
     {
-        if (ShowCommitmentCompletionControl)
+        if (ShowOccurrenceCompletionControl)
         {
-            _owner.SetCommitmentOccurrenceDone(Id, Date, !IsDone);
+            _owner.SetOccurrenceDone(Id, Date, !IsDone);
         }
     }
 
@@ -230,7 +255,7 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
             return;
         }
 
-        // A recurring commitment moves as a whole series: the time change applies to
+        // A repeating task moves as a whole series: the time change applies to
         // every occurrence and the anchor date never silently follows one occurrence.
         _owner.MoveBlock(Id, IsRecurring ? Block.Date : date, start);
     }

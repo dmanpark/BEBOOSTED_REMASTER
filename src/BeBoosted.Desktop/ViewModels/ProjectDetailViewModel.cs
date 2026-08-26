@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using Avalonia.Media;
 using BeBoosted.Application.Projects;
-using BeBoosted.Application.Tasks;
 using BeBoosted.Domain.Projects;
 using BeBoosted.Domain.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -16,7 +15,6 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     private readonly ProjectsViewModel _owner;
     private readonly ProjectService _service;
     private readonly IProjectFileRepository _files;
-    private readonly TaskService _taskService;
     private readonly Application.Calendar.CalendarService _calendar;
 
     public ProjectDetailViewModel(
@@ -24,19 +22,17 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
         Project project,
         ProjectService service,
         IProjectFileRepository files,
-        TaskService taskService,
         Application.Calendar.CalendarService calendar)
     {
         _owner = owner;
         _service = service;
         _files = files;
-        _taskService = taskService;
         _calendar = calendar;
         Project = project;
         Refresh();
     }
 
-    public Project Project { get; }
+    public Project Project { get; private set; }
 
     public string Name => Project.Name;
 
@@ -49,7 +45,7 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     /// <summary>Active scheduled work: upcoming and overdue rows, soonest first.</summary>
     public ObservableCollection<ScheduledBlockRowViewModel> ScheduledBlocks { get; } = [];
 
-    /// <summary>Recently completed commitments, shown quietly below the active rows.</summary>
+    /// <summary>Recently completed sessions, shown quietly below the active rows.</summary>
     public ObservableCollection<ScheduledBlockRowViewModel> CompletedScheduledBlocks { get; } = [];
 
     public ObservableCollection<FolioCardViewModel> Files { get; } = [];
@@ -70,19 +66,89 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     [ObservableProperty]
     public partial string NewFileDescription { get; set; } = string.Empty;
 
+    // Rename-this-project flyout
+    [ObservableProperty]
+    public partial string RenameName { get; set; } = string.Empty;
+
+    /// <summary>Seeds the flyout so the field opens on the current name.</summary>
+    public void BeginRename() => RenameName = Project.Name;
+
+    /// <summary>Returns true when the rename committed (the view closes its flyout).</summary>
+    public bool TryCommitRename()
+    {
+        if (string.IsNullOrWhiteSpace(RenameName))
+        {
+            return false;
+        }
+
+        Project = _service.RenameProject(Project.Id, RenameName);
+        OnPropertyChanged(nameof(Name));
+        return true;
+    }
+
+    /// <summary>The open two-step delete confirmation, or null when nothing is pending.</summary>
+    [ObservableProperty]
+    public partial ConfirmationPrompt? Confirmation { get; private set; }
+
+    private Action? _pendingConfirmedAction;
+
+    /// <summary>
+    /// Deleting a project takes every File and stored document with it. Its tasks
+    /// survive and fall back to unassigned, which the prompt says plainly.
+    /// </summary>
+    [RelayCommand]
+    private void RequestDelete()
+    {
+        var count = Files.Count;
+        var scope = count == 0
+            ? "It has no Files"
+            : $"Its {count} File{(count == 1 ? string.Empty : "s")} and any stored documents are deleted";
+        Confirmation = new ConfirmationPrompt(
+            $"Delete '{Name}'? {scope}. Tasks in this project are kept, and become unassigned.",
+            "Delete project",
+            IsTaskDeletion: false);
+        _pendingConfirmedAction = () =>
+        {
+            _service.DeleteProject(Project.Id);
+            _owner.CloseDetail();
+        };
+    }
+
+    [RelayCommand]
+    private void ConfirmPrompt()
+    {
+        var pending = _pendingConfirmedAction;
+        Confirmation = null;
+        _pendingConfirmedAction = null;
+        pending?.Invoke();
+    }
+
+    [RelayCommand]
+    private void KeepPrompt()
+    {
+        Confirmation = null;
+        _pendingConfirmedAction = null;
+    }
+
     public void Refresh()
     {
         var (open, recent) = _service.GetProjectTasks(Project.Id);
         OpenTasks.Clear();
         foreach (var task in open)
         {
-            OpenTasks.Add(new ProjectTaskRowViewModel(task, _taskService, Refresh));
+            // A repeating task completes per occurrence (in Scheduled below), never
+            // as a whole from this list.
+            var repeating = _calendar.GetSessionsForTask(task.Id)
+                .Any(session => session.Recurrence is not null);
+            OpenTasks.Add(new ProjectTaskRowViewModel(
+                task, CompleteTaskRow, !repeating, RequestTaskEdit));
         }
 
         RecentlyCompleted.Clear();
         foreach (var task in recent)
         {
-            RecentlyCompleted.Add(new ProjectTaskRowViewModel(task, _taskService, Refresh));
+            RecentlyCompleted.Add(new ProjectTaskRowViewModel(
+                task, onCompleteRequested: null, canComplete: false, RequestTaskEdit));
         }
 
         ScheduledBlocks.Clear();
@@ -114,19 +180,38 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Completion toggle from a project row: persists through the same service path as
-    /// the calendar control, then refreshes this detail and announces the calendar
-    /// change exactly once. No-ops stay silent.
+    /// Occurrence-completion toggle from a project row (repeating sessions): persists
+    /// through the same service path as the calendar control, then announces through
+    /// the one central chain — which refreshes this detail. No-ops stay silent.
     /// </summary>
-    internal void SetCommitmentCompletion(
+    internal void SetOccurrenceCompletion(
         Domain.CalendarBlockId blockId, DateOnly occurrenceDate, bool completed)
     {
-        if (_calendar.SetCommitmentOccurrenceCompletion(blockId, occurrenceDate, completed))
+        if (_calendar.SetOccurrenceCompletion(blockId, occurrenceDate, completed))
         {
-            Refresh();
-            _owner.NotifyCalendarChanged();
+            _owner.NotifyTasksMutated();
         }
     }
+
+    /// <summary>
+    /// Whole-task completion from a project row: the authoritative service path
+    /// reconciles the Task with its one-off sessions, then one announcement through
+    /// the central chain refreshes every dependent — including this detail — exactly
+    /// once. No-ops and failures announce nothing.
+    /// </summary>
+    internal void CompleteTaskRow(TaskItem task)
+    {
+        if (_calendar.CompleteTask(task.Id))
+        {
+            _owner.NotifyTasksMutated();
+        }
+    }
+
+    /// <summary>Every edit affordance routes to the one canonical Task editor.</summary>
+    internal void RequestTaskEdit(TaskItem task) => _owner.RequestTaskEdit(task.Id);
+
+    internal void RequestSessionEdit(Domain.CalendarBlockId blockId, DateOnly occurrenceDate)
+        => _owner.RequestSessionEdit(blockId, occurrenceDate);
 
     /// <summary>Opens the composer scoped to this project.</summary>
     [RelayCommand]
@@ -151,10 +236,20 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     public void OpenFile(Domain.ProjectFileId id) => _owner.OpenFile(id);
 }
 
-public sealed partial class ProjectTaskRowViewModel(TaskItem task, TaskService taskService, Action refresh)
+public sealed partial class ProjectTaskRowViewModel(
+    TaskItem task,
+    Action<TaskItem>? onCompleteRequested = null,
+    bool canComplete = true,
+    Action<TaskItem>? onEditRequested = null)
     : ViewModelBase
 {
     public string Title => task.Title;
+
+    /// <summary>Stable row identity for keyboard-focus restoration.</summary>
+    public Domain.TaskId TaskId => task.Id;
+
+    /// <summary>Whole-task completion; repeating tasks complete per occurrence instead.</summary>
+    public bool CanComplete => canComplete;
 
     public bool IsCompleted => task.IsCompleted;
 
@@ -186,18 +281,23 @@ public sealed partial class ProjectTaskRowViewModel(TaskItem task, TaskService t
         }
     }
 
+    /// <summary>Completes through the owner's one authoritative service path.</summary>
     [RelayCommand]
-    private void Complete()
-    {
-        taskService.Complete(task.Id);
-        refresh();
-    }
+    private void Complete() => onCompleteRequested?.Invoke(task);
+
+    public bool CanEdit => onEditRequested is not null;
+
+    public string EditControlName => $"Edit task {task.Title}";
+
+    /// <summary>Opens the one canonical Task editor for this task.</summary>
+    [RelayCommand]
+    private void Edit() => onEditRequested?.Invoke(task);
 }
 
 /// <summary>
-/// One scheduled-work row: a task-backed block or a directly linked fixed commitment.
-/// Local commitments carry a completion toggle that shares the calendar's persistence
-/// path; external commitments and task blocks show no completion control here.
+/// One scheduled-work row: a session of one of the project's tasks. Repeating
+/// sessions carry a per-occurrence completion toggle that shares the calendar's
+/// persistence path; one-off sessions resolve through their Task instead.
 /// </summary>
 public sealed partial class ScheduledBlockRowViewModel : ViewModelBase
 {
@@ -214,6 +314,9 @@ public sealed partial class ScheduledBlockRowViewModel : ViewModelBase
     }
 
     public string Title => _row.Title;
+
+    /// <summary>Stable row identity for keyboard-focus restoration.</summary>
+    public Domain.CalendarBlockId BlockId => _row.Block.Id;
 
     public DateOnly Date => _row.Date;
 
@@ -234,14 +337,24 @@ public sealed partial class ScheduledBlockRowViewModel : ViewModelBase
     /// <summary>End time passed without completion — quietly flagged, never hidden.</summary>
     public bool IsOverdue => _row.State == Application.Projects.ProjectBlockState.Overdue;
 
+    /// <summary>Only repeating sessions toggle per occurrence from the project page.</summary>
     public bool HasCompletionControl
-        => _row.Block.Kind == Domain.Calendar.BlockKind.FixedCommitment && !_row.Block.IsExternal;
+        => _row.Block.Recurrence is not null && !_row.Block.IsExternal;
 
     public string CompletionControlName => IsDone ? $"Reopen {Title}" : $"Mark {Title} done";
 
     [RelayCommand]
     private void ToggleCompletion()
-        => _owner.SetCommitmentCompletion(_row.Block.Id, Date, !IsDone);
+        => _owner.SetOccurrenceCompletion(_row.Block.Id, Date, !IsDone);
+
+    /// <summary>External events sync in read-only; only task sessions open the editor.</summary>
+    public bool CanEdit => !_row.Block.IsExternal;
+
+    public string EditControlName => $"Edit session {Title}";
+
+    /// <summary>Opens the canonical Task editor scoped to this row's occurrence date.</summary>
+    [RelayCommand]
+    private void Edit() => _owner.RequestSessionEdit(_row.Block.Id, Date);
 }
 
 public sealed partial class FolioCardViewModel(

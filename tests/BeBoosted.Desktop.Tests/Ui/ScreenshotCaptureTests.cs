@@ -80,14 +80,17 @@ public sealed class ScreenshotCaptureTests
             detail.TryCreateFile();
             projects.CloseFileCommand.Execute(null);
 
-            // Assign two inbox tasks to the project so the detail view shows real rows.
-            shell.Inbox.Reload(); // pick up the just-created projects as edit choices
-            var admissionsChoice = shell.Inbox.Tasks[0].ProjectChoices.First(c => c.Name == "College Admissions");
+            // Assign two inbox tasks to the project (through the one canonical
+            // Task editor) so the detail view shows real rows.
+            shell.Inbox.Reload();
             foreach (var row in shell.Inbox.Tasks.Where(r =>
                 r.Title is "Draft essay outline" or "Email recommendation request").ToList())
             {
-                row.EditProject = admissionsChoice;
-                row.CommitEditCommand.Execute(null);
+                row.EditCommand.Execute(null);
+                var editor = (WholeTaskEditorViewModel)shell.Calendar.ActiveTaskEditor!;
+                editor.SelectedProject = editor.ProjectOptions
+                    .Single(o => o.Name == "College Admissions");
+                editor.SaveCommand.Execute(null);
             }
 
             projects.Detail!.Refresh();

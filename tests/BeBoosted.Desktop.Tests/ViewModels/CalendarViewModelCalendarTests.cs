@@ -32,9 +32,13 @@ public sealed class CalendarViewModelCalendarTests
 
         var service = TestShell.CreateCalendarService(blocks, tasks, clock);
         var prioritization = new InMemoryPrioritizationRepository();
+        var proposals = new InMemoryPlanningProposalRepository();
         var planning = new PlanningService(
-            new InMemoryPlanningProposalRepository(), blocks,
-            new InboxQueryService(tasks, blocks), prioritization, service, clock);
+            proposals,
+            new InboxQueryService(tasks, blocks), prioritization, service,
+            new InMemoryCalendarMutations(
+                blocks, new InMemoryOccurrenceCompletionRepository(), tasks, proposals),
+            clock);
         var calendar = TestShell.CreateCalendarViewModel(
             new InMemorySettingsStore(), clock, tasks, blocks,
             new InMemoryProjectRepository(), service, planning, prioritization);
@@ -61,10 +65,10 @@ public sealed class CalendarViewModelCalendarTests
         var context = Create(seed: true);
         var today = context.Calendar.Days[0];
 
-        // AP Economics (recurring), Lunch, morning reading (done), practice, statement.
+        // AP Economics (repeating), Lunch, morning reading (done), practice, statement.
         Assert.Equal(5, today.Blocks.Count);
-        Assert.Contains(today.Blocks, b => b.Title == "AP Economics" && b.IsFixed);
-        Assert.Contains(today.Blocks, b => b.Title == "Practice DECA role-play" && b.IsTaskBlock);
+        Assert.Contains(today.Blocks, b => b.Title == "AP Economics" && b.IsRecurring);
+        Assert.Contains(today.Blocks, b => b.Title == "Practice DECA role-play" && b.IsSession);
         Assert.Contains(today.Blocks, b => b.Title == "Morning reading — econ chapter 6" && b.IsDone);
 
         context.Calendar.ViewKind = CalendarViewKind.Week;
@@ -80,7 +84,10 @@ public sealed class CalendarViewModelCalendarTests
         var context = Create();
         var task = TaskItem.Create("Overlap", context.Clock.Now, estimatedDuration: TimeSpan.FromMinutes(60));
         context.Tasks.Add(task);
-        context.Service.CreateFixedCommitment("Meeting", TestShell.DesignDate, new TimeOnly(15, 0), new TimeOnly(16, 0));
+        context.Service.CreateTask(
+            new TaskDetailsRequest("Meeting", null, null, null),
+            new TaskScheduleRequest(
+                TestShell.DesignDate, new TimeOnly(15, 0), new TimeOnly(16, 0), null));
         context.Service.ScheduleTask(task.Id, TestShell.DesignDate, new TimeOnly(15, 30));
         context.Calendar.Reload();
 
@@ -130,31 +137,35 @@ public sealed class CalendarViewModelCalendarTests
     }
 
     [Fact]
-    public void CommitmentEditor_ValidatesAndCreatesWeeklyRecurrence()
+    public void TaskEditor_ValidatesAndCreatesWeeklyRecurrence()
     {
         var context = Create();
-        context.Calendar.OpenNewCommitmentEditorCommand.Execute(null);
-        var editor = context.Calendar.CommitmentEditor!;
+        context.Calendar.OpenNewTaskEditorCommand.Execute(null);
+        var editor = (WholeTaskEditorViewModel)context.Calendar.ActiveTaskEditor!;
 
         editor.Title = "";
         editor.SaveCommand.Execute(null);
         Assert.NotNull(editor.Error);
-        Assert.NotNull(context.Calendar.CommitmentEditor);
+        Assert.NotNull(context.Calendar.ActiveTaskEditor);
 
         editor.Title = "AP Economics";
-        editor.Start = new TimeSpan(8, 30, 0);
-        editor.End = new TimeSpan(9, 45, 0);
-        editor.RepeatsWeekly = true;
-        foreach (var day in editor.Days.Where(
+        editor.AddSessionCommand.Execute(null); // create mode: reveal the first session
+        editor.InlineSchedule.Date = new DateTimeOffset(
+            TestShell.DesignDate.ToDateTime(TimeOnly.MinValue));
+        editor.InlineSchedule.Start = new TimeSpan(8, 30, 0);
+        editor.InlineSchedule.End = new TimeSpan(9, 45, 0);
+        editor.InlineSchedule.RepeatsWeekly = true;
+        foreach (var day in editor.InlineSchedule.Days.Where(
             d => d.Day is DayOfWeek.Monday or DayOfWeek.Wednesday))
         {
             day.IsSelected = true;
         }
 
         editor.SaveCommand.Execute(null);
-        Assert.Null(context.Calendar.CommitmentEditor);
+        Assert.Null(context.Calendar.ActiveTaskEditor);
         var block = context.Blocks.GetAll().Single();
-        Assert.Equal("AP Economics", block.Title);
+        Assert.Equal("AP Economics", context.Tasks.GetById(block.TaskId!.Value)!.Title);
+        Assert.Null(block.Title);
         Assert.Equal(
             [DayOfWeek.Monday, DayOfWeek.Wednesday],
             block.Recurrence!.DaysOfWeek.OrderBy(d => d));

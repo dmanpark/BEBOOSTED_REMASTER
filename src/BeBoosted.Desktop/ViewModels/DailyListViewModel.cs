@@ -25,7 +25,6 @@ namespace BeBoosted.Desktop.ViewModels;
 public sealed partial class DailyListViewModel : ViewModelBase
 {
     private readonly CalendarViewModel _owner;
-    private readonly TaskService _taskService;
     private readonly InboxQueryService _inboxQuery;
     private readonly PrioritySortService _prioritySort;
     private readonly AiService _ai;
@@ -35,12 +34,10 @@ public sealed partial class DailyListViewModel : ViewModelBase
     private readonly IClock _clock;
 
     private DateOnly _date;
-    private List<ProjectChoiceViewModel> _projectChoices = [ProjectChoiceViewModel.None];
     private Dictionary<ProjectId, string> _projectNames = [];
 
     internal DailyListViewModel(
         CalendarViewModel owner,
-        TaskService taskService,
         InboxQueryService inboxQuery,
         PrioritySortService prioritySort,
         AiService ai,
@@ -50,7 +47,6 @@ public sealed partial class DailyListViewModel : ViewModelBase
         IClock clock)
     {
         _owner = owner;
-        _taskService = taskService;
         _inboxQuery = inboxQuery;
         _prioritySort = prioritySort;
         _ai = ai;
@@ -128,15 +124,9 @@ public sealed partial class DailyListViewModel : ViewModelBase
         {
             _date = date;
             IsCompletedExpanded = false;
-            CancelAddUnscheduled();
-            CancelAddScheduled();
-            ScheduledAddNotice = null;
         }
 
-        var projects = _projects.GetAll();
-        _projectNames = projects.ToDictionary(p => p.Id, p => p.Name);
-        _projectChoices = [ProjectChoiceViewModel.None];
-        _projectChoices.AddRange(projects.Select(p => new ProjectChoiceViewModel(p.Id, p.Name)));
+        _projectNames = _projects.GetAll().ToDictionary(p => p.Id, p => p.Name);
 
         var ranks = _prioritySort.GetRankLookup(PlanningPeriod.ForToday(date));
         var today = _clock.Today;
@@ -157,24 +147,33 @@ public sealed partial class DailyListViewModel : ViewModelBase
             if (row.IsDone)
             {
                 completed.Add(row);
-                if (block.Kind == BlockKind.FixedCommitment)
+                if (block.Recurrence is not null && !block.IsExternal)
                 {
                     doneOccurrenceCount++;
                 }
-                else if (block.TaskId is { } doneId)
+                else if (!block.IsExternal && block.TaskId is { } doneId)
                 {
                     doneTaskIds.Add(doneId);
                 }
             }
+            else if (row.HasRecordedOutcome)
+            {
+                // "Needs more time" / "Didn't happen": the session is settled history
+                // for this day, and the task itself continues in Unscheduled — a task
+                // never sits in Scheduled and Unscheduled at once. The open work is
+                // counted through the task's other rows, not this resolved session.
+                completed.Add(row);
+            }
             else
             {
                 scheduled.Add(row);
-                if (block.Kind == BlockKind.FixedCommitment)
+                if (block.IsExternal)
                 {
-                    if (!block.IsExternal)
-                    {
-                        openOccurrenceCount++;
-                    }
+                    // External events never count toward the day's task progress.
+                }
+                else if (block.Recurrence is not null)
+                {
+                    openOccurrenceCount++;
                 }
                 else if (block.TaskId is { } openId)
                 {
@@ -229,6 +228,7 @@ public sealed partial class DailyListViewModel : ViewModelBase
         Replace(ScheduledRows, SortScheduled(scheduled));
         Replace(UnscheduledRows, SortUnscheduled(unscheduled));
         Replace(CompletedRows, SortCompleted(completed));
+        SetEditingTask(_owner.EditingTaskId);
 
         if (CompletedRows.Count == 0)
         {
@@ -258,12 +258,14 @@ public sealed partial class DailyListViewModel : ViewModelBase
     {
         var block = occurrence.Block;
         var title = block.Title ?? task?.Title ?? "(deleted task)";
-        var projectName = block.Kind == BlockKind.FixedCommitment
-            ? ProjectNameFor(block.ProjectId)
-            : ProjectNameFor(task?.ProjectId);
-        var isDone = block.Outcome == BlockOutcome.Done || occurrence.IsCompleted;
+        var projectName = ProjectNameFor(task?.ProjectId);
+        // A repeating session is done per occurrence; a one-off through its Task.
+        var isDone = block.Recurrence is not null
+            ? occurrence.IsCompleted
+            : block.Outcome == BlockOutcome.Done || task?.IsCompleted == true;
         var elapsed = occurrence.Date < today || (occurrence.Date == today && block.EndTime <= now);
-        var needsOutcome = block.Kind == BlockKind.TaskBlock && block.Outcome == BlockOutcome.None && elapsed;
+        var needsOutcome = block is { IsExternal: false, Recurrence: null }
+            && block.Outcome == BlockOutcome.None && task?.IsCompleted != true && elapsed;
 
         var row = DailyRowViewModel.ForOccurrence(
             this,
@@ -276,10 +278,13 @@ public sealed partial class DailyListViewModel : ViewModelBase
             isDone,
             needsOutcome);
 
-        if (task is not null && block.Kind == BlockKind.TaskBlock)
+        if (task is not null && block is { IsExternal: false, Recurrence: null })
         {
+            // Done is a whole-Task statement: a repeating sibling scopes it away.
+            row.TaskRepeats = _calendar.GetSessionsForTask(task.Id)
+                .Any(s => s.Recurrence is not null);
             row.TaskRow = CreateTaskRow(task);
-            if (!isDone && !block.IsExternal)
+            if (!isDone)
             {
                 row.ScheduleEditor = new ScheduleFlyoutViewModel(
                     this, row, "Change time", "Change time",
@@ -316,11 +321,10 @@ public sealed partial class DailyListViewModel : ViewModelBase
 
     private TaskRowViewModel CreateTaskRow(TaskItem task)
         => new(
-            task, _taskService, _clock,
+            task, _calendar, _clock,
             onRemoved: _ => _owner.NotifyTasksMutated(),
-            _projectChoices,
             ProjectNameFor(task.ProjectId),
-            onEdited: _ => _owner.NotifyTasksMutated());
+            onEditRequested: row => _owner.OpenTaskEditorForTask(row.Task.Id));
 
     private string? ProjectNameFor(ProjectId? projectId)
         => projectId is { } id ? _projectNames.GetValueOrDefault(id) : null;
@@ -336,7 +340,7 @@ public sealed partial class DailyListViewModel : ViewModelBase
 
     // ---- Ordering ----
 
-    /// <summary>Fixed obligations by start; ranked flex by tier and ordinal; unranked flex by start.</summary>
+    /// <summary>Time obligations by start; ranked tasks by tier and ordinal; unranked by start.</summary>
     private static IEnumerable<DailyRowViewModel> SortScheduled(List<DailyRowViewModel> rows)
         => rows
             .OrderBy(ScheduledGroup)
@@ -347,7 +351,7 @@ public sealed partial class DailyListViewModel : ViewModelBase
             .ThenBy(r => r.BlockId?.ToString() ?? string.Empty);
 
     private static int ScheduledGroup(DailyRowViewModel row)
-        => row.Kind == DailyRowKind.FixedCommitment ? 0 : row.Rank is not null ? 1 : 2;
+        => row.Kind == DailyRowKind.Obligation ? 0 : row.Rank is not null ? 1 : 2;
 
     /// <summary>Tier, ordinal rank, deadline (overdue/today first), then capture order.</summary>
     private IEnumerable<DailyRowViewModel> SortUnscheduled(List<DailyRowViewModel> rows)
@@ -368,8 +372,8 @@ public sealed partial class DailyListViewModel : ViewModelBase
         => rows
             .OrderBy(r => r.Kind switch
             {
-                DailyRowKind.FixedCommitment => 0,
-                DailyRowKind.TaskBlock => 1,
+                DailyRowKind.Obligation => 0,
+                DailyRowKind.Session => 1,
                 _ => 2,
             })
             .ThenBy(r => r.StartTime ?? TimeOnly.MinValue)
@@ -380,31 +384,35 @@ public sealed partial class DailyListViewModel : ViewModelBase
 
     internal void CompleteTask(DailyRowViewModel row)
     {
-        if (row.TaskId is { } id)
+        // The authoritative path reconciles any one-off session outcome with the
+        // Task in one transaction; a no-op announces nothing.
+        if (row.TaskId is { } id && _calendar.CompleteTask(id))
         {
-            _taskService.Complete(id);
             _owner.NotifyTasksMutated();
         }
     }
 
     internal void ReopenRow(DailyRowViewModel row)
     {
-        if (row.Kind == DailyRowKind.FixedCommitment && row.BlockId is { } blockId)
+        if (row.Kind == DailyRowKind.Obligation && row.BlockId is { } blockId)
         {
-            _owner.SetCommitmentOccurrenceDone(blockId, row.Date, done: false);
+            _owner.SetOccurrenceDone(blockId, row.Date, done: false);
         }
-        else if (row.Kind == DailyRowKind.Task && row.TaskId is { } taskId)
+        else if (row.Kind is DailyRowKind.Task or DailyRowKind.Session
+            && row.TaskId is { } taskId
+            && _calendar.ReopenTask(taskId))
         {
-            _taskService.Reopen(taskId);
+            // Reopening clears every Done one-off session of the Task — the exact
+            // inverse of marking one done, which resolves them all together.
             _owner.NotifyTasksMutated();
         }
     }
 
-    internal void ToggleCommitmentDone(DailyRowViewModel row)
+    internal void ToggleOccurrenceDone(DailyRowViewModel row)
     {
         if (row.BlockId is { } id)
         {
-            _owner.SetCommitmentOccurrenceDone(id, row.Date, !row.IsDone);
+            _owner.SetOccurrenceDone(id, row.Date, !row.IsDone);
         }
     }
 
@@ -416,11 +424,29 @@ public sealed partial class DailyListViewModel : ViewModelBase
         }
     }
 
-    internal void EditCommitment(DailyRowViewModel row)
+    /// <summary>Marks the source row "Editing" while its task's editor is open (frame 3a).</summary>
+    internal void SetEditingTask(TaskId? taskId)
     {
-        if (row.CanEditCommitment && row.BlockId is { } id)
+        foreach (var row in ScheduledRows.Concat(UnscheduledRows).Concat(CompletedRows))
         {
-            _owner.OpenCommitmentEditorFor(id, row.Date);
+            row.IsEditing = taskId is not null && row.TaskId == taskId;
+        }
+    }
+
+    internal void EditRow(DailyRowViewModel row)
+    {
+        // A list row is task-scoped even when it shows a session (spec, Approach).
+        if (row.TaskId is { } taskId)
+        {
+            _owner.OpenTaskEditorForTask(taskId);
+        }
+    }
+
+    internal void Rerank(DailyRowViewModel row)
+    {
+        if (row.CanRerank && row.TaskId is { } taskId)
+        {
+            _owner.RequestRerank(taskId);
         }
     }
 
@@ -473,10 +499,10 @@ public sealed partial class DailyListViewModel : ViewModelBase
         var duration = TimeSpan.FromMinutes((double)Math.Max(5, editor.DurationMinutes));
         try
         {
-            if (row.Kind == DailyRowKind.TaskBlock && row.BlockId is { } blockId)
+            if (row.Kind == DailyRowKind.Session && row.BlockId is { } blockId)
             {
-                _calendar.MoveBlock(blockId, day, startTime);
-                _calendar.ResizeBlock(blockId, ClampedEnd(startTime, duration));
+                // One operation: date, start, and end move together or not at all.
+                _calendar.RescheduleSession(blockId, day, startTime, duration);
             }
             else
             {
@@ -530,120 +556,25 @@ public sealed partial class DailyListViewModel : ViewModelBase
         return start.AddMinutes(minutes);
     }
 
-    // ---- Add task (Unscheduled): inline capture ----
+    // ---- Add task: both affordances open the one canonical Task editor ----
 
-    [ObservableProperty]
-    public partial bool IsAddingUnscheduled { get; set; }
-
-    [ObservableProperty]
-    public partial string NewUnscheduledTitle { get; set; } = string.Empty;
-
+    /// <summary>
+    /// New scheduled task for the visible date, prefilled with the sensible default
+    /// slot (next quarter hour today, 9:00 elsewhere; 30 minutes). Saving persists
+    /// the task and its session in one atomic operation.
+    /// </summary>
     [RelayCommand]
-    private void BeginAddUnscheduled()
+    private void AddScheduledTask()
     {
-        NewUnscheduledTitle = string.Empty;
-        IsAddingUnscheduled = true;
+        var start = ScheduleFlyoutViewModel.DefaultStartFor(_date, _clock);
+        var endMinutes = Math.Min(
+            start.ToTimeSpan().TotalMinutes + CalendarService.DefaultTaskBlockDuration.TotalMinutes,
+            (24 * 60.0) - 1);
+        _owner.OpenNewTaskEditorAt(
+            _date, start, TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(endMinutes)));
     }
 
-    /// <summary>Enter captures; blank input does nothing (the field stays for typing).</summary>
+    /// <summary>New unscheduled task; the visible date prefills if scheduling is enabled.</summary>
     [RelayCommand]
-    public void ConfirmAddUnscheduled()
-    {
-        var title = NewUnscheduledTitle.Trim();
-        if (title.Length == 0)
-        {
-            return;
-        }
-
-        _taskService.Capture(title);
-        NewUnscheduledTitle = string.Empty;
-        IsAddingUnscheduled = false;
-        _owner.NotifyTasksMutated();
-    }
-
-    [RelayCommand]
-    public void CancelAddUnscheduled()
-    {
-        NewUnscheduledTitle = string.Empty;
-        IsAddingUnscheduled = false;
-    }
-
-    // ---- Add task (Scheduled): compact create-and-schedule editor ----
-
-    [ObservableProperty]
-    public partial bool IsAddingScheduled { get; set; }
-
-    [ObservableProperty]
-    public partial string NewScheduledTitle { get; set; } = string.Empty;
-
-    [ObservableProperty]
-    public partial TimeSpan? NewScheduledStart { get; set; }
-
-    [ObservableProperty]
-    public partial decimal NewScheduledDurationMinutes { get; set; } = 30;
-
-    [ObservableProperty]
-    public partial ProjectChoiceViewModel? NewScheduledProject { get; set; }
-
-    public IReadOnlyList<ProjectChoiceViewModel> ProjectChoices => _projectChoices;
-
-    [ObservableProperty]
-    public partial string? ScheduledAddError { get; private set; }
-
-    /// <summary>"Added but not scheduled" report — a captured task is never silently lost.</summary>
-    [ObservableProperty]
-    public partial string? ScheduledAddNotice { get; private set; }
-
-    [RelayCommand]
-    private void BeginAddScheduled()
-    {
-        NewScheduledTitle = string.Empty;
-        NewScheduledStart = ScheduleFlyoutViewModel.DefaultStartFor(_date, _clock).ToTimeSpan();
-        NewScheduledDurationMinutes = 30;
-        NewScheduledProject = _projectChoices[0];
-        ScheduledAddError = null;
-        ScheduledAddNotice = null;
-        OnPropertyChanged(nameof(ProjectChoices));
-        IsAddingScheduled = true;
-    }
-
-    [RelayCommand]
-    public void ConfirmAddScheduled()
-    {
-        var title = NewScheduledTitle.Trim();
-        if (title.Length == 0)
-        {
-            ScheduledAddError = "A task needs a title.";
-            return;
-        }
-
-        if (NewScheduledStart is not { } start)
-        {
-            ScheduledAddError = "Pick a start time.";
-            return;
-        }
-
-        var duration = TimeSpan.FromMinutes((double)Math.Max(5, NewScheduledDurationMinutes));
-        var task = _taskService.Capture(title, duration, null, NewScheduledProject?.Id);
-        try
-        {
-            _calendar.ScheduleTask(task.Id, _date, TimeOnly.FromTimeSpan(start), duration);
-            ScheduledAddNotice = null;
-        }
-        catch (DomainException exception)
-        {
-            ScheduledAddNotice = $"Added “{title}” to Unscheduled — {exception.Message}";
-        }
-
-        ScheduledAddError = null;
-        IsAddingScheduled = false;
-        _owner.NotifyTasksMutated();
-    }
-
-    [RelayCommand]
-    public void CancelAddScheduled()
-    {
-        ScheduledAddError = null;
-        IsAddingScheduled = false;
-    }
+    private void AddUnscheduledTask() => _owner.OpenNewUnscheduledTaskEditor(_date);
 }

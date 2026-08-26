@@ -20,7 +20,7 @@ public static class ProjectPalette
 }
 
 /// <summary>
-/// A broad commitment (DECA, College Admissions, AP Economics). Deliberately simple:
+/// A broad area of work (DECA, College Admissions, AP Economics). Deliberately simple:
 /// tasks, blocks, and Files reference the project — no health scores, no dashboards.
 /// </summary>
 public sealed class Project

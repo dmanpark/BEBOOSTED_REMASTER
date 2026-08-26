@@ -18,9 +18,10 @@ public sealed class ProjectService(
     IResourceIndexer indexer,
     ITaskRepository tasks,
     ICalendarBlockRepository blocks,
-    ICommitmentCompletionRepository completions,
+    IOccurrenceCompletionRepository completions,
     IClock clock,
-    IProvenanceInvalidator? provenanceInvalidator = null)
+    IProvenanceInvalidator? provenanceInvalidator = null,
+    ResourceLayoutReconciler? reconciler = null)
 {
     public Project CreateProject(string name)
     {
@@ -30,16 +31,22 @@ public sealed class ProjectService(
         return project;
     }
 
-    public void RenameProject(ProjectId id, string name)
+    /// <summary>Returns the renamed project so callers can refresh from it.</summary>
+    public Project RenameProject(ProjectId id, string name)
     {
         var project = Require(id);
         project.Rename(name, clock.Now);
         projects.Update(project);
+
+        // The rename itself has already succeeded; moving the folder to match is
+        // best-effort and never undoes it.
+        reconciler?.ReconcileProject(id);
+        return project;
     }
 
     /// <summary>
-    /// Deletes the project, its Files/resources (and stored bytes), and unlinks its
-    /// tasks and directly linked commitments — the commitments themselves survive.
+    /// Deletes the project and its Files/resources (and stored bytes), and unlinks
+    /// its tasks — the tasks and their schedules survive.
     /// </summary>
     public void DeleteProject(ProjectId id)
     {
@@ -54,12 +61,6 @@ public sealed class ProjectService(
             tasks.Update(task);
         }
 
-        foreach (var block in blocks.GetForProject(id).Where(b => !b.IsExternal))
-        {
-            block.AssignToProject(null, clock.Now);
-            blocks.Update(block);
-        }
-
         projects.Delete(id);
     }
 
@@ -68,6 +69,20 @@ public sealed class ProjectService(
         _ = Require(projectId);
         var file = ProjectFile.Create(projectId, title, description, clock.Now);
         files.Add(file);
+        return file;
+    }
+
+    /// <summary>Returns the renamed File so callers can refresh from it.</summary>
+    public ProjectFile RenameFile(ProjectFileId id, string title)
+    {
+        var file = files.GetById(id)
+            ?? throw new DomainException("That file no longer exists.");
+        file.Rename(title, clock.Now);
+        files.Update(file);
+
+        // Same contract as RenameProject: the rename has already succeeded, and
+        // moving the folder to match is best-effort that never undoes it.
+        reconciler?.ReconcileProject(file.ProjectId);
         return file;
     }
 
@@ -90,14 +105,33 @@ public sealed class ProjectService(
     /// <summary>Imports a document or image: bytes are copied into app-controlled storage.</summary>
     public Resource ImportFile(ProjectFileId fileId, ResourceKind kind, string sourcePath, string? title = null)
     {
+        var file = files.GetById(fileId)
+            ?? throw new DomainException("That file no longer exists.");
+        var project = Require(file.ProjectId);
         var originalName = Path.GetFileName(sourcePath);
         var id = ResourceId.New();
-        var storedPath = storage.Store(id, sourcePath);
+        var storedPath = storage.Store(
+            ResourceLayout.FolderFor(project, file),
+            ResourceLayout.FileNameFor(originalName, id.ToString()),
+            sourcePath);
         var resource = Resource.Rehydrate(
             id, fileId, kind,
             string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(originalName) : title.Trim(),
             null, null, originalName, storedPath, clock.Now, ResourceIndexState.Pending, clock.Now);
         return AddAndIndex(resource);
+    }
+
+    /// <summary>
+    /// Retitles a resource. A stored document's on-disk name comes from its original
+    /// file name, not its title, so this never moves bytes and needs no reconcile.
+    /// </summary>
+    public Resource RenameResource(ResourceId id, string title)
+    {
+        var resource = resources.GetById(id)
+            ?? throw new DomainException("That resource no longer exists.");
+        resource.Rename(title, clock.Now);
+        resources.Update(resource);
+        return resource;
     }
 
     public void DeleteResource(ResourceId id)
@@ -156,10 +190,10 @@ public sealed class ProjectService(
     private const int RecurringWindowDays = 14;
 
     /// <summary>
-    /// The project's scheduled work: pending-outcome blocks of its tasks (future only,
-    /// as before) plus directly linked fixed commitments. Elapsed incomplete
-    /// commitments stay listed as Overdue until completed or deleted; completed
-    /// occurrences trail the active rows as a restrained recently-completed set.
+    /// The project's scheduled work, resolved entirely through its tasks' sessions.
+    /// One-off sessions are never dropped: incomplete elapsed rows turn Overdue until
+    /// resolved; completed occurrences trail the active rows as a restrained
+    /// recently-completed set. Repeating sessions expand sparsely around today.
     /// </summary>
     public IReadOnlyList<ProjectScheduledBlock> GetScheduledBlocks(ProjectId projectId)
     {
@@ -171,17 +205,8 @@ public sealed class ProjectService(
         {
             foreach (var block in blocks.GetForTask(task.Id))
             {
-                if (block.Outcome == BlockOutcome.None && IsUpcoming(block.Date, block.EndTime, today, nowTime))
-                {
-                    rows.Add(new ProjectScheduledBlock(
-                        block, block.Date, task.Title, ProjectBlockState.Upcoming));
-                }
+                rows.AddRange(SessionRows(block, task, today, nowTime));
             }
-        }
-
-        foreach (var block in blocks.GetForProject(projectId))
-        {
-            rows.AddRange(CommitmentRows(block, today, nowTime));
         }
 
         var active = rows
@@ -196,14 +221,20 @@ public sealed class ProjectService(
         return active.Concat(completed).ToList();
     }
 
-    private IEnumerable<ProjectScheduledBlock> CommitmentRows(
-        CalendarBlock block, DateOnly today, TimeOnly nowTime)
+    private IEnumerable<ProjectScheduledBlock> SessionRows(
+        CalendarBlock block, Domain.Tasks.TaskItem task, DateOnly today, TimeOnly nowTime)
     {
-        var title = block.Title ?? string.Empty;
+        var title = task.Title;
         if (block.Recurrence is null)
         {
-            // One-offs are never dropped: incomplete elapsed rows turn Overdue.
-            var state = completions.Get(block.Id, block.Date) is not null
+            // Resolved-but-not-done outcomes (Needs more time, Didn't happen) leave the
+            // schedule quietly; the task itself returns to the open lists instead.
+            if (block.Outcome is BlockOutcome.NeedsMoreTime or BlockOutcome.DidntHappen)
+            {
+                yield break;
+            }
+
+            var state = block.Outcome == BlockOutcome.Done || task.IsCompleted
                 ? ProjectBlockState.Done
                 : IsUpcoming(block.Date, block.EndTime, today, nowTime)
                     ? ProjectBlockState.Upcoming
@@ -212,10 +243,10 @@ public sealed class ProjectService(
             yield break;
         }
 
-        // Recurring series stay sparse: the next incomplete upcoming occurrence, recently
-        // completed occurrences, and — only when the most recent elapsed occurrence is
-        // still incomplete — one Overdue row for it. Completing that occurrence lets the
-        // older ones go quietly instead of resurfacing them one by one.
+        // Repeating sessions stay sparse: the next incomplete upcoming occurrence,
+        // recently completed occurrences, and — only when the most recent elapsed
+        // occurrence is still incomplete — one Overdue row for it. Completing that
+        // occurrence lets the older ones go quietly instead of resurfacing them.
         DateOnly? latestElapsed = null;
         var latestElapsedDone = false;
         DateOnly? nextUpcoming = null;

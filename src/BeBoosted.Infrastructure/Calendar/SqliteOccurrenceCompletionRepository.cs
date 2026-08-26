@@ -7,17 +7,17 @@ using Microsoft.Data.Sqlite;
 
 namespace BeBoosted.Infrastructure.Calendar;
 
-public sealed class SqliteCommitmentCompletionRepository : ICommitmentCompletionRepository
+public sealed class SqliteOccurrenceCompletionRepository : IOccurrenceCompletionRepository
 {
     private readonly SqliteConnectionFactory? _connectionFactory;
     private readonly SqliteConnection? _sharedConnection;
     private readonly SqliteTransaction? _transaction;
 
-    public SqliteCommitmentCompletionRepository(SqliteConnectionFactory connectionFactory)
+    public SqliteOccurrenceCompletionRepository(SqliteConnectionFactory connectionFactory)
         => _connectionFactory = connectionFactory;
 
     /// <summary>Binds every operation to one shared connection and transaction.</summary>
-    internal SqliteCommitmentCompletionRepository(SqliteConnection connection, SqliteTransaction transaction)
+    internal SqliteOccurrenceCompletionRepository(SqliteConnection connection, SqliteTransaction transaction)
     {
         _sharedConnection = connection;
         _transaction = transaction;
@@ -27,13 +27,13 @@ public sealed class SqliteCommitmentCompletionRepository : ICommitmentCompletion
         ? new SqliteSession(_sharedConnection, _transaction, ownsConnection: false)
         : new SqliteSession(_connectionFactory!.Open(), null, ownsConnection: true);
 
-    public void Add(CommitmentCompletion completion)
+    public void Add(OccurrenceCompletion completion)
     {
         using var session = OpenSession();
         using var command = session.CreateCommand();
         command.CommandText =
             """
-            INSERT INTO commitment_completions (block_id, occurrence_date, completed_at)
+            INSERT INTO occurrence_completions (block_id, occurrence_date, completed_at)
             VALUES ($blockId, $occurrenceDate, $completedAt)
             ON CONFLICT (block_id, occurrence_date)
             DO UPDATE SET completed_at = excluded.completed_at;
@@ -51,20 +51,20 @@ public sealed class SqliteCommitmentCompletionRepository : ICommitmentCompletion
         using var session = OpenSession();
         using var command = session.CreateCommand();
         command.CommandText =
-            "DELETE FROM commitment_completions WHERE block_id = $blockId AND occurrence_date = $occurrenceDate;";
+            "DELETE FROM occurrence_completions WHERE block_id = $blockId AND occurrence_date = $occurrenceDate;";
         command.Parameters.AddWithValue("$blockId", blockId.ToString());
         command.Parameters.AddWithValue(
             "$occurrenceDate", occurrenceDate.ToString("O", CultureInfo.InvariantCulture));
         command.ExecuteNonQuery();
     }
 
-    public CommitmentCompletion? Get(CalendarBlockId blockId, DateOnly occurrenceDate)
+    public OccurrenceCompletion? Get(CalendarBlockId blockId, DateOnly occurrenceDate)
     {
         using var session = OpenSession();
         using var command = session.CreateCommand();
         command.CommandText =
             """
-            SELECT block_id, occurrence_date, completed_at FROM commitment_completions
+            SELECT block_id, occurrence_date, completed_at FROM occurrence_completions
             WHERE block_id = $blockId AND occurrence_date = $occurrenceDate;
             """;
         command.Parameters.AddWithValue("$blockId", blockId.ToString());
@@ -74,19 +74,19 @@ public sealed class SqliteCommitmentCompletionRepository : ICommitmentCompletion
         return reader.Read() ? Map(reader) : null;
     }
 
-    public IReadOnlyList<CommitmentCompletion> GetForBlock(CalendarBlockId blockId)
+    public IReadOnlyList<OccurrenceCompletion> GetForBlock(CalendarBlockId blockId)
     {
         using var session = OpenSession();
         using var command = session.CreateCommand();
         command.CommandText =
             """
-            SELECT block_id, occurrence_date, completed_at FROM commitment_completions
+            SELECT block_id, occurrence_date, completed_at FROM occurrence_completions
             WHERE block_id = $blockId
             ORDER BY occurrence_date;
             """;
         command.Parameters.AddWithValue("$blockId", blockId.ToString());
         using var reader = command.ExecuteReader();
-        var completions = new List<CommitmentCompletion>();
+        var completions = new List<OccurrenceCompletion>();
         while (reader.Read())
         {
             completions.Add(Map(reader));
@@ -95,20 +95,20 @@ public sealed class SqliteCommitmentCompletionRepository : ICommitmentCompletion
         return completions;
     }
 
-    public IReadOnlyList<CommitmentCompletion> GetBetween(DateOnly from, DateOnly to)
+    public IReadOnlyList<OccurrenceCompletion> GetBetween(DateOnly from, DateOnly to)
     {
         using var session = OpenSession();
         using var command = session.CreateCommand();
         command.CommandText =
             """
-            SELECT block_id, occurrence_date, completed_at FROM commitment_completions
+            SELECT block_id, occurrence_date, completed_at FROM occurrence_completions
             WHERE occurrence_date BETWEEN $from AND $to
             ORDER BY occurrence_date;
             """;
         command.Parameters.AddWithValue("$from", from.ToString("O", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$to", to.ToString("O", CultureInfo.InvariantCulture));
         using var reader = command.ExecuteReader();
-        var completions = new List<CommitmentCompletion>();
+        var completions = new List<OccurrenceCompletion>();
         while (reader.Read())
         {
             completions.Add(Map(reader));
@@ -117,7 +117,7 @@ public sealed class SqliteCommitmentCompletionRepository : ICommitmentCompletion
         return completions;
     }
 
-    private static CommitmentCompletion Map(SqliteDataReader reader)
+    private static OccurrenceCompletion Map(SqliteDataReader reader)
         => new(
             CalendarBlockId.Parse(reader.GetString(0)),
             DateOnly.Parse(reader.GetString(1), CultureInfo.InvariantCulture),

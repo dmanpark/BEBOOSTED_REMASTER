@@ -33,8 +33,8 @@ public sealed class DeterministicSchedulerTests
 
     private static BlockOccurrence Fixed(DateOnly date, int fromHour, int fromMin, int toHour, int toMin)
     {
-        var block = CalendarBlock.CreateFixedCommitment(
-            "Busy", date, new TimeOnly(fromHour, fromMin), new TimeOnly(toHour, toMin), Now);
+        var block = CalendarBlock.CreateTaskSession(
+            TaskId.New(), date, new TimeOnly(fromHour, fromMin), new TimeOnly(toHour, toMin), Now);
         return new BlockOccurrence(block, date);
     }
 

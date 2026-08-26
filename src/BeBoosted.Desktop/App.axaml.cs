@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using BeBoosted.Application.Projects;
 using BeBoosted.Desktop.Platform;
 using BeBoosted.Desktop.Services;
 using BeBoosted.Desktop.ViewModels;
@@ -70,6 +71,21 @@ public partial class App : Avalonia.Application
                     $"The database at {paths.DataDirectory} could not be opened or upgraded.\n\n{exception.Message}");
                 base.OnFrameworkInitializationCompleted();
                 return;
+            }
+
+            try
+            {
+                var moved = _services.GetRequiredService<ResourceLayoutReconciler>().Reconcile();
+                if (moved > 0)
+                {
+                    Log.Information("Moved {Count} stored resources into named folders", moved);
+                }
+            }
+            catch (Exception exception)
+            {
+                // Layout is cosmetic: every resource still resolves through its recorded
+                // path, so a failure here must never stop the app from starting.
+                Log.Warning(exception, "Resource folder layout could not be reconciled");
             }
 
             var window = new MainWindow

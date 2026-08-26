@@ -40,7 +40,7 @@ public sealed partial class FileDetailViewModel : ViewModelBase
 
     public Project Project { get; }
 
-    public ProjectFile File { get; }
+    public ProjectFile File { get; private set; }
 
     public string Title => File.Title;
 
@@ -76,6 +76,78 @@ public sealed partial class FileDetailViewModel : ViewModelBase
     [ObservableProperty]
     public partial string NewNoteContent { get; set; } = string.Empty;
 
+    // Rename-this-File flyout
+    [ObservableProperty]
+    public partial string RenameTitle { get; set; } = string.Empty;
+
+    /// <summary>Seeds the flyout so the field opens on the current title.</summary>
+    public void BeginRename() => RenameTitle = File.Title;
+
+    /// <summary>Returns true when the rename committed (the view closes its flyout).</summary>
+    public bool TryCommitRename()
+    {
+        if (string.IsNullOrWhiteSpace(RenameTitle))
+        {
+            return false;
+        }
+
+        File = _service.RenameFile(File.Id, RenameTitle);
+        OnPropertyChanged(nameof(Title));
+        _owner.Detail?.Refresh(); // the card behind this surface carries the title too
+        return true;
+    }
+
+    /// <summary>The open two-step delete confirmation, or null when nothing is pending.</summary>
+    [ObservableProperty]
+    public partial ConfirmationPrompt? Confirmation { get; private set; }
+
+    private Action? _pendingConfirmedAction;
+
+    /// <summary>
+    /// Deleting a File takes its resources and their bytes with it, so the prompt
+    /// counts what goes rather than asking a bare "are you sure".
+    /// </summary>
+    [RelayCommand]
+    private void RequestDelete()
+    {
+        var count = Resources.Count;
+        Confirmation = new ConfirmationPrompt(
+            count == 0
+                ? $"Delete '{Title}'? It's empty, so nothing else goes with it."
+                : $"Delete '{Title}'? Its {count} resource{(count == 1 ? string.Empty : "s")} "
+                    + "and any stored documents are deleted too.",
+            "Delete File",
+            IsTaskDeletion: false);
+        _pendingConfirmedAction = () =>
+        {
+            _service.DeleteFile(File.Id);
+            _owner.CloseFile();
+        };
+    }
+
+    [RelayCommand]
+    private void ConfirmPrompt()
+    {
+        var pending = _pendingConfirmedAction;
+        Confirmation = null;
+        _pendingConfirmedAction = null;
+        pending?.Invoke();
+    }
+
+    [RelayCommand]
+    private void KeepPrompt()
+    {
+        Confirmation = null;
+        _pendingConfirmedAction = null;
+    }
+
+    /// <summary>One retitled resource; the list rebuilds so the row shows it.</summary>
+    internal void RenameResource(ResourceRowViewModel row, string title)
+    {
+        _service.RenameResource(row.Resource.Id, title);
+        Refresh();
+    }
+
     public void Refresh()
     {
         var previous = Selected?.Resource.Id;
@@ -84,7 +156,7 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         {
             Resources.Add(new ResourceRowViewModel(this, resource, _opener)
             {
-                StoredAbsolutePath = _service.ResolveStoredPath(resource),
+                StoredAbsolutePath = SafeResolve(resource),
                 Derivations = _ai.GetDerivations(resource.Id),
             });
         }
@@ -92,6 +164,19 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         Selected = Resources.FirstOrDefault(r => r.Resource.Id == previous) ?? Resources.FirstOrDefault();
         OnPropertyChanged(nameof(HasResources));
         OnPropertyChanged(nameof(CountText));
+    }
+
+    /// <summary>A tampered stored path resolves to nothing rather than breaking the view.</summary>
+    private string? SafeResolve(Resource resource)
+    {
+        try
+        {
+            return _service.ResolveStoredPath(resource);
+        }
+        catch (Domain.DomainException)
+        {
+            return null;
+        }
     }
 
     public bool TryAddLink()
@@ -123,14 +208,34 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         return true;
     }
 
-    /// <summary>Imports picked files (documents or images) into app-controlled storage.</summary>
+    /// <summary>Why part of the last import batch was skipped; null when all succeeded.</summary>
+    [ObservableProperty]
+    public partial string? ImportNotice { get; private set; }
+
+    /// <summary>
+    /// Imports picked files (documents or images) into app-controlled storage. One
+    /// failing file (locked, disk full, vanished) must not abort its siblings — or
+    /// throw through the async picker click handler.
+    /// </summary>
     public void Import(ResourceKind kind, IEnumerable<string> paths)
     {
+        var failures = new List<string>();
         foreach (var path in paths)
         {
-            _service.ImportFile(File.Id, kind, path);
+            try
+            {
+                _service.ImportFile(File.Id, kind, path);
+            }
+            catch (Exception exception) when (exception
+                is IOException or UnauthorizedAccessException or Domain.DomainException)
+            {
+                failures.Add(Path.GetFileName(path));
+            }
         }
 
+        ImportNotice = failures.Count == 0
+            ? null
+            : $"Couldn't import {string.Join(", ", failures)}.";
         Refresh();
     }
 
@@ -257,6 +362,11 @@ public sealed partial class ResourceRowViewModel : ViewModelBase
 
     public bool HasDerivations => Derivations.Count > 0;
 
+    /// <summary>Why the last open/reveal attempt did nothing: a missing stored file
+    /// (an interrupted move, or bytes removed externally) or a launch failure.</summary>
+    [ObservableProperty]
+    public partial string? OpenNotice { get; private set; }
+
     [RelayCommand]
     private void Select() => _owner.Selected = this;
 
@@ -269,7 +379,7 @@ public sealed partial class ResourceRowViewModel : ViewModelBase
         }
         else if (StoredAbsolutePath is { } path)
         {
-            _opener.OpenFile(path);
+            LaunchStored(path, () => _opener.OpenFile(path));
         }
     }
 
@@ -278,12 +388,54 @@ public sealed partial class ResourceRowViewModel : ViewModelBase
     {
         if (StoredAbsolutePath is { } path)
         {
-            _opener.RevealInFolder(path);
+            LaunchStored(path, () => _opener.RevealInFolder(path));
+        }
+    }
+
+    /// <summary>Never hands a dead path to the shell — that throws out of the command.</summary>
+    private void LaunchStored(string path, Action launch)
+    {
+        if (!File.Exists(path))
+        {
+            OpenNotice = $"The stored file for '{Title}' is missing from disk.";
+            return;
+        }
+
+        try
+        {
+            launch();
+            OpenNotice = null;
+        }
+        catch (Exception exception) when (exception
+            is System.ComponentModel.Win32Exception
+            or IOException
+            or InvalidOperationException
+            or PlatformNotSupportedException)
+        {
+            OpenNotice = $"Couldn't open '{Title}': {exception.Message}";
         }
     }
 
     [RelayCommand]
     private void Delete() => _owner.DeleteResource(this);
+
+    // Rename-this-resource flyout
+    [ObservableProperty]
+    public partial string RenameTitle { get; set; } = string.Empty;
+
+    public void BeginRename() => RenameTitle = Title;
+
+    /// <summary>Returns true when the rename committed (the view closes its flyout).</summary>
+    public bool TryCommitRename()
+    {
+        if (string.IsNullOrWhiteSpace(RenameTitle))
+        {
+            return false;
+        }
+
+        _owner.RenameResource(this, RenameTitle);
+        return true;
+    }
 
     private static string TryHost(string? url)
     {

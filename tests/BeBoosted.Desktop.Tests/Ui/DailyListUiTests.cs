@@ -1,3 +1,5 @@
+using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
@@ -45,6 +47,17 @@ public sealed class DailyListUiTests
         => window.GetVisualDescendants()
             .OfType<TextBlock>()
             .FirstOrDefault(block => block.Text == text && block.IsEffectivelyVisible);
+
+    /// <summary>
+    /// Every completion control in the cluster shares <c>CompletionControlName</c>, so the
+    /// rendered one is the only meaningful match — the hidden siblings sit in the same Panel.
+    /// </summary>
+    private static Button? DailyCheckFor(MainWindow window, string accessibleName)
+        => window.GetVisualDescendants()
+            .OfType<Button>()
+            .FirstOrDefault(b => b.Classes.Contains("dailyCheck")
+                && b.IsEffectivelyVisible
+                && AutomationProperties.GetName(b) == accessibleName);
 
     [AvaloniaFact]
     public void Today_ShowsDailyList_AndHidesTheTimeline()
@@ -111,65 +124,93 @@ public sealed class DailyListUiTests
             $"expected the scheduled row to hold focus, got {focused?.GetType().Name ?? "nothing"}");
     }
 
-    [AvaloniaFact]
-    public void AddTask_Unscheduled_CapturesInline()
+    private static void ClickByName(MainWindow window, string automationName)
     {
-        var (window, shell, tasks, _, _) = CreateShellWindow();
-        var daily = shell.Calendar.Daily;
-
-        daily.BeginAddUnscheduledCommand.Execute(null);
+        var button = window.GetVisualDescendants()
+            .OfType<Button>()
+            .First(b => b.IsEffectivelyVisible
+                && Avalonia.Automation.AutomationProperties.GetName(b) == automationName);
+        var point = button.TranslatePoint(
+            new Avalonia.Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(point, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(point, Avalonia.Input.MouseButton.Left);
         window.CaptureRenderedFrame();
-        var box = DailyView(window).FindControl<TextBox>("UnscheduledAddBox")!;
-        Assert.True(box.IsEffectivelyVisible);
-
-        daily.NewUnscheduledTitle = "Organize class notes";
-        daily.ConfirmAddUnscheduled();
-        window.CaptureRenderedFrame();
-
-        Assert.Single(tasks.GetAll());
-        Assert.NotNull(FindText(window, "Organize class notes"));
-        Assert.False(daily.IsAddingUnscheduled);
     }
 
+    /// <summary>
+    /// The Scheduled section's Add task opens the one canonical Task editor,
+    /// prefilled with the visible date and the sensible default slot — there is no
+    /// separate inline creation form.
+    /// </summary>
     [AvaloniaFact]
-    public void AddTask_Scheduled_CreatesAndSchedules()
+    public void AddTask_Scheduled_OpensTheCanonicalEditor_Prefilled()
     {
         var (window, shell, tasks, blocks, _) = CreateShellWindow();
-        var daily = shell.Calendar.Daily;
 
-        daily.BeginAddScheduledCommand.Execute(null);
+        ClickByName(window, "Add scheduled task");
+
+        var editor = Assert.IsType<WholeTaskEditorViewModel>(shell.Calendar.ActiveTaskEditor);
+        Assert.Null(editor.TaskId); // create mode
+        Assert.True(editor.ShowInlineSchedule);
+        Assert.Equal(
+            TestShell.DesignDate, DateOnly.FromDateTime(editor.InlineSchedule.Date!.Value.Date));
+        Assert.Equal(new TimeSpan(14, 15, 0), editor.InlineSchedule.Start); // next quarter hour at 14:10
+        Assert.Equal(new TimeSpan(14, 45, 0), editor.InlineSchedule.End);   // the 30-minute default
+
+        // Saving persists the task and its session through the one atomic path.
+        editor.Title = "Evening workout";
+        editor.SaveCommand.Execute(null);
         window.CaptureRenderedFrame();
-        Assert.True(DailyView(window).FindControl<TextBox>("ScheduledAddTitleBox")!.IsEffectivelyVisible);
-
-        daily.NewScheduledTitle = "Evening workout";
-        daily.NewScheduledStart = new TimeSpan(18, 30, 0);
-        daily.NewScheduledDurationMinutes = 45;
-        daily.ConfirmAddScheduledCommand.Execute(null);
-        window.CaptureRenderedFrame();
-
-        Assert.Single(tasks.GetAll());
-        Assert.Single(blocks.GetAll());
+        Assert.Null(shell.Calendar.ActiveTaskEditor);
+        var task = tasks.GetAll().Single(t => t.Title == "Evening workout");
+        Assert.Single(blocks.GetForTask(task.Id));
         Assert.NotNull(FindText(window, "Evening workout"));
     }
 
+    /// <summary>The Unscheduled section's Add task opens the same editor, unscheduled.</summary>
     [AvaloniaFact]
-    public void CommitmentRow_OpensTheSharedEditor()
+    public void AddTask_Unscheduled_OpensTheCanonicalEditor_WithSchedulingOff()
     {
-        var (window, shell, _, blocks, clock) = CreateShellWindow();
-        blocks.Add(CalendarBlock.CreateFixedCommitment(
-            "Stats homework", TestShell.DesignDate, new TimeOnly(9, 0), new TimeOnly(10, 0), clock.Now));
+        var (window, shell, tasks, blocks, _) = CreateShellWindow();
+
+        ClickByName(window, "Add unscheduled task");
+
+        var editor = Assert.IsType<WholeTaskEditorViewModel>(shell.Calendar.ActiveTaskEditor);
+        Assert.Null(editor.TaskId); // create mode
+        Assert.False(editor.ShowInlineSchedule);
+
+        editor.Title = "Organize class notes";
+        editor.SaveCommand.Execute(null);
+        window.CaptureRenderedFrame();
+        Assert.Null(shell.Calendar.ActiveTaskEditor);
+        var task = tasks.GetAll().Single(t => t.Title == "Organize class notes");
+        Assert.Empty(blocks.GetForTask(task.Id));
+        Assert.NotNull(FindText(window, "Organize class notes"));
+    }
+
+    /// <summary>A scheduled row is task-scoped: it opens the whole-task editor (F-03).</summary>
+    [AvaloniaFact]
+    public void ScheduledRow_OpensTheWholeTaskEditor()
+    {
+        var (window, shell, tasks, blocks, clock) = CreateShellWindow();
+        var stats = TaskItem.Create("Stats homework", clock.Now);
+        tasks.Add(stats);
+        blocks.Add(CalendarBlock.CreateTaskSession(
+            stats.Id, TestShell.DesignDate, new TimeOnly(9, 0), new TimeOnly(10, 0), clock.Now));
         shell.Calendar.Reload();
         window.CaptureRenderedFrame();
 
         var row = shell.Calendar.Daily.ScheduledRows.Single();
-        row.EditCommitmentCommand.Execute(null);
+        row.EditRowCommand.Execute(null);
         window.CaptureRenderedFrame();
 
-        Assert.True(shell.Calendar.IsCommitmentEditorOpen);
-        Assert.Equal("Stats homework", shell.Calendar.CommitmentEditor!.Title);
+        Assert.True(shell.Calendar.IsTaskEditorOpen);
+        var editor = Assert.IsType<WholeTaskEditorViewModel>(shell.Calendar.ActiveTaskEditor);
+        Assert.Equal("Stats homework", editor.Title);
+        Assert.Single(editor.Sessions);
 
         shell.EscapePressedCommand.Execute(null); // Escape precedence closes the modal first
-        Assert.False(shell.Calendar.IsCommitmentEditorOpen);
+        Assert.False(shell.Calendar.IsTaskEditorOpen);
     }
 
     [AvaloniaFact]
@@ -193,6 +234,88 @@ public sealed class DailyListUiTests
         Assert.Empty(shell.Calendar.Daily.ScheduledRows);
         Assert.Single(shell.Calendar.Daily.CompletedRows);
         Assert.True(tasks.GetById(task.Id)!.IsCompleted);
+    }
+
+    [AvaloniaFact]
+    public void TaskBlockRow_CheckboxMarksDone_AndTakesItBack()
+    {
+        var (window, shell, tasks, blocks, clock) = CreateShellWindow();
+        var task = TaskItem.Create("Elapsed work", clock.Now, estimatedDuration: TimeSpan.FromMinutes(60));
+        tasks.Add(task);
+        var service = TestShell.CreateCalendarService(blocks, tasks, clock);
+        service.ScheduleTask(task.Id, TestShell.DesignDate, new TimeOnly(9, 0));
+        shell.Calendar.Reload();
+        window.CaptureRenderedFrame();
+
+        // The scheduled row renders an enabled checkbox, not a flyout-only control.
+        var check = DailyCheckFor(window, "Mark Elapsed work done");
+        Assert.NotNull(check);
+        Assert.True(check.IsEffectivelyVisible);
+        Assert.True(check.IsEnabled);
+
+        shell.Calendar.Daily.ScheduledRows.Single().ToggleDoneCommand.Execute(null);
+        shell.Calendar.Daily.IsCompletedExpanded = true;
+        window.CaptureRenderedFrame();
+
+        // Done: the row is in Completed and its control now offers the undo.
+        Assert.Empty(shell.Calendar.Daily.ScheduledRows);
+        var reopen = DailyCheckFor(window, "Reopen Elapsed work");
+        Assert.NotNull(reopen);
+        Assert.True(reopen.IsEffectivelyVisible);
+
+        shell.Calendar.Daily.CompletedRows.Single().ToggleDoneCommand.Execute(null);
+        window.CaptureRenderedFrame();
+
+        Assert.Single(shell.Calendar.Daily.ScheduledRows);
+        Assert.False(tasks.GetById(task.Id)!.IsCompleted);
+    }
+
+    [AvaloniaFact]
+    public void TaskBlockRow_KeepsNeedsMoreTimeAndDidntHappen_AsASideAction()
+    {
+        var (window, shell, tasks, blocks, clock) = CreateShellWindow();
+        var task = TaskItem.Create("Elapsed work", clock.Now, estimatedDuration: TimeSpan.FromMinutes(60));
+        tasks.Add(task);
+        var service = TestShell.CreateCalendarService(blocks, tasks, clock);
+        service.ScheduleTask(task.Id, TestShell.DesignDate, new TimeOnly(9, 0));
+        shell.Calendar.Reload();
+        window.CaptureRenderedFrame();
+
+        var outcome = window.GetVisualDescendants()
+            .OfType<Button>()
+            .FirstOrDefault(b => AutomationProperties.GetName(b) == "Record outcome for Elapsed work");
+        Assert.NotNull(outcome);
+        Assert.True(outcome.IsEffectivelyVisible);
+        Assert.NotNull(outcome.Flyout);
+    }
+
+    [AvaloniaFact]
+    public void DailyRow_PriorityMarker_IsAButtonWhenRanked()
+    {
+        var (window, shell, tasks, _, clock) = CreateShellWindow();
+        tasks.Add(TaskItem.Create("Ranked work", clock.Now, estimatedDuration: TimeSpan.FromMinutes(30)));
+        tasks.Add(TaskItem.Create("Other work", clock.Now, estimatedDuration: TimeSpan.FromMinutes(30)));
+        shell.Inbox.Reload();
+        shell.StartPrioritySortCommand.Execute(null);
+        while (!shell.ActiveSort!.IsFinished)
+        {
+            shell.ActiveSort.ChooseRightCommand.Execute(null);
+        }
+
+        shell.ActiveSort.CloseCommand.Execute(null);
+        shell.Calendar.Reload();
+        window.CaptureRenderedFrame();
+
+        var marker = window.GetVisualDescendants()
+            .OfType<Button>()
+            .FirstOrDefault(b => b.Classes.Contains("priorityMarker")
+                && b.IsEffectivelyVisible
+                && b.IsEnabled);
+        Assert.NotNull(marker);
+
+        marker.Command!.Execute(marker.CommandParameter);
+        Assert.NotNull(shell.ActiveSort);
+        Assert.True(shell.ActiveSort.IsRerank);
     }
 
     [AvaloniaFact]
@@ -221,23 +344,47 @@ public sealed class DailyListUiTests
     }
 
     [AvaloniaFact]
-    public void ExternalCommitment_RemainsLockedInTheDailyList()
+    public void ExternalEvent_RemainsLockedInTheDailyList()
     {
         var (window, shell, _, blocks, clock) = CreateShellWindow();
         blocks.Add(CalendarBlock.Rehydrate(
-            Domain.CalendarBlockId.New(), null, null, "Imported standup", TestShell.DesignDate,
-            new TimeOnly(13, 30), new TimeOnly(14, 0), BlockKind.FixedCommitment, null,
+            Domain.CalendarBlockId.New(), null, "Imported standup", TestShell.DesignDate,
+            new TimeOnly(13, 30), new TimeOnly(14, 0), BlockKind.ExternalEvent, null,
             "google", "evt-1", 0, BlockOutcome.None, null, clock.Now, clock.Now));
         shell.Calendar.Reload();
         window.CaptureRenderedFrame();
 
         var row = shell.Calendar.Daily.ScheduledRows.Single();
         Assert.True(row.IsLocked);
-        Assert.False(row.ShowCommitmentCheck);
-        Assert.False(row.CanEditCommitment);
+        Assert.False(row.ShowOccurrenceCheck);
+        Assert.False(row.CanEditRow);
         Assert.False(row.ShowChangeTimeAction);
-        Assert.Contains("External commitment — locked", row.AccessibleName);
+        Assert.Contains("Synced event — locked", row.AccessibleName);
         Assert.NotNull(FindText(window, "Imported standup"));
+    }
+
+    /// <summary>
+    /// TDD phase 7: the unified product never labels items FIXED or FLEX — a scheduled
+    /// time already says the task is scheduled; only external events get a Synced chip.
+    /// </summary>
+    [AvaloniaFact]
+    public void DailyList_ShowsNoFixedOrFlexBadges_OnlySyncedForExternal()
+    {
+        var (window, shell, _, blocks, clock) = CreateShellWindow(seed: true);
+        blocks.Add(CalendarBlock.Rehydrate(
+            Domain.CalendarBlockId.New(), null, "Imported standup", TestShell.DesignDate,
+            new TimeOnly(13, 30), new TimeOnly(14, 0), BlockKind.ExternalEvent, null,
+            "google", "evt-1", 0, BlockOutcome.None, null, clock.Now, clock.Now));
+        shell.Calendar.Reload();
+        window.CaptureRenderedFrame();
+
+        Assert.Null(FindText(window, "FIXED"));
+        Assert.Null(FindText(window, "FLEX"));
+        Assert.NotNull(FindText(window, "Synced"));
+
+        // Ordinary scheduled rows carry no redundant status chip at all.
+        var lunch = shell.Calendar.Daily.ScheduledRows.Single(r => r.Title == "Lunch");
+        Assert.False(lunch.HasStatus);
     }
 
     [AvaloniaFact]

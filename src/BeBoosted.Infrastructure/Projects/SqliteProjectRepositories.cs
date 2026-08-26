@@ -206,14 +206,16 @@ public sealed class SqliteResourceRepository(SqliteConnectionFactory connectionF
         command.CommandText =
             """
             UPDATE resources SET
-                title = $title, url = $url, content = $content, index_state = $indexState,
-                modified_at = $modifiedAt
+                title = $title, url = $url, content = $content, stored_path = $storedPath,
+                index_state = $indexState, modified_at = $modifiedAt
             WHERE id = $id;
             """;
         command.Parameters.AddWithValue("$id", resource.Id.ToString());
         command.Parameters.AddWithValue("$title", resource.Title);
         command.Parameters.AddWithValue("$url", (object?)resource.Url ?? DBNull.Value);
         command.Parameters.AddWithValue("$content", (object?)resource.Content ?? DBNull.Value);
+        // The layout reconciler relocates stored bytes, so the path is no longer fixed.
+        command.Parameters.AddWithValue("$storedPath", (object?)resource.StoredPath ?? DBNull.Value);
         command.Parameters.AddWithValue("$indexState", (long)resource.IndexState);
         command.Parameters.AddWithValue("$modifiedAt", resource.ModifiedAt.ToString("O", CultureInfo.InvariantCulture));
         if (command.ExecuteNonQuery() == 0)

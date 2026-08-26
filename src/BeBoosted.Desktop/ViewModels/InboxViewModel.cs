@@ -10,7 +10,17 @@ namespace BeBoosted.Desktop.ViewModels;
 public sealed partial class InboxViewModel : ViewModelBase
 {
     private readonly TaskService _service;
+    private readonly Application.Calendar.CalendarService _calendar;
     private readonly IClock _clock;
+
+    /// <summary>Raised when a row asks for the one canonical Task editor.</summary>
+    public event Action<Domain.TaskId>? EditRequested;
+
+    /// <summary>Raised by the rank chip; the shell owns the comparison surface.</summary>
+    public event Action<Domain.TaskId>? RerankRequested;
+
+    /// <summary>Raised after an inbox-originated mutation (complete/delete a task).</summary>
+    public event Action? TasksMutated;
 
     private readonly InboxQueryService _query;
     private readonly Application.Projects.IProjectRepository _projects;
@@ -19,12 +29,14 @@ public sealed partial class InboxViewModel : ViewModelBase
 
     public InboxViewModel(
         TaskService service,
+        Application.Calendar.CalendarService calendar,
         InboxQueryService query,
         Application.Projects.IProjectRepository projects,
         Application.Ai.AiService ai,
         IClock clock)
     {
         _service = service;
+        _calendar = calendar;
         _query = query;
         _projects = projects;
         _ai = ai;
@@ -40,16 +52,12 @@ public sealed partial class InboxViewModel : ViewModelBase
 
     private IReadOnlyDictionary<Domain.TaskId, Domain.Prioritization.PriorityRank>? _ranks;
 
-    private List<ProjectChoiceViewModel> _projectChoices = [ProjectChoiceViewModel.None];
     private Dictionary<Domain.ProjectId, string> _projectNames = [];
 
     /// <summary>Rebuilds the queue from storage — called after scheduling or outcomes change it.</summary>
     public void Reload()
     {
-        var projects = _projects.GetAll();
-        _projectNames = projects.ToDictionary(p => p.Id, p => p.Name);
-        _projectChoices = [ProjectChoiceViewModel.None];
-        _projectChoices.AddRange(projects.Select(p => new ProjectChoiceViewModel(p.Id, p.Name)));
+        _projectNames = _projects.GetAll().ToDictionary(p => p.Id, p => p.Name);
 
         Tasks.Clear();
         foreach (var task in _query.GetInboxTasks())
@@ -63,7 +71,10 @@ public sealed partial class InboxViewModel : ViewModelBase
     private TaskRowViewModel CreateRow(Domain.Tasks.TaskItem task)
     {
         var projectName = task.ProjectId is { } projectId ? _projectNames.GetValueOrDefault(projectId) : null;
-        return new TaskRowViewModel(task, _service, _clock, RemoveRow, _projectChoices, projectName)
+        return new TaskRowViewModel(
+            task, _calendar, _clock, RemoveRow, projectName,
+            onEditRequested: row => EditRequested?.Invoke(row.Task.Id),
+            onRerankRequested: row => RerankRequested?.Invoke(row.Task.Id))
         {
             NeedsReview = _ai.TaskNeedsReview(task),
         };
@@ -107,7 +118,16 @@ public sealed partial class InboxViewModel : ViewModelBase
         var task = _service.Capture(title);
         Tasks.Add(CreateRow(task));
         CaptureText = string.Empty;
+        // Capture is a mutation like completing or deleting: the Daily list and
+        // project views behind the drawer pick it up through the shared chain.
+        TasksMutated?.Invoke();
     }
 
-    private void RemoveRow(TaskRowViewModel row) => Tasks.Remove(row);
+    private void RemoveRow(TaskRowViewModel row)
+    {
+        Tasks.Remove(row);
+        // Completing or deleting from the Inbox changes project counts and the
+        // Daily list — announce it once through the shared chain.
+        TasksMutated?.Invoke();
+    }
 }

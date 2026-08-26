@@ -59,7 +59,7 @@ public sealed class ProjectServiceTests : IDisposable
     private readonly SqliteTaskRepository _tasks;
     private readonly ProjectService _service;
 
-    private readonly SqliteCommitmentCompletionRepository _completions;
+    private readonly SqliteOccurrenceCompletionRepository _completions;
 
     public ProjectServiceTests()
     {
@@ -70,19 +70,34 @@ public sealed class ProjectServiceTests : IDisposable
         _resources = new SqliteResourceRepository(_database.Factory);
         _storage = new LocalResourceStorage(_paths);
         _tasks = new SqliteTaskRepository(_database.Factory);
-        _completions = new SqliteCommitmentCompletionRepository(_database.Factory);
+        _completions = new SqliteOccurrenceCompletionRepository(_database.Factory);
         var blocks = new SqliteCalendarBlockRepository(_database.Factory);
         _service = new ProjectService(
             _projects, _files, _resources, _storage,
-            new SimpleLocalIndexer(_resources, _storage, _clock), _tasks, blocks, _completions, _clock);
+            new SimpleLocalIndexer(_resources, _storage, _clock), _tasks, blocks, _completions, _clock,
+            provenanceInvalidator: null,
+            reconciler: new ResourceLayoutReconciler(_projects, _files, _resources, _storage, _clock));
     }
 
     private CalendarService CreateCalendarService()
         => new(
             new SqliteCalendarBlockRepository(_database.Factory),
-            new SqliteCommitmentCompletionRepository(_database.Factory),
+            new SqliteOccurrenceCompletionRepository(_database.Factory),
             new SqliteCalendarMutations(_database.Factory),
             _tasks, _clock);
+
+    /// <summary>A project task scheduled through the unified editor path.</summary>
+    private TaskId AddScheduledProjectTask(
+        CalendarService calendar,
+        string title,
+        ProjectId projectId,
+        DateOnly date,
+        TimeOnly start,
+        TimeOnly end,
+        RecurrenceRule? recurrence = null)
+        => calendar.CreateTask(
+            new TaskDetailsRequest(title, projectId, null, null),
+            new TaskScheduleRequest(date, start, end, recurrence)).Id;
 
     [Fact]
     public void CreateProject_AssignsPaletteAccentsRoundRobin()
@@ -125,7 +140,9 @@ public sealed class ProjectServiceTests : IDisposable
 
         Assert.Equal("Transcript", resource.Title);
         Assert.Equal("Transcript.pdf", resource.OriginalFileName);
-        Assert.Equal(resource.Id + ".pdf", resource.StoredPath);
+        Assert.Equal(
+            Path.Combine("College Admissions", "Metric Proof", "Transcript.pdf"),
+            resource.StoredPath);
         Assert.True(_storage.Exists(resource.StoredPath!));
         Assert.Equal(ResourceIndexState.Indexed, _resources.GetById(resource.Id)!.IndexState);
 
@@ -186,7 +203,7 @@ public sealed class ProjectServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetScheduledBlocks_ReturnsFuturePendingBlocksForProjectTasks()
+    public void GetScheduledBlocks_ListsSessionsOfProjectTasks_UpcomingAndOverdue()
     {
         var project = _service.CreateProject("DECA");
         var task = TaskItem.Create("Practice", _clock.Now, estimatedDuration: TimeSpan.FromMinutes(60), projectId: project.Id);
@@ -197,74 +214,77 @@ public sealed class ProjectServiceTests : IDisposable
 
         var scheduled = _service.GetScheduledBlocks(project.Id);
 
-        var row = Assert.Single(scheduled);
-        Assert.Equal(new TimeOnly(18, 0), row.Block.StartTime);
-        Assert.Equal("Practice", row.Title);
-        Assert.Equal(ProjectBlockState.Upcoming, row.State);
-    }
-
-    [Fact]
-    public void GetScheduledBlocks_KeepsElapsedIncompleteCommitments_AsOverdue()
-    {
-        var project = _service.CreateProject("Schoolwork");
-        var other = _service.CreateProject("DECA");
-        var calendar = CreateCalendarService();
-        var linked = calendar.CreateFixedCommitment(
-            "Stats HW", _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0),
-            projectId: project.Id);
-        calendar.CreateFixedCommitment(
-            "Other club", _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0),
-            projectId: other.Id);
-        calendar.CreateFixedCommitment(
-            "Unlinked", _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0));
-        var elapsed = calendar.CreateFixedCommitment(
-            "Elapsed reading", _clock.Today.AddDays(-8), new TimeOnly(16, 0), new TimeOnly(17, 0),
-            projectId: project.Id);
-
-        var scheduled = _service.GetScheduledBlocks(project.Id);
-
-        // Elapsed incomplete commitments never disappear — they show as Overdue,
-        // sorted before the upcoming row by occurrence date.
+        // Elapsed incomplete sessions never disappear — they show as Overdue,
+        // sorted before the upcoming row by start time.
         Assert.Equal(2, scheduled.Count);
-        Assert.Equal(elapsed.Id, scheduled[0].Block.Id);
+        Assert.Equal(new TimeOnly(9, 0), scheduled[0].Block.StartTime);
         Assert.Equal(ProjectBlockState.Overdue, scheduled[0].State);
-        Assert.Equal(linked.Id, scheduled[1].Block.Id);
+        Assert.Equal(new TimeOnly(18, 0), scheduled[1].Block.StartTime);
+        Assert.Equal("Practice", scheduled[1].Title);
         Assert.Equal(ProjectBlockState.Upcoming, scheduled[1].State);
     }
 
     [Fact]
-    public void GetScheduledBlocks_ShowsCompletedCommitments_BelowActiveOnes()
+    public void GetScheduledBlocks_ScopesToTheProjectsOwnTasks()
+    {
+        var project = _service.CreateProject("Schoolwork");
+        var other = _service.CreateProject("DECA");
+        var calendar = CreateCalendarService();
+        AddScheduledProjectTask(
+            calendar, "Stats HW", project.Id,
+            _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0));
+        AddScheduledProjectTask(
+            calendar, "Other club", other.Id,
+            _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0));
+        calendar.CreateTask(
+            new TaskDetailsRequest("Unlinked", null, null, null),
+            new TaskScheduleRequest(
+                _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0), null));
+
+        var scheduled = _service.GetScheduledBlocks(project.Id);
+
+        var row = Assert.Single(scheduled);
+        Assert.Equal("Stats HW", row.Title);
+        Assert.Equal(ProjectBlockState.Upcoming, row.State);
+    }
+
+    [Fact]
+    public void GetScheduledBlocks_ShowsCompletedSessions_BelowActiveOnes()
     {
         var project = _service.CreateProject("Schoolwork");
         var calendar = CreateCalendarService();
-        var done = calendar.CreateFixedCommitment(
-            "Stats HW", _clock.Today, new TimeOnly(9, 0), new TimeOnly(10, 0),
-            projectId: project.Id);
-        calendar.CompleteCommitmentOccurrence(done.Id, _clock.Today);
-        var open = calendar.CreateFixedCommitment(
-            "Essay draft", _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0),
-            projectId: project.Id);
+        var doneTaskId = AddScheduledProjectTask(
+            calendar, "Stats HW", project.Id, _clock.Today, new TimeOnly(9, 0), new TimeOnly(10, 0));
+        calendar.UpdateTaskDetails(
+            doneTaskId, new TaskDetailsRequest("Stats HW", project.Id, null, null),
+            new TaskCompletionRequest(_clock.Today, Completed: true));
+        AddScheduledProjectTask(
+            calendar, "Essay draft", project.Id,
+            _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0));
 
         var scheduled = _service.GetScheduledBlocks(project.Id);
 
         Assert.Equal(2, scheduled.Count);
-        Assert.Equal(open.Id, scheduled[0].Block.Id);
+        Assert.Equal("Essay draft", scheduled[0].Title);
         Assert.Equal(ProjectBlockState.Upcoming, scheduled[0].State);
-        Assert.Equal(done.Id, scheduled[1].Block.Id);
+        Assert.Equal("Stats HW", scheduled[1].Title);
         Assert.Equal(ProjectBlockState.Done, scheduled[1].State);
     }
 
     [Fact]
-    public void GetScheduledBlocks_KeepsRecurringSeriesSparse_PerOccurrence()
+    public void GetScheduledBlocks_KeepsRepeatingSessionsSparse_PerOccurrence()
     {
         var project = _service.CreateProject("Schoolwork");
         var calendar = CreateCalendarService();
 
         // Anchored two weeks ago, every Wednesday. Today is Tuesday 2026-08-11:
         // elapsed occurrences on 7/29 and 8/5, next occurrence tomorrow (8/12).
-        var series = calendar.CreateFixedCommitment(
-            "AP Economics", _clock.Today.AddDays(-14), new TimeOnly(8, 30), new TimeOnly(9, 45),
-            RecurrenceRule.Weekly(1, DayOfWeek.Wednesday), project.Id);
+        var taskId = AddScheduledProjectTask(
+            calendar, "AP Economics", project.Id,
+            _clock.Today.AddDays(-14), new TimeOnly(8, 30), new TimeOnly(9, 45),
+            RecurrenceRule.Weekly(1, DayOfWeek.Wednesday));
+        var sessionId = new SqliteCalendarBlockRepository(_database.Factory)
+            .GetForTask(taskId).Single().Id;
 
         var scheduled = _service.GetScheduledBlocks(project.Id);
 
@@ -276,7 +296,7 @@ public sealed class ProjectServiceTests : IDisposable
         Assert.Equal(ProjectBlockState.Upcoming, scheduled[1].State);
 
         // Completing one occurrence moves only that occurrence to Done.
-        calendar.CompleteCommitmentOccurrence(series.Id, _clock.Today.AddDays(-6));
+        calendar.CompleteOccurrence(sessionId, _clock.Today.AddDays(-6));
         scheduled = _service.GetScheduledBlocks(project.Id);
         Assert.Equal(2, scheduled.Count);
         Assert.Equal(ProjectBlockState.Upcoming, scheduled[0].State);
@@ -286,13 +306,13 @@ public sealed class ProjectServiceTests : IDisposable
     }
 
     [Fact]
-    public void ProjectLink_SurvivesApplicationRestart()
+    public void ProjectAssignment_SurvivesApplicationRestart()
     {
-        // Session 1: create the project and its commitment, then drop every service.
+        // Session 1: create the project and its scheduled task, then drop every service.
         var project = _service.CreateProject("Schoolwork");
-        CreateCalendarService().CreateFixedCommitment(
-            "Stats HW", _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0),
-            projectId: project.Id);
+        AddScheduledProjectTask(
+            CreateCalendarService(), "Stats HW", project.Id,
+            _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0));
 
         // Session 2: a brand-new service graph over the same database file.
         var projects2 = new SqliteProjectRepository(_database.Factory);
@@ -302,30 +322,31 @@ public sealed class ProjectServiceTests : IDisposable
             projects2, new SqliteProjectFileRepository(_database.Factory),
             new SqliteResourceRepository(_database.Factory), _storage,
             new SimpleLocalIndexer(new SqliteResourceRepository(_database.Factory), _storage, _clock),
-            tasks2, blocks2, new SqliteCommitmentCompletionRepository(_database.Factory), _clock);
+            tasks2, blocks2, new SqliteOccurrenceCompletionRepository(_database.Factory), _clock);
 
         var reloaded = projects2.GetAll().Single(p => p.Name == "Schoolwork");
         var scheduled = service2.GetScheduledBlocks(reloaded.Id);
         var row = Assert.Single(scheduled);
         Assert.Equal("Stats HW", row.Title);
-        Assert.Equal(reloaded.Id, row.Block.ProjectId);
+        Assert.Equal(reloaded.Id, tasks2.GetById(row.Block.TaskId!.Value)!.ProjectId);
     }
 
     [Fact]
-    public void DeleteProject_ClearsCommitmentLinks_WithoutDeletingCommitments()
+    public void DeleteProject_UnlinksTasks_WithoutDeletingThemOrTheirSessions()
     {
         var project = _service.CreateProject("Schoolwork");
         var blocks = new SqliteCalendarBlockRepository(_database.Factory);
         var calendar = CreateCalendarService();
-        var commitment = calendar.CreateFixedCommitment(
-            "Stats HW", _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0),
-            projectId: project.Id);
+        var taskId = AddScheduledProjectTask(
+            calendar, "Stats HW", project.Id,
+            _clock.Today.AddDays(1), new TimeOnly(16, 0), new TimeOnly(17, 0));
 
         _service.DeleteProject(project.Id);
 
-        var loaded = blocks.GetById(commitment.Id);
-        Assert.NotNull(loaded);
-        Assert.Null(loaded.ProjectId);
+        var task = _tasks.GetById(taskId);
+        Assert.NotNull(task);
+        Assert.Null(task.ProjectId);
+        Assert.Single(blocks.GetForTask(taskId));
     }
 
     [Fact]
@@ -345,6 +366,89 @@ public sealed class ProjectServiceTests : IDisposable
         _resources.Update(reloaded);
 
         Assert.Equal(ResourceIndexState.Failed, _resources.GetById(resource.Id)!.IndexState);
+    }
+
+    [Fact]
+    public void RenameProject_MovesTheFolder_AndKeepsStoredPathsResolvable()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+        var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
+
+        _service.RenameProject(project.Id, "College Apps");
+
+        var reloaded = _resources.GetById(resource.Id)!;
+        Assert.Equal(
+            Path.Combine("College Apps", "Metric Proof", "Transcript.pdf"),
+            reloaded.StoredPath);
+        Assert.True(_storage.Exists(reloaded.StoredPath!));
+        Assert.Equal("fake pdf bytes", File.ReadAllText(_service.ResolveStoredPath(reloaded)!));
+    }
+
+    [Fact]
+    public void RenameFile_MovesTheFolder_AndKeepsStoredPathsResolvable()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+        var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
+
+        _service.RenameFile(file.Id, "Evidence");
+
+        Assert.Equal("Evidence", _files.GetById(file.Id)!.Title);
+        var reloaded = _resources.GetById(resource.Id)!;
+        Assert.Equal(
+            Path.Combine("College Admissions", "Evidence", "Transcript.pdf"),
+            reloaded.StoredPath);
+        Assert.True(_storage.Exists(reloaded.StoredPath!));
+        Assert.Equal("fake pdf bytes", File.ReadAllText(_service.ResolveStoredPath(reloaded)!));
+    }
+
+    [Fact]
+    public void RenameFile_RejectsAnEmptyTitle()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+
+        Assert.Throws<DomainException>(() => _service.RenameFile(file.Id, "   "));
+        Assert.Equal("Metric Proof", _files.GetById(file.Id)!.Title);
+    }
+
+    /// <summary>
+    /// A stored document's on-disk name comes from its original file name, never its
+    /// title, so retitling it must leave the bytes exactly where they are.
+    /// </summary>
+    [Fact]
+    public void RenameResource_RetitlesWithoutMovingTheBytes()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+        var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
+
+        _service.RenameResource(resource.Id, "Final transcript");
+
+        var reloaded = _resources.GetById(resource.Id)!;
+        Assert.Equal("Final transcript", reloaded.Title);
+        Assert.Equal(
+            Path.Combine("College Admissions", "Metric Proof", "Transcript.pdf"),
+            reloaded.StoredPath);
+        Assert.Equal("fake pdf bytes", File.ReadAllText(_service.ResolveStoredPath(reloaded)!));
+    }
+
+    [Fact]
+    public void RenameResource_RejectsAnEmptyTitle()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var link = _service.AddLink(file.Id, "SAT Scores", "https://collegeboard.org/scores");
+
+        Assert.Throws<DomainException>(() => _service.RenameResource(link.Id, ""));
+        Assert.Equal("SAT Scores", _resources.GetById(link.Id)!.Title);
     }
 
     public void Dispose()

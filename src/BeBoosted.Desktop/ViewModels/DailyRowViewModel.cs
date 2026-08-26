@@ -11,11 +11,14 @@ namespace BeBoosted.Desktop.ViewModels;
 
 public enum DailyRowKind
 {
-    /// <summary>A local or external fixed commitment occurrence (obligation, never ranked).</summary>
-    FixedCommitment = 0,
+    /// <summary>
+    /// A time obligation: an external synced event or one occurrence of a repeating
+    /// task session. Never priority-ranked.
+    /// </summary>
+    Obligation = 0,
 
-    /// <summary>An approved task block (open, needs-outcome, or done).</summary>
-    TaskBlock = 1,
+    /// <summary>A one-off scheduled task session (open, needs-outcome, or done).</summary>
+    Session = 1,
 
     /// <summary>A pending plan-draft proposal.</summary>
     Proposal = 2,
@@ -26,7 +29,7 @@ public enum DailyRowKind
 
 /// <summary>
 /// One row of the Daily priority-first list. Time is metadata here, never a layout axis.
-/// Priorities come from Priority Sort ranks; fixed commitments never fabricate one.
+/// Priorities come from Priority Sort ranks; time obligations never fabricate one.
 /// </summary>
 public sealed partial class DailyRowViewModel : ViewModelBase
 {
@@ -60,13 +63,13 @@ public sealed partial class DailyRowViewModel : ViewModelBase
         bool needsOutcome)
         => new(
             owner,
-            occurrence.Block.Kind == BlockKind.FixedCommitment
-                ? DailyRowKind.FixedCommitment
-                : DailyRowKind.TaskBlock,
+            occurrence.Block.IsExternal || occurrence.Block.Recurrence is not null
+                ? DailyRowKind.Obligation
+                : DailyRowKind.Session,
             title,
             occurrence.Date,
             projectName,
-            occurrence.Block.Kind == BlockKind.FixedCommitment ? null : rank)
+            occurrence.Block.IsExternal || occurrence.Block.Recurrence is not null ? null : rank)
         {
             BlockId = occurrence.Block.Id,
             TaskId = occurrence.Block.TaskId,
@@ -78,6 +81,7 @@ public sealed partial class DailyRowViewModel : ViewModelBase
             IsConflicted = isConflicted,
             IsDone = isDone,
             NeedsOutcome = needsOutcome,
+            Outcome = occurrence.Block.Outcome,
         };
 
     internal static DailyRowViewModel ForProposal(
@@ -153,6 +157,15 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
     public bool NeedsOutcome { get; private init; }
 
+    /// <summary>The one-off session's recorded outcome; None for every other row kind.</summary>
+    public BlockOutcome Outcome { get; private init; }
+
+    /// <summary>
+    /// A settled one-off session — Done, "Needs more time", or "Didn't happen". A
+    /// resolved session is history for its day, never open scheduled work.
+    /// </summary>
+    public bool HasRecordedOutcome => Outcome != BlockOutcome.None;
+
     public WhyEvidence? Why { get; private init; }
 
     public string? SessionLabel { get; private init; }
@@ -171,11 +184,11 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
     // ---- Priority marker ----
 
-    public string PriorityText => Kind == DailyRowKind.FixedCommitment
+    public string PriorityText => Kind == DailyRowKind.Obligation
         ? string.Empty
         : Rank is { } rank ? TierLabel(rank.Tier) : "–";
 
-    public string? PriorityAccessibleText => Kind == DailyRowKind.FixedCommitment
+    public string? PriorityAccessibleText => Kind == DailyRowKind.Obligation
         ? null
         : Rank is { } rank ? TierAccessibleLabel(rank.Tier) : "Not ranked for this day.";
 
@@ -200,12 +213,15 @@ public sealed partial class DailyRowViewModel : ViewModelBase
     };
 
     // ---- Status ----
+    // No FIXED/FLEX badges: a scheduled time already says the task is scheduled.
+    // Only external synced events and pending proposals carry a chip.
 
     public string StatusText => Kind switch
     {
-        DailyRowKind.FixedCommitment => "FIXED",
-        DailyRowKind.TaskBlock => "FLEX",
+        DailyRowKind.Obligation when IsExternal => "Synced",
         DailyRowKind.Proposal => "PROPOSED",
+        DailyRowKind.Session when Outcome == BlockOutcome.NeedsMoreTime => "Needs more time",
+        DailyRowKind.Session when Outcome == BlockOutcome.DidntHappen => "Didn't happen",
         _ => string.Empty,
     };
 
@@ -225,9 +241,9 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
     public string TimeText => Kind switch
     {
-        DailyRowKind.FixedCommitment when StartTime is { } start && EndTime is { } end
+        DailyRowKind.Obligation when StartTime is { } start && EndTime is { } end
             => FormatRange(start, end),
-        DailyRowKind.TaskBlock or DailyRowKind.Proposal when StartTime is { } start
+        DailyRowKind.Session or DailyRowKind.Proposal when StartTime is { } start
             => FormatTime(start),
         _ => string.Empty,
     };
@@ -247,23 +263,72 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
     // ---- Capabilities ----
 
-    public bool ShowCommitmentCheck => Kind == DailyRowKind.FixedCommitment && !IsExternal;
+    public bool ShowOccurrenceCheck => Kind == DailyRowKind.Obligation && !IsExternal;
 
     public bool ShowTaskCheck => Kind == DailyRowKind.Task;
 
-    public bool ShowOutcomeControl => Kind == DailyRowKind.TaskBlock && !IsDone;
+    /// <summary>
+    /// A one-off scheduled session carries the same checkbox as every other row kind:
+    /// checked marks it done (before or after its slot), unchecked takes it back.
+    /// A session settled by another outcome keeps no checkbox — completing that work
+    /// again goes through the task's own Unscheduled row.
+    /// </summary>
+    public bool ShowSessionCheck
+        => Kind == DailyRowKind.Session && (IsDone || !HasRecordedOutcome);
 
-    /// <summary>A done task block keeps its recorded outcome — no invented binary reopen.</summary>
-    public bool ShowDoneBlockMarker => Kind == DailyRowKind.TaskBlock && IsDone;
+    /// <summary>The quiet side action holding "Needs more time" and "Didn't happen".</summary>
+    public bool ShowSessionOutcomeAction
+        => Kind == DailyRowKind.Session && !IsDone && !HasRecordedOutcome;
+
+    /// <summary>This one-off session's Task also has a repeating session somewhere.</summary>
+    public bool TaskRepeats { get; internal set; }
+
+    /// <summary>
+    /// Done is a whole-Task statement: while any sibling session repeats, this
+    /// one-off may not record Done (the other outcomes stay valid).
+    /// </summary>
+    public bool CanRecordDone => !TaskRepeats;
+
+    /// <summary>
+    /// Done is a whole-Task statement: while any sibling session repeats, this one-off
+    /// may not record it. Undo stays open even then — reopening is deliberately
+    /// unconditional so a globally-completed repeating Task can recover. Always true
+    /// for non-Session rows, which never carry a repeating sibling.
+    /// </summary>
+    public bool CanToggleSessionDone => !TaskRepeats || IsDone;
+
+    public bool ShowRepeatingCompletionNote => TaskRepeats;
+
+    public string RepeatingCompletionNote
+        => "This task repeats — complete each repeating occurrence separately.";
+
+    /// <summary>
+    /// A disabled control raises no tooltip, so the blocked checkbox needs its own
+    /// hit-testable surface to carry the explanation. Scoped to the blocked case only —
+    /// a done repeating-sibling row keeps its checkbox live for the undo.
+    /// </summary>
+    public bool ShowSessionCheckBlockedNote => ShowSessionCheck && !CanToggleSessionDone;
 
     public bool CanReopen => IsDone
-        && (Kind == DailyRowKind.Task || (Kind == DailyRowKind.FixedCommitment && !IsExternal));
+        && (Kind is DailyRowKind.Task or DailyRowKind.Session
+            || (Kind == DailyRowKind.Obligation && !IsExternal));
 
-    public bool CanEditCommitment => Kind == DailyRowKind.FixedCommitment && !IsExternal;
+    /// <summary>Only a row that already holds a rank can be re-placed among the others.</summary>
+    public bool CanRerank => Rank is not null && TaskId is not null;
+
+    /// <summary>
+    /// The unranked dash's tooltip cannot surface on the disabled marker, so a
+    /// hit-testable overlay carries "Not ranked for this day." instead.
+    /// </summary>
+    public bool ShowUnrankedNote => PriorityText == "–";
+
+    /// <summary>Obligation rows put "edit" on the title; other rows use the row action.</summary>
+    public bool CanEditRow => Kind == DailyRowKind.Obligation && !IsExternal;
 
     public bool ShowScheduleAction => Kind == DailyRowKind.Task && !IsDone;
 
-    public bool ShowChangeTimeAction => Kind == DailyRowKind.TaskBlock && !IsDone && !IsExternal;
+    public bool ShowChangeTimeAction
+        => Kind == DailyRowKind.Session && !IsDone && !HasRecordedOutcome && !IsExternal;
 
     public bool ShowUnscheduleAction => ShowChangeTimeAction;
 
@@ -271,7 +336,7 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
     public bool ShowProposalActions => Kind == DailyRowKind.Proposal;
 
-    public bool IsLocked => Kind == DailyRowKind.FixedCommitment && IsExternal;
+    public bool IsLocked => Kind == DailyRowKind.Obligation && IsExternal;
 
     // ---- Accessible names ----
 
@@ -295,9 +360,9 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
             parts.Add(Kind switch
             {
-                DailyRowKind.FixedCommitment when IsExternal => "External commitment — locked",
-                DailyRowKind.FixedCommitment => "fixed commitment",
-                DailyRowKind.TaskBlock => "scheduled block",
+                DailyRowKind.Obligation when IsExternal => "Synced event — locked",
+                DailyRowKind.Obligation => "repeating task",
+                DailyRowKind.Session => "scheduled task",
                 DailyRowKind.Proposal => "proposed — not yet on your calendar",
                 _ => IsDone ? "completed task" : "unscheduled task",
             });
@@ -326,40 +391,52 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
     // ---- Commands (all delegate to the list, which guarantees one refresh) ----
 
-    /// <summary>The row's checkbox: complete/reopen a task, or check off a commitment occurrence.</summary>
-    [RelayCommand]
+    /// <summary>The row's checkbox: complete/reopen a task or a scheduled session,
+    /// or check off one occurrence of a repeating schedule.</summary>
+    [RelayCommand(CanExecute = nameof(CanToggleSessionDone))]
     private void ToggleDone()
     {
-        if (Kind == DailyRowKind.FixedCommitment)
+        switch (Kind)
         {
-            _owner.ToggleCommitmentDone(this);
-        }
-        else if (Kind == DailyRowKind.Task)
-        {
-            if (IsDone)
-            {
+            case DailyRowKind.Obligation:
+                _owner.ToggleOccurrenceDone(this);
+                break;
+            case DailyRowKind.Task or DailyRowKind.Session when IsDone:
                 _owner.ReopenRow(this);
-            }
-            else
-            {
+                break;
+            case DailyRowKind.Task:
                 _owner.CompleteTask(this);
-            }
+                break;
+            case DailyRowKind.Session:
+                // Done on a session is the same aggregate transition as completing the
+                // Task, recorded against the block that carried the work.
+                _owner.RecordOutcome(this, BlockOutcome.Done, null);
+                break;
         }
     }
 
     [RelayCommand]
     private void Reopen() => _owner.ReopenRow(this);
 
+    /// <summary>Opens the one canonical Task editor for this row.</summary>
+    /// <summary>This row's task is open in an editor — the quiet "Editing" chip shows (frame 3a).</summary>
+    [ObservableProperty]
+    public partial bool IsEditing { get; internal set; }
+
     [RelayCommand]
-    private void EditCommitment() => _owner.EditCommitment(this);
+    private void EditRow() => _owner.EditRow(this);
 
     [RelayCommand]
     private void Unschedule() => _owner.Unschedule(this);
 
+    /// <summary>The priority marker: re-place this task among the others.</summary>
+    [RelayCommand]
+    private void Rerank() => _owner.Rerank(this);
+
     [ObservableProperty]
     public partial decimal RemainingMinutes { get; set; } = 30;
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanRecordDone))]
     private void RecordDone() => _owner.RecordOutcome(this, BlockOutcome.Done, null);
 
     [RelayCommand]

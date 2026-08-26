@@ -12,6 +12,7 @@ namespace BeBoosted.Domain.Prioritization;
 public sealed class ComparisonSession
 {
     private readonly List<TaskId> _candidates;
+    private readonly List<List<TaskId>> _seed;
     private readonly List<ComparisonResult> _answers = [];
     private readonly List<(TaskId Left, TaskId Right, ComparisonResult Result)> _decisions = [];
 
@@ -22,10 +23,25 @@ public sealed class ComparisonSession
     private int _high;
 
     public ComparisonSession(PlanningPeriod period, IEnumerable<TaskId> candidates)
+        : this(period, [], candidates)
+    {
+    }
+
+    /// <summary>
+    /// Starts from an existing ordering (tied tasks grouped together) and places only
+    /// <paramref name="candidates"/> into it. An empty seed is the from-scratch sort.
+    /// Candidates already present in the seed are ignored — the seed places them.
+    /// </summary>
+    public ComparisonSession(
+        PlanningPeriod period,
+        IEnumerable<IReadOnlyList<TaskId>> seedOrder,
+        IEnumerable<TaskId> candidates)
     {
         Period = period;
-        _candidates = candidates.Distinct().ToList();
-        if (_candidates.Count == 0)
+        _seed = seedOrder.Select(group => group.ToList()).Where(group => group.Count > 0).ToList();
+        var seeded = _seed.SelectMany(group => group).ToHashSet();
+        _candidates = candidates.Distinct().Where(id => !seeded.Contains(id)).ToList();
+        if (_seed.Count == 0 && _candidates.Count == 0)
         {
             throw new DomainException("Priority Sort needs at least one task.");
         }
@@ -146,8 +162,17 @@ public sealed class ComparisonSession
 
     private void Replay()
     {
-        _groups = [[_candidates[0]]];
-        _nextCandidateIndex = 1;
+        if (_seed.Count > 0)
+        {
+            _groups = _seed.Select(group => group.ToList()).ToList();
+            _nextCandidateIndex = 0;
+        }
+        else
+        {
+            _groups = [[_candidates[0]]];
+            _nextCandidateIndex = 1;
+        }
+
         _inserting = null;
         var pending = new Queue<ComparisonResult>(_answers);
         AdvanceToNextQuestion();

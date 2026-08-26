@@ -12,9 +12,9 @@ public sealed record SchedulerResult(IReadOnlyList<ProposedBlock> Blocks, IReadO
 
 /// <summary>
 /// Deterministic first-fit planner. Subjective importance comes from Priority Sort
-/// ranks; deadlines, durations, fixed commitments, and open time decide feasibility.
+/// ranks; deadlines, durations, existing schedules, and open time decide feasibility.
 /// Long tasks split into sessions of at most 90 minutes. The planner never overlaps
-/// fixed events or other proposals, and produces user-relevant Why evidence per block.
+/// existing blocks or other proposals, and produces user-relevant Why evidence per block.
 /// </summary>
 public static class DeterministicScheduler
 {

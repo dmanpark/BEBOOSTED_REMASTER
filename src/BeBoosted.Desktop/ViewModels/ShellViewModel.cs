@@ -43,8 +43,9 @@ public sealed partial class ShellViewModel : ViewModelBase
             requestPlan: PlanFromChat,
             onTasksChanged: () =>
             {
-                Inbox.Reload();
-                Projects.RefreshActive();
+                // One announcement through the shared chain: it reloads the Inbox,
+                // rebuilds the Daily list, and refreshes the active project view.
+                Calendar.NotifyTasksMutated();
             },
             openResource: OpenResourceInFiles);
         Projects.AskRequested = OpenProjectChat;
@@ -60,8 +61,19 @@ public sealed partial class ShellViewModel : ViewModelBase
         Calendar.DataChanged += Inbox.Reload;
         Calendar.DataChanged += Projects.RefreshActive;
 
-        // Commitment completion from a Project page changes calendar data directly.
-        Projects.CalendarDataChanged += Calendar.Reload;
+        // Every edit entry point shares the one canonical Task editor.
+        Inbox.EditRequested += Calendar.OpenTaskEditorForTask;
+        Inbox.RerankRequested += StartRerank;
+        Calendar.RerankRequested += StartRerank;
+        // Inbox-originated completes/deletes announce through the same single chain.
+        Inbox.TasksMutated += Calendar.NotifyTasksMutated;
+
+        // Project rows share the same canonical editor and the same single
+        // post-mutation chain (task completion and occurrence toggles alike).
+        Projects.TaskEditRequested += Calendar.OpenTaskEditorForTask;
+        // A scheduled-session row in a project list is still task-scoped (F-03).
+        Projects.SessionEditRequested += (id, _) => Calendar.OpenTaskEditorForBlockOwner(id);
+        Projects.TasksMutated += Calendar.NotifyTasksMutated;
 
         Inbox.PropertyChanged += (_, e) =>
         {
@@ -76,7 +88,17 @@ public sealed partial class ShellViewModel : ViewModelBase
             if (e.PropertyName is nameof(CalendarViewModel.ViewKind) or nameof(CalendarViewModel.VisibleDate))
             {
                 RefreshInboxRanks();
+                // The sort gate is period-scoped: another day can hold no ranks yet.
+                StartPrioritySortCommand.NotifyCanExecuteChanged();
+                PlanCommand.NotifyCanExecuteChanged();
             }
+        };
+        // Completing scheduled work changes the live set without touching the inbox
+        // count, so every calendar mutation re-asks both gates.
+        Calendar.DataChanged += () =>
+        {
+            StartPrioritySortCommand.NotifyCanExecuteChanged();
+            PlanCommand.NotifyCanExecuteChanged();
         };
         RefreshInboxRanks();
     }
@@ -145,28 +167,88 @@ public sealed partial class ShellViewModel : ViewModelBase
         ? PlanningPeriod.ForWeek(Calendar.VisibleDate)
         : PlanningPeriod.ForToday(Calendar.VisibleDate);
 
-    public bool CanStartPrioritySort => Inbox.OpenCount >= 2;
+    /// <summary>
+    /// A sort is worth opening only when it would ask something: some live task has no
+    /// rank yet, or the period has no ranking at all and there are at least two tasks.
+    /// </summary>
+    public bool CanStartPrioritySort
+    {
+        get
+        {
+            var live = Calendar.OpenTasks;
+            var ranked = _prioritySort.GetRankLookup(CurrentPlanningPeriod);
+            return ranked.Count == 0
+                ? live.Count >= 2
+                : live.Any(task => !ranked.ContainsKey(task.Id));
+        }
+    }
 
     [RelayCommand(CanExecute = nameof(CanStartPrioritySort))]
     private void StartPrioritySort()
     {
-        var candidates = Inbox.Tasks.Select(row => row.Task).ToList();
+        if (!CanStartPrioritySort)
+        {
+            // A stale-enabled button degrades to a quiet no-op — an empty session
+            // constructor would throw out of the command otherwise.
+            return;
+        }
+
+        var period = CurrentPlanningPeriod;
+        var live = Calendar.OpenTasks;
         ActiveSort = new PrioritySortViewModel(
-            CurrentPlanningPeriod,
-            candidates,
+            period,
+            live,
+            _prioritySort.StartIncrementalSession(period, [.. live.Select(t => t.Id)]),
             _prioritySort,
             _clock,
             onClosed: () => ActiveSort = null,
-            onSaved: _ => RefreshInboxRanks());
+            onSaved: _ => ApplyNewRanking());
+    }
+
+    /// <summary>
+    /// New ranks land on every surface that shows them, in place: the Inbox chips and
+    /// the calendar (whose Daily list both labels and orders rows by rank). Without the
+    /// reload the Daily list keeps the ordering it was built with until the day changes.
+    /// </summary>
+    private void ApplyNewRanking()
+    {
+        RefreshInboxRanks();
+        Calendar.Reload();
+        StartPrioritySortCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Re-places one already-ranked task through the same comparison surface, seeded
+    /// with the saved order minus that task. Abandoning it saves nothing.
+    /// </summary>
+    internal void StartRerank(TaskId taskId)
+    {
+        var period = CurrentPlanningPeriod;
+        var live = Calendar.OpenTasks;
+        if (!live.Any(task => task.Id == taskId))
+        {
+            return;
+        }
+
+        ActiveSort = new PrioritySortViewModel(
+            period,
+            live,
+            _prioritySort.StartRerankSession(period, taskId, [.. live.Select(t => t.Id)]),
+            _prioritySort,
+            _clock,
+            onClosed: () => ActiveSort = null,
+            onSaved: _ => ApplyNewRanking(),
+            isRerank: true);
     }
 
     /// <summary>Escape closes the topmost temporary surface: modal, sort, expanded chat, then drawer.</summary>
     [RelayCommand]
     private void EscapePressed()
     {
-        if (Calendar.IsCommitmentEditorOpen)
+        if (Calendar.ActiveTaskEditor is not null)
         {
-            Calendar.CloseCommitmentEditor();
+            // Scope-led editors: Escape steps out one level (prompt → push → close).
+            Calendar.EscapeTaskEditor();
             return;
         }
 

@@ -151,9 +151,15 @@ public sealed class PlanningProposal
         Touch(now);
     }
 
+    /// <summary>
+    /// Withdraws a pending block. A draft left with nothing pending is normalized
+    /// rather than surviving as an empty active draft: approved work marks it
+    /// approved, otherwise it is discarded.
+    /// </summary>
     public void RemoveBlock(CalendarBlockId id, DateTimeOffset now)
     {
         RequirePending(id).Status = ProposedBlockStatus.Removed;
+        SettleEmptiedDraft();
         Touch(now);
     }
 
@@ -168,10 +174,20 @@ public sealed class PlanningProposal
         Touch(now);
     }
 
-    /// <summary>Reverts an approved block back to pending (undo support).</summary>
+    /// <summary>
+    /// Reverts an approved block back to pending (undo support). A discarded plan
+    /// is never resurrected this way — it was replaced, and reviving it would put a
+    /// second active draft beside the newer plan.
+    /// </summary>
     public void RevertBlock(CalendarBlockId id, DateTimeOffset now)
     {
         var block = GetBlock(id);
+        if (State == ProposalState.Discarded)
+        {
+            throw new DomainException(
+                "That plan was replaced — its approvals can no longer be undone.");
+        }
+
         if (block.Status != ProposedBlockStatus.Approved)
         {
             throw new DomainException("Only an approved block can be reverted.");
@@ -186,6 +202,42 @@ public sealed class PlanningProposal
     {
         State = ProposalState.Discarded;
         Touch(now);
+    }
+
+    /// <summary>
+    /// Deleting a Task withdraws every one of its blocks from this proposal —
+    /// pending, approved, or removed alike, so no row can outlive the Task. A draft
+    /// left with nothing pending is normalized: approved work marks it approved,
+    /// otherwise it is discarded rather than surviving as an empty active draft.
+    /// Returns whether anything changed.
+    /// </summary>
+    public bool PruneBlocksForTask(TaskId taskId, DateTimeOffset now)
+    {
+        if (_blocks.RemoveAll(b => b.TaskId == taskId) == 0)
+        {
+            return false;
+        }
+
+        SettleEmptiedDraft();
+        Touch(now);
+        return true;
+    }
+
+    /// <summary>
+    /// A draft with nothing left to decide stops being the active draft: approved
+    /// work settles it as Approved, anything else as Discarded — so the active-draft
+    /// lookup stops returning it.
+    /// </summary>
+    private void SettleEmptiedDraft()
+    {
+        if (State != ProposalState.Draft || PendingBlocks.Any())
+        {
+            return;
+        }
+
+        State = _blocks.Any(b => b.Status == ProposedBlockStatus.Approved)
+            ? ProposalState.Approved
+            : ProposalState.Discarded;
     }
 
     private ProposedBlock RequirePending(CalendarBlockId id)

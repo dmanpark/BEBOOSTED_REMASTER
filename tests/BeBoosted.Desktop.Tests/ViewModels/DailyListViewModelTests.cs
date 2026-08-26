@@ -29,8 +29,7 @@ public sealed class DailyListViewModelTests
         InMemoryPrioritizationRepository Ranks,
         InMemoryPlanningProposalRepository Proposals,
         FakeClock Clock,
-        CalendarService Service,
-        TaskService TaskService)
+        CalendarService Service)
     {
         public DailyListViewModel Daily => Calendar.Daily;
     }
@@ -41,6 +40,11 @@ public sealed class DailyListViewModelTests
         public InMemoryCalendarBlockRepository Inner => inner;
 
         public bool FailNextAdd { get; set; }
+
+        /// <summary>1-based write counter; the matching Update throws instead of writing.</summary>
+        public int? FailOnUpdateNumber { get; set; }
+
+        private int _updates;
 
         public void Add(CalendarBlock block)
         {
@@ -53,7 +57,15 @@ public sealed class DailyListViewModelTests
             inner.Add(block);
         }
 
-        public void Update(CalendarBlock block) => inner.Update(block);
+        public void Update(CalendarBlock block)
+        {
+            if (++_updates == FailOnUpdateNumber)
+            {
+                throw new DomainException("The calendar rejected that change.");
+            }
+
+            inner.Update(block);
+        }
 
         public void Delete(CalendarBlockId id) => inner.Delete(id);
 
@@ -66,8 +78,6 @@ public sealed class DailyListViewModelTests
 
         public IReadOnlyList<CalendarBlock> GetForTask(TaskId taskId) => inner.GetForTask(taskId);
 
-        public IReadOnlyList<CalendarBlock> GetForProject(ProjectId projectId) => inner.GetForProject(projectId);
-
         public IReadOnlyList<CalendarBlock> GetElapsedWithoutOutcome(DateOnly today, TimeOnly now)
             => inner.GetElapsedWithoutOutcome(today, now);
 
@@ -79,22 +89,23 @@ public sealed class DailyListViewModelTests
         var clock = new FakeClock(Date);
         var tasks = new InMemoryTaskRepository();
         var blocks = failingBlocks?.Inner ?? new InMemoryCalendarBlockRepository();
+        blocks.Tasks = tasks;
         ICalendarBlockRepository blockPort = failingBlocks is null
             ? blocks
             : failingBlocks;
-        var completions = new InMemoryCommitmentCompletionRepository();
-        var service = new CalendarService(
-            blockPort, completions, new InMemoryCalendarMutations(blockPort, completions), tasks, clock);
-        var ranks = new InMemoryPrioritizationRepository();
+        var completions = new InMemoryOccurrenceCompletionRepository();
         var proposals = new InMemoryPlanningProposalRepository();
+        var mutations = new InMemoryCalendarMutations(blockPort, completions, tasks, proposals);
+        var service = new CalendarService(blockPort, completions, mutations, tasks, clock);
+        var ranks = new InMemoryPrioritizationRepository();
         var planning = new PlanningService(
-            proposals, blockPort, new InboxQueryService(tasks, blockPort), ranks, service, clock);
+            proposals, new InboxQueryService(tasks, blockPort), ranks, service,
+            mutations, clock);
         var projects = new InMemoryProjectRepository();
         var calendar = TestShell.CreateCalendarViewModel(
             new InMemorySettingsStore(), clock, tasks, blocks, projects, service, planning, ranks);
         return new Context(
-            calendar, tasks, blocks, projects, ranks, proposals, clock, service,
-            new TaskService(tasks, clock));
+            calendar, tasks, blocks, projects, ranks, proposals, clock, service);
     }
 
     private static TaskItem AddTask(
@@ -124,21 +135,35 @@ public sealed class DailyListViewModelTests
             CalendarBlockId.New(), task.Id, date, start, end,
             new WhyEvidence(null, "45 min", null, "open 3–5 PM", null));
 
+    /// <summary>A scheduled task created through the unified editor path.</summary>
+    private static CalendarBlock AddScheduled(
+        Context context, string title, TimeOnly start, TimeOnly end,
+        RecurrenceRule? recurrence = null, DateOnly? date = null)
+    {
+        var task = context.Service.CreateTask(
+            new TaskDetailsRequest(title, null, null, null),
+            new TaskScheduleRequest(date ?? Date, start, end, recurrence));
+        return context.Blocks.GetForTask(task.Id).Single();
+    }
+
+    /// <summary>A weekly-Tuesday repeating task anchored on the design date (an obligation row).</summary>
+    private static CalendarBlock AddRepeating(
+        Context context, string title, TimeOnly start, TimeOnly end)
+        => AddScheduled(context, title, start, end, RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
+
     // ---- Classification ----
 
     [Fact]
     public void Rebuild_ClassifiesRows()
     {
         var context = Create();
-        var localFixed = context.Service.CreateFixedCommitment(
-            "Stats homework", Date, new TimeOnly(9, 0), new TimeOnly(10, 0));
+        AddRepeating(context, "Stats homework", new TimeOnly(9, 0), new TimeOnly(10, 0));
         context.Blocks.Add(CalendarBlock.Rehydrate(
-            CalendarBlockId.New(), null, null, "Imported standup", Date,
-            new TimeOnly(13, 30), new TimeOnly(14, 0), BlockKind.FixedCommitment, null,
+            CalendarBlockId.New(), null, "Imported standup", Date,
+            new TimeOnly(13, 30), new TimeOnly(14, 0), BlockKind.ExternalEvent, null,
             "google", "evt-1", 0, BlockOutcome.None, null, context.Clock.Now, context.Clock.Now));
-        var doneCommitment = context.Service.CreateFixedCommitment(
-            "Morning run", Date, new TimeOnly(7, 0), new TimeOnly(7, 30));
-        context.Service.CompleteCommitmentOccurrence(doneCommitment.Id, Date);
+        var doneRepeating = AddRepeating(context, "Morning run", new TimeOnly(7, 0), new TimeOnly(7, 30));
+        context.Service.CompleteOccurrence(doneRepeating.Id, Date);
 
         var openBlockTask = AddTask(context, "Scholarship review", TimeSpan.FromMinutes(60));
         context.Service.ScheduleTask(openBlockTask.Id, Date, new TimeOnly(16, 0));
@@ -151,12 +176,12 @@ public sealed class DailyListViewModelTests
 
         var inboxTask = AddTask(context, "Email advisor");
         var directDone = AddTask(context, "Order textbooks");
-        context.TaskService.Complete(directDone.Id);
+        context.Service.CompleteTask(directDone.Id);
 
         context.Calendar.Reload();
         var daily = context.Daily;
 
-        // Fixed obligations first (by start), then unranked flex by start.
+        // Time obligations first (by start), then unranked flex by start.
         Assert.Equal(
             ["Stats homework", "Imported standup", "Econ chapter 6", "Scholarship review"],
             daily.ScheduledRows.Select(r => r.Title).ToArray());
@@ -167,11 +192,12 @@ public sealed class DailyListViewModelTests
 
         var external = daily.ScheduledRows.Single(r => r.Title == "Imported standup");
         Assert.True(external.IsLocked);
-        Assert.False(external.ShowCommitmentCheck);
-        Assert.Equal("FIXED", external.StatusText);
-        Assert.Equal("FLEX", daily.ScheduledRows.Single(r => r.Title == "Scholarship review").StatusText);
+        Assert.False(external.ShowOccurrenceCheck);
+        // TDD phase 7: no FIXED/FLEX labels — external events say Synced, nothing else.
+        Assert.Equal("Synced", external.StatusText);
+        Assert.False(daily.ScheduledRows.Single(r => r.Title == "Scholarship review").HasStatus);
         Assert.Equal("PROPOSED", daily.ScheduledRows.Single(r => r.Title == "Econ chapter 6").StatusText);
-        Assert.True(daily.ScheduledRows.Single(r => r.Title == "Stats homework").ShowCommitmentCheck);
+        Assert.True(daily.ScheduledRows.Single(r => r.Title == "Stats homework").ShowOccurrenceCheck);
     }
 
     [Fact]
@@ -184,7 +210,8 @@ public sealed class DailyListViewModelTests
 
         var row = context.Daily.ScheduledRows.Single(r => r.Title == "Elapsed work");
         Assert.True(row.NeedsOutcome);
-        Assert.True(row.ShowOutcomeControl);
+        Assert.True(row.ShowSessionCheck);
+        Assert.True(row.ShowSessionOutcomeAction);
     }
 
     // ---- Ordering ----
@@ -193,8 +220,8 @@ public sealed class DailyListViewModelTests
     public void ScheduledOrdering_FixedFirst_ThenRankedByTier_ThenUnrankedByStart()
     {
         var context = Create();
-        context.Service.CreateFixedCommitment("Afternoon class", Date, new TimeOnly(14, 0), new TimeOnly(15, 0));
-        context.Service.CreateFixedCommitment("Morning class", Date, new TimeOnly(9, 0), new TimeOnly(10, 0));
+        AddRepeating(context, "Afternoon class", new TimeOnly(14, 0), new TimeOnly(15, 0));
+        AddRepeating(context, "Morning class", new TimeOnly(9, 0), new TimeOnly(10, 0));
 
         var p2Task = AddTask(context, "Advance work", TimeSpan.FromMinutes(60));
         context.Service.ScheduleTask(p2Task.Id, Date, new TimeOnly(8, 0)); // earliest start, lower tier
@@ -241,7 +268,7 @@ public sealed class DailyListViewModelTests
     public void PriorityMapping_TiersUnrankedAndFixed()
     {
         var context = Create();
-        context.Service.CreateFixedCommitment("Class", Date, new TimeOnly(9, 0), new TimeOnly(10, 0));
+        AddRepeating(context, "Class", new TimeOnly(9, 0), new TimeOnly(10, 0));
         var p1 = AddTask(context, "Protect");
         var p2 = AddTask(context, "Advance");
         var p3 = AddTask(context, "Wait");
@@ -306,14 +333,14 @@ public sealed class DailyListViewModelTests
     public void Progress_CountsAndDeduplicatesByTaskId()
     {
         var context = Create();
-        // Open local commitment (counts 1 open) + completed one (counts 1 done).
-        context.Service.CreateFixedCommitment("Open class", Date, new TimeOnly(9, 0), new TimeOnly(10, 0));
-        var run = context.Service.CreateFixedCommitment("Run", Date, new TimeOnly(7, 0), new TimeOnly(7, 30));
-        context.Service.CompleteCommitmentOccurrence(run.Id, Date);
-        // External commitment: excluded entirely.
+        // Open repeating occurrence (counts 1 open) + completed one (counts 1 done).
+        AddRepeating(context, "Open class", new TimeOnly(9, 0), new TimeOnly(10, 0));
+        var run = AddRepeating(context, "Run", new TimeOnly(7, 0), new TimeOnly(7, 30));
+        context.Service.CompleteOccurrence(run.Id, Date);
+        // External event: excluded entirely.
         context.Blocks.Add(CalendarBlock.Rehydrate(
-            CalendarBlockId.New(), null, null, "Imported", Date,
-            new TimeOnly(13, 0), new TimeOnly(13, 30), BlockKind.FixedCommitment, null,
+            CalendarBlockId.New(), null, "Imported", Date,
+            new TimeOnly(13, 0), new TimeOnly(13, 30), BlockKind.ExternalEvent, null,
             "google", "evt-2", 0, BlockOutcome.None, null, context.Clock.Now, context.Clock.Now));
         // One task with two open blocks: one open item, not two.
         var split = AddTask(context, "Split work", TimeSpan.FromMinutes(30));
@@ -325,7 +352,7 @@ public sealed class DailyListViewModelTests
         // One inbox task (open), one directly completed task (done).
         AddTask(context, "Inbox item");
         var done = AddTask(context, "Done item");
-        context.TaskService.Complete(done.Id);
+        context.Service.CompleteTask(done.Id);
 
         context.Calendar.Reload();
 
@@ -378,7 +405,7 @@ public sealed class DailyListViewModelTests
         context.Calendar.Reload();
         Assert.False(daily.IsUnscheduledEmpty);
 
-        context.TaskService.Complete(task.Id);
+        context.Service.CompleteTask(task.Id);
         context.Calendar.Reload();
         Assert.True(daily.IsAllComplete);
         Assert.True(daily.HasCompleted);
@@ -406,12 +433,11 @@ public sealed class DailyListViewModelTests
     }
 
     [Fact]
-    public void ReopeningCompletedCommitmentOccurrence_ReturnsItToScheduled()
+    public void ReopeningCompletedOccurrence_ReturnsItToScheduled()
     {
         var context = Create();
-        var commitment = context.Service.CreateFixedCommitment(
-            "Stats homework", Date, new TimeOnly(9, 0), new TimeOnly(10, 0));
-        context.Service.CompleteCommitmentOccurrence(commitment.Id, Date);
+        var repeating = AddRepeating(context, "Stats homework", new TimeOnly(9, 0), new TimeOnly(10, 0));
+        context.Service.CompleteOccurrence(repeating.Id, Date);
         context.Calendar.Reload();
 
         context.Daily.CompletedRows.Single().ToggleDoneCommand.Execute(null);
@@ -425,7 +451,7 @@ public sealed class DailyListViewModelTests
     {
         var context = Create();
         var task = AddTask(context, "Reopened work");
-        context.TaskService.Complete(task.Id);
+        context.Service.CompleteTask(task.Id);
         context.Calendar.Reload();
 
         context.Daily.CompletedRows.Single().ReopenCommand.Execute(null);
@@ -462,9 +488,287 @@ public sealed class DailyListViewModelTests
 
         var completedRow = context.Daily.CompletedRows.Single();
         Assert.Equal("Elapsed work", completedRow.Title);
-        Assert.True(completedRow.ShowDoneBlockMarker);
-        Assert.False(completedRow.CanReopen); // outcomes have no invented binary reopen
+        Assert.True(completedRow.ShowSessionCheck);
+        Assert.True(completedRow.CanReopen); // a mis-click is taken back from this page
         Assert.True(context.Tasks.GetById(task.Id)!.IsCompleted);
+    }
+
+    // ---- Scheduled sessions: one-click done and undo ----
+
+    [Fact]
+    public void ElapsedSessionRow_TogglesDoneInOneClick()
+    {
+        var context = Create();
+        var task = AddTask(context, "Elapsed work", TimeSpan.FromMinutes(60));
+        context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0)); // ended 10:00 < now 14:10
+        context.Calendar.Reload();
+        Assert.True(context.Daily.ScheduledRows.Single().NeedsOutcome);
+
+        context.Daily.ScheduledRows.Single().ToggleDoneCommand.Execute(null);
+
+        Assert.Empty(context.Daily.ScheduledRows);
+        var completed = context.Daily.CompletedRows.Single();
+        Assert.Equal("Elapsed work", completed.Title);
+        Assert.True(completed.IsDone);
+        Assert.True(context.Tasks.GetById(task.Id)!.IsCompleted);
+    }
+
+    [Fact]
+    public void UpcomingSessionRow_TogglesDoneBeforeItsSlotStarts()
+    {
+        var context = Create();
+        var task = AddTask(context, "Evening work", TimeSpan.FromMinutes(60));
+        context.Service.ScheduleTask(task.Id, Date, new TimeOnly(20, 0)); // starts 20:00 > now 14:10
+        context.Calendar.Reload();
+        var row = context.Daily.ScheduledRows.Single();
+        Assert.False(row.NeedsOutcome); // not elapsed — and elapsing was never a gate
+
+        row.ToggleDoneCommand.Execute(null);
+
+        Assert.True(context.Daily.CompletedRows.Single().IsDone);
+        Assert.True(context.Tasks.GetById(task.Id)!.IsCompleted);
+    }
+
+    [Fact]
+    public void DoneSessionRow_TogglesBackToScheduled_ClearingItsOutcome()
+    {
+        var context = Create();
+        var task = AddTask(context, "Elapsed work", TimeSpan.FromMinutes(60));
+        var block = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+        context.Daily.ScheduledRows.Single().ToggleDoneCommand.Execute(null);
+        var completed = context.Daily.CompletedRows.Single();
+        Assert.True(completed.CanReopen);
+
+        completed.ToggleDoneCommand.Execute(null);
+
+        Assert.Empty(context.Daily.CompletedRows);
+        var reopened = context.Daily.ScheduledRows.Single();
+        Assert.Equal("Elapsed work", reopened.Title);
+        Assert.False(reopened.IsDone);
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.None, context.Blocks.GetById(block.Id)!.Outcome);
+    }
+
+    [Fact]
+    public void SessionRow_SurvivesADoneUndoneDoneRoundTrip()
+    {
+        var context = Create();
+        var task = AddTask(context, "Elapsed work", TimeSpan.FromMinutes(60));
+        var block = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+        var changes = 0;
+        context.Calendar.DataChanged += () => changes++;
+
+        context.Daily.ScheduledRows.Single().ToggleDoneCommand.Execute(null);
+        context.Daily.CompletedRows.Single().ToggleDoneCommand.Execute(null);
+        context.Daily.ScheduledRows.Single().ToggleDoneCommand.Execute(null);
+
+        Assert.Empty(context.Daily.ScheduledRows);
+        Assert.True(context.Daily.CompletedRows.Single().IsDone);
+        Assert.True(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.Done, context.Blocks.GetById(block.Id)!.Outcome);
+        Assert.Equal(3, changes); // exactly one announcement per click, both directions
+    }
+
+    /// <summary>
+    /// Done is a whole-Task statement, so a repeating sibling forbids it. The
+    /// service would reject it anyway; the row must not even offer it.
+    /// </summary>
+    [Fact]
+    public void SessionRowWhoseTaskAlsoRepeats_CannotToggleDone()
+    {
+        var context = Create();
+        var task = AddTask(context, "Mixed work");
+        var session = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Blocks.Add(CalendarBlock.CreateTaskSession(
+            task.Id, Date, new TimeOnly(16, 0), new TimeOnly(17, 0), context.Clock.Now,
+            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday)));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single(r => r.BlockId == session.Id);
+        Assert.False(row.CanToggleSessionDone);
+        Assert.False(row.ToggleDoneCommand.CanExecute(null));
+
+        row.ToggleDoneCommand.Execute(null); // a direct invocation records nothing
+
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.None, context.Blocks.GetById(session.Id)!.Outcome);
+    }
+
+    /// <summary>
+    /// Undo is never gated on the repeating rule: SetTaskCompletion allows reopening
+    /// unconditionally so a globally-completed repeating Task can recover, and the
+    /// row must not seal that path off.
+    /// </summary>
+    [Fact]
+    public void GloballyCompletedTaskWithARepeatingSibling_CanStillBeToggledBack()
+    {
+        var context = Create();
+        var task = AddTask(context, "Mixed work");
+        var session = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+        context.Daily.ScheduledRows.Single().ToggleDoneCommand.Execute(null); // done while solo
+        // A repeating sibling appears afterwards: the Task is now globally complete
+        // AND repeating — the corrupted shape reopening exists to rescue.
+        context.Blocks.Add(CalendarBlock.CreateTaskSession(
+            task.Id, Date, new TimeOnly(16, 0), new TimeOnly(17, 0), context.Clock.Now,
+            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday)));
+        context.Calendar.Reload();
+
+        var completed = context.Daily.CompletedRows.Single(r => r.BlockId == session.Id);
+        Assert.True(completed.CanToggleSessionDone); // undo stays open
+        completed.ToggleDoneCommand.Execute(null);
+
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.None, context.Blocks.GetById(session.Id)!.Outcome);
+    }
+
+    [Fact]
+    public void SessionRow_ShowsACheckbox_AndKeepsTheOtherOutcomesAsASideAction()
+    {
+        var context = Create();
+        var task = AddTask(context, "Elapsed work", TimeSpan.FromMinutes(60));
+        context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single();
+        Assert.True(row.ShowSessionCheck);
+        Assert.True(row.ShowSessionOutcomeAction);
+        Assert.True(row.CanToggleSessionDone);
+        Assert.False(row.ShowSessionCheckBlockedNote);
+
+        row.ToggleDoneCommand.Execute(null);
+
+        var completed = context.Daily.CompletedRows.Single();
+        Assert.True(completed.ShowSessionCheck);          // the undo affordance
+        Assert.False(completed.ShowSessionOutcomeAction); // nothing left to record
+    }
+
+    [Fact]
+    public void SideActionOutcomes_StillWork_FromTheirNewHome()
+    {
+        var context = Create();
+        var task = AddTask(context, "Elapsed work", TimeSpan.FromMinutes(60));
+        var block = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+        var row = context.Daily.ScheduledRows.Single();
+        Assert.True(row.ShowSessionOutcomeAction);
+        row.RemainingMinutes = 45;
+
+        row.RecordNeedsMoreTimeCommand.Execute(null);
+
+        Assert.Equal(BlockOutcome.NeedsMoreTime, context.Blocks.GetById(block.Id)!.Outcome);
+        Assert.Equal(TimeSpan.FromMinutes(45), context.Tasks.GetById(task.Id)!.EstimatedDuration);
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
+    }
+
+    [Fact]
+    public void DidntHappen_StillWorks_FromTheSideAction()
+    {
+        var context = Create();
+        var task = AddTask(context, "Elapsed work", TimeSpan.FromMinutes(60));
+        var block = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+
+        context.Daily.ScheduledRows.Single().RecordDidntHappenCommand.Execute(null);
+
+        Assert.Equal(BlockOutcome.DidntHappen, context.Blocks.GetById(block.Id)!.Outcome);
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
+    }
+
+    /// <summary>
+    /// The unranked dash's explanation must surface even though the re-rank marker
+    /// is disabled — a disabled control raises no tooltip, so a hit-testable overlay
+    /// carries it (the same pattern as the blocked session checkbox).
+    /// </summary>
+    [Fact]
+    public void UnrankedRows_CarryAHitTestableRankExplanation()
+    {
+        var context = Create();
+        AddTask(context, "Unranked work", TimeSpan.FromMinutes(30));
+        context.Calendar.Reload();
+
+        var row = context.Daily.UnscheduledRows.Single();
+        Assert.Equal("–", row.PriorityText);
+        Assert.False(row.CanRerank);
+        Assert.True(row.ShowUnrankedNote);
+        Assert.Equal("Not ranked for this day.", row.PriorityAccessibleText);
+    }
+
+    /// <summary>
+    /// Capture is a mutation like any other: the Daily list behind the drawer must
+    /// pick the task up through the shared chain, exactly once.
+    /// </summary>
+    [Fact]
+    public void CapturingFromTheInboxDrawer_RefreshesTheDailyList_ExactlyOnce()
+    {
+        var shell = TestShell.Create();
+        var announced = 0;
+        shell.Calendar.DataChanged += () => announced++;
+
+        shell.Inbox.CaptureText = "Fresh capture";
+        shell.Inbox.CaptureCommand.Execute(null);
+
+        Assert.Contains(shell.Calendar.Daily.UnscheduledRows, r => r.Title == "Fresh capture");
+        Assert.Equal(1, announced);
+    }
+
+    [Fact]
+    public void ChatCaptures_RefreshTheDailyList()
+    {
+        var shell = TestShell.Create();
+        shell.Chat.InputText = "Draft the essay outline. Also email the recommendation request.";
+        shell.Chat.SubmitCommand.Execute(null);
+        var review = Assert.IsType<ChatReviewItemViewModel>(shell.Chat.Items[^1]);
+
+        review.AddAllCommand.Execute(null);
+
+        Assert.Contains(
+            shell.Calendar.Daily.UnscheduledRows, r => r.Title == "Draft the essay outline");
+    }
+
+    /// <summary>
+    /// "Didn't happen" settles the session: it leaves Scheduled as resolved history
+    /// for the day, and the task itself continues in Unscheduled — never both
+    /// sections at once (the plan's explicit invariant).
+    /// </summary>
+    [Fact]
+    public void DidntHappen_MovesTheSessionToResolvedHistory_AndListsTheTaskOnceInUnscheduled()
+    {
+        var context = Create();
+        var task = AddTask(context, "Elapsed work", TimeSpan.FromMinutes(60));
+        context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+
+        context.Daily.ScheduledRows.Single().RecordDidntHappenCommand.Execute(null);
+
+        Assert.DoesNotContain(context.Daily.ScheduledRows, r => r.TaskId == task.Id);
+        Assert.Single(context.Daily.UnscheduledRows, r => r.TaskId == task.Id);
+        var resolved = Assert.Single(context.Daily.CompletedRows);
+        Assert.False(resolved.IsDone); // no invented completion, no strikethrough
+        Assert.Equal("Didn't happen", resolved.StatusText);
+        Assert.False(resolved.ShowSessionOutcomeAction);
+        Assert.False(resolved.ShowChangeTimeAction);
+        Assert.Equal("0 of 1 complete", context.Daily.ProgressText);
+    }
+
+    [Fact]
+    public void NeedsMoreTime_MovesTheSessionToResolvedHistory_AndListsTheTaskOnceInUnscheduled()
+    {
+        var context = Create();
+        var task = AddTask(context, "Elapsed work", TimeSpan.FromMinutes(60));
+        context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+        var row = context.Daily.ScheduledRows.Single();
+        row.RemainingMinutes = 45;
+
+        row.RecordNeedsMoreTimeCommand.Execute(null);
+
+        Assert.DoesNotContain(context.Daily.ScheduledRows, r => r.TaskId == task.Id);
+        Assert.Single(context.Daily.UnscheduledRows, r => r.TaskId == task.Id);
+        Assert.Equal("Needs more time", Assert.Single(context.Daily.CompletedRows).StatusText);
+        Assert.Equal("0 of 1 complete", context.Daily.ProgressText);
     }
 
     [Fact]
@@ -477,7 +781,7 @@ public sealed class DailyListViewModelTests
 
         context.Daily.ScheduledRows.Single().ApproveProposalCommand.Execute(null);
         var approved = context.Daily.ScheduledRows.Single();
-        Assert.Equal("FLEX", approved.StatusText);
+        Assert.False(approved.HasStatus); // no FLEX badge — a scheduled time says it all
         Assert.Empty(context.Daily.UnscheduledRows);
 
         approved.UnscheduleCommand.Execute(null);
@@ -521,7 +825,7 @@ public sealed class DailyListViewModelTests
     public void ScheduleEditor_WarnsOnOverlapAndConstraints()
     {
         var context = Create();
-        context.Service.CreateFixedCommitment("Class", Date, new TimeOnly(15, 0), new TimeOnly(16, 0));
+        AddScheduled(context, "Class", new TimeOnly(15, 0), new TimeOnly(16, 0));
         var task = AddTask(context, "Constrained work", TimeSpan.FromMinutes(30));
         task.SetConstraints(new SchedulingConstraints(latestTime: new TimeOnly(12, 0)), context.Clock.Now);
         context.Tasks.Update(task);
@@ -578,6 +882,46 @@ public sealed class DailyListViewModelTests
         Assert.Empty(context.Blocks.GetAll());
     }
 
+    /// <summary>
+    /// Change time is one operation: whether it succeeds or fails, the session's
+    /// date, start, and end always move together — a torn write (moved but not
+    /// resized) is never possible.
+    /// </summary>
+    [Fact]
+    public void ChangeTime_IsOneOperation_NeverLeavesATornReschedule()
+    {
+        var inner = new InMemoryCalendarBlockRepository();
+        var failing = new FailingBlockRepository(inner);
+        var context = Create(failing);
+        var task = AddTask(context, "Rescheduled work", TimeSpan.FromMinutes(60));
+        var block = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(15, 0));
+        context.Calendar.Reload();
+        var editor = context.Daily.ScheduledRows.Single().ScheduleEditor!;
+        editor.Date = new DateTimeOffset(Date.AddDays(1).ToDateTime(TimeOnly.MinValue));
+        editor.Start = new TimeSpan(16, 0, 0);
+        editor.DurationMinutes = 45;
+        // If the reschedule needed a second write, this would tear it apart.
+        failing.FailOnUpdateNumber = 2;
+
+        var confirmed = editor.Confirm();
+
+        var persisted = inner.GetById(block.Id)!;
+        if (confirmed)
+        {
+            Assert.Equal(Date.AddDays(1), persisted.Date);
+            Assert.Equal(new TimeOnly(16, 0), persisted.StartTime);
+            Assert.Equal(new TimeOnly(16, 45), persisted.EndTime);
+        }
+        else
+        {
+            // A failed reschedule leaves every field exactly as it was.
+            Assert.NotNull(editor.Error);
+            Assert.Equal(Date, persisted.Date);
+            Assert.Equal(new TimeOnly(15, 0), persisted.StartTime);
+            Assert.Equal(new TimeOnly(16, 0), persisted.EndTime);
+        }
+    }
+
     [Fact]
     public void ChangeTime_MovesAndResizesTheBlock()
     {
@@ -597,79 +941,133 @@ public sealed class DailyListViewModelTests
         Assert.Equal(new TimeOnly(16, 45), moved.EndTime);
     }
 
-    // ---- Add task ----
+    // ---- Add task (both entry points open the one canonical Task editor) ----
 
     [Fact]
-    public void AddUnscheduled_CapturesOnConfirm_BlankDoesNothing_CancelCloses()
+    public void AddScheduledTask_OpensTheCanonicalEditor_PrefilledForTheVisibleDate()
     {
         var context = Create();
         context.Calendar.Reload();
-        var daily = context.Daily;
 
-        daily.BeginAddUnscheduledCommand.Execute(null);
-        Assert.True(daily.IsAddingUnscheduled);
+        context.Daily.AddScheduledTaskCommand.Execute(null);
 
-        daily.NewUnscheduledTitle = "   ";
-        daily.ConfirmAddUnscheduled();
-        Assert.True(daily.IsAddingUnscheduled); // blank does nothing
-        Assert.Empty(context.Tasks.GetAll());
+        // Design clock is Tuesday 14:10 → next quarter-hour start, default 30 min.
+        var editor = Assert.IsType<WholeTaskEditorViewModel>(context.Calendar.ActiveTaskEditor);
+        Assert.Null(editor.TaskId); // create mode
+        Assert.True(editor.ShowInlineSchedule);
+        Assert.Equal(Date.ToDateTime(TimeOnly.MinValue), editor.InlineSchedule.Date!.Value.Date);
+        Assert.Equal(new TimeSpan(14, 15, 0), editor.InlineSchedule.Start);
+        Assert.Equal(new TimeSpan(14, 45, 0), editor.InlineSchedule.End);
 
-        daily.NewUnscheduledTitle = "Captured inline";
-        daily.ConfirmAddUnscheduled();
-        Assert.False(daily.IsAddingUnscheduled);
-        Assert.Equal("Captured inline", daily.UnscheduledRows.Single().Title);
-        Assert.Equal("–", daily.UnscheduledRows.Single().PriorityText); // starts unranked
+        editor.Title = "Planned directly";
+        editor.SaveCommand.Execute(null);
 
-        daily.BeginAddUnscheduledCommand.Execute(null);
-        daily.CancelAddUnscheduled();
-        Assert.False(daily.IsAddingUnscheduled);
-    }
-
-    [Fact]
-    public void AddScheduled_CreatesAndSchedulesOnTheVisibleDate()
-    {
-        var context = Create();
-        var project = Project.Create("Applications", "#C2803F", context.Clock.Now);
-        context.Projects.Add(project);
-        context.Calendar.Reload();
-        var daily = context.Daily;
-
-        daily.BeginAddScheduledCommand.Execute(null);
-        daily.NewScheduledTitle = "Planned directly";
-        daily.NewScheduledStart = new TimeSpan(17, 0, 0);
-        daily.NewScheduledDurationMinutes = 45;
-        daily.NewScheduledProject = daily.ProjectChoices.Single(c => c.Name == "Applications");
-        daily.ConfirmAddScheduled();
-
-        Assert.False(daily.IsAddingScheduled);
-        Assert.Null(daily.ScheduledAddNotice);
-        var row = daily.ScheduledRows.Single();
+        Assert.Null(context.Calendar.ActiveTaskEditor);
+        var row = context.Daily.ScheduledRows.Single();
         Assert.Equal("Planned directly", row.Title);
-        Assert.Equal("Applications", row.ProjectName);
-        Assert.Equal("–", row.PriorityText); // new tasks begin unranked
         var block = context.Blocks.GetAll().Single();
-        Assert.Equal(new TimeOnly(17, 0), block.StartTime);
-        Assert.Equal(new TimeOnly(17, 45), block.EndTime);
+        Assert.Equal(Date, block.Date);
+        Assert.Equal(new TimeOnly(14, 15), block.StartTime);
+        Assert.Equal(new TimeOnly(14, 45), block.EndTime);
     }
 
     [Fact]
-    public void AddScheduled_ScheduleFailure_KeepsCapturedTaskWithReport()
+    public void AddUnscheduledTask_OpensTheCanonicalEditor_WithSchedulingOff()
+    {
+        var context = Create();
+        context.Calendar.Reload();
+
+        context.Daily.AddUnscheduledTaskCommand.Execute(null);
+
+        var editor = Assert.IsType<WholeTaskEditorViewModel>(context.Calendar.ActiveTaskEditor);
+        Assert.Null(editor.TaskId); // create mode
+        Assert.False(editor.ShowInlineSchedule);
+
+        editor.Title = "Captured through the editor";
+        editor.SaveCommand.Execute(null);
+
+        Assert.Null(context.Calendar.ActiveTaskEditor);
+        Assert.Equal("Captured through the editor", context.Daily.UnscheduledRows.Single().Title);
+        Assert.Empty(context.Blocks.GetAll());
+    }
+
+    [Fact]
+    public void AddScheduledTask_ScheduleFailure_KeepsTheEditorOpenWithTheError()
     {
         var inner = new InMemoryCalendarBlockRepository();
         var failing = new FailingBlockRepository(inner);
         var context = Create(failing);
         context.Calendar.Reload();
-        var daily = context.Daily;
 
-        daily.BeginAddScheduledCommand.Execute(null);
-        daily.NewScheduledTitle = "Never lost";
-        daily.NewScheduledStart = new TimeSpan(17, 0, 0);
+        context.Daily.AddScheduledTaskCommand.Execute(null);
+        var editor = Assert.IsType<WholeTaskEditorViewModel>(context.Calendar.ActiveTaskEditor);
+        editor.Title = "Never lost";
         failing.FailNextAdd = true;
-        daily.ConfirmAddScheduled();
+        editor.SaveCommand.Execute(null);
 
-        Assert.Contains("Never lost", daily.ScheduledAddNotice);
-        Assert.Contains("Unscheduled", daily.ScheduledAddNotice);
-        Assert.Empty(daily.ScheduledRows);
-        Assert.Equal("Never lost", daily.UnscheduledRows.Single().Title);
+        // Nothing is silently dropped: the modal stays open and reports the failure.
+        // (The neither-record-persists guarantee is proven against real SQLite in
+        // CalendarMutationAtomicityTests.)
+        Assert.Same(editor, context.Calendar.ActiveTaskEditor);
+        Assert.NotNull(editor.Error);
+        Assert.Empty(context.Daily.ScheduledRows);
+    }
+
+    // ---- Task completion routes through the one authoritative service path ----
+
+    /// <summary>
+    /// Reopening a completed task from the Daily list must clear the matching Done
+    /// session outcome too — the same reconciliation the canonical editor performs.
+    /// </summary>
+    [Fact]
+    public void ReopeningACompletedTask_FromTheDailyList_ClearsItsSessionOutcome()
+    {
+        var context = Create();
+        var task = AddTask(context, "Evening run");
+        var session = context.Service.ScheduleTask(task.Id, Date.AddDays(1), new TimeOnly(18, 0));
+        task.Complete(context.Clock.Now);
+        session.RecordOutcome(BlockOutcome.Done, context.Clock.Now);
+        context.Tasks.Update(task);
+        context.Blocks.Update(session);
+        context.Calendar.Reload();
+
+        var row = context.Daily.CompletedRows.Single(r => r.Title == "Evening run");
+        row.ReopenCommand.Execute(null);
+
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.None, context.Blocks.GetById(session.Id)!.Outcome);
+        // Its session is pending again, so the row leaves today's completed list.
+        Assert.DoesNotContain(context.Daily.CompletedRows, r => r.Title == "Evening run");
+    }
+
+    /// <summary>
+    /// Done is decided from the whole Task aggregate: a one-off session row whose
+    /// sibling repeats keeps its outcome flyout, but the global Done choice yields
+    /// to an explanatory note. The other outcomes stay valid.
+    /// </summary>
+    [Fact]
+    public void MixedScheduleSessionRow_OffersOutcomes_ButNeverGlobalDone()
+    {
+        var context = Create();
+        var task = AddTask(context, "Mixed work");
+        var session = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Blocks.Add(CalendarBlock.CreateTaskSession(
+            task.Id, Date, new TimeOnly(16, 0), new TimeOnly(17, 0), context.Clock.Now,
+            BeBoosted.Domain.Scheduling.RecurrenceRule.Weekly(1, DayOfWeek.Tuesday)));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single(r => r.BlockId == session.Id);
+        Assert.True(row.ShowSessionCheck);
+        Assert.False(row.CanToggleSessionDone); // present but disabled
+        Assert.True(row.ShowSessionCheckBlockedNote);
+        Assert.True(row.ShowSessionOutcomeAction);
+        Assert.False(row.CanRecordDone);
+        Assert.False(row.RecordDoneCommand.CanExecute(null));
+        Assert.True(row.RecordNeedsMoreTimeCommand.CanExecute(null));
+        Assert.True(row.RecordDidntHappenCommand.CanExecute(null));
+        Assert.True(row.ShowRepeatingCompletionNote);
+        Assert.Equal(
+            "This task repeats — complete each repeating occurrence separately.",
+            row.RepeatingCompletionNote);
     }
 }

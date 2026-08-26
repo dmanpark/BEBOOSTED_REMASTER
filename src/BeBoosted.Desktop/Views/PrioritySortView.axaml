@@ -139,6 +139,7 @@
           </Button>
           <Button Classes="link" HorizontalAlignment="Center"
                   Command="{Binding BuildPlanNowCommand}"
+                  IsVisible="{Binding ShowBuildPlanNow}"
                   AutomationProperties.Name="Build my plan now (finish early)">
             <TextBlock Text="Build my plan now" TextDecorations="Underline" />
           </Button>
@@ -163,6 +164,8 @@
             <TextBlock Classes="secondary"
                        Text="Ordinal ranks for this period only — they can change the next time you sort."
                        TextWrapping="Wrap" />
+            <TextBlock Classes="secondary" Text="{Binding ResultsNote}" TextWrapping="Wrap"
+                       IsVisible="{Binding HasResultsNote}" />
           </StackPanel>
 
           <ItemsControl ItemsSource="{Binding ResultGroups}">

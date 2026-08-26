@@ -1,14 +1,17 @@
+using System.Collections.Specialized;
 using BeBoosted.Desktop.Tests.Support;
 using BeBoosted.Desktop.ViewModels;
 using BeBoosted.Domain;
+using BeBoosted.Domain.Calendar;
 using BeBoosted.Domain.Tasks;
 
 namespace BeBoosted.Desktop.Tests.ViewModels;
 
 /// <summary>
-/// Moving or resizing a project's block on the calendar must refresh an open Project
-/// detail through Calendar.DataChanged — its upcoming rows are snapshots, so a stale
-/// detail would keep showing the old schedule.
+/// Mutating a project's task on the calendar — or assigning a task to a project from
+/// any editor entry point — must refresh an open Project detail through one logical
+/// notification chain. Its rows are snapshots, so a stale detail would keep showing
+/// the old schedule or miss the newly assigned task.
 /// </summary>
 public sealed class ShellProjectRefreshTests
 {
@@ -24,35 +27,47 @@ public sealed class ShellProjectRefreshTests
         return (shell, blocks, tasks);
     }
 
-    /// <summary>Creates the project (leaving its detail open) and a linked commitment 16:00–17:00 tomorrow.</summary>
-    private static CalendarBlockId CreateProjectWithLinkedCommitment(
-        ShellViewModel shell, InMemoryCalendarBlockRepository blocks)
+    /// <summary>
+    /// Creates the project (leaving its detail open) and a linked scheduled task
+    /// 16:00–17:00 tomorrow through the unified editor — repeating when asked.
+    /// </summary>
+    private static CalendarBlockId CreateProjectWithScheduledTask(
+        ShellViewModel shell, InMemoryCalendarBlockRepository blocks,
+        InMemoryTaskRepository tasks, bool repeating = false)
     {
         shell.NavigateCommand.Execute(AppSection.Projects);
         shell.Projects.NewProjectName = "Schoolwork";
         Assert.True(shell.Projects.TryCreateProject());
 
         shell.NavigateCommand.Execute(AppSection.Calendar);
-        shell.Calendar.OpenNewCommitmentEditorCommand.Execute(null);
-        var editor = shell.Calendar.CommitmentEditor!;
+        shell.Calendar.OpenNewTaskEditorCommand.Execute(null);
+        var editor = (WholeTaskEditorViewModel)shell.Calendar.ActiveTaskEditor!;
         editor.Title = "Stats HW";
-        editor.Date = new DateTimeOffset(Tomorrow.ToDateTime(TimeOnly.MinValue));
-        editor.Start = new TimeSpan(16, 0, 0);
-        editor.End = new TimeSpan(17, 0, 0);
+        editor.AddSessionCommand.Execute(null); // create mode: reveal the first session
+        editor.InlineSchedule.Date = new DateTimeOffset(Tomorrow.ToDateTime(TimeOnly.MinValue));
+        editor.InlineSchedule.Start = new TimeSpan(16, 0, 0);
+        editor.InlineSchedule.End = new TimeSpan(17, 0, 0);
         editor.SelectedProject = editor.ProjectOptions.Single(o => o.Name == "Schoolwork");
+        if (repeating)
+        {
+            editor.InlineSchedule.RepeatsWeekly = true;
+            editor.InlineSchedule.Days.Single(d => d.Day == DayOfWeek.Wednesday).IsSelected = true;
+        }
+
         editor.SaveCommand.Execute(null);
-        Assert.Null(shell.Calendar.CommitmentEditor);
+        Assert.Null(shell.Calendar.ActiveTaskEditor);
 
         var row = Assert.Single(shell.Projects.Detail!.ScheduledBlocks);
         Assert.Equal(new TimeOnly(16, 0), row.Start);
-        return blocks.GetAll().Single(b => b.Title == "Stats HW").Id;
+        var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
+        return blocks.GetForTask(task.Id).Single().Id;
     }
 
     [Fact]
-    public void MovingALinkedCommitment_RefreshesTheOpenProjectDetail()
+    public void MovingALinkedTask_RefreshesTheOpenProjectDetail()
     {
-        var (shell, blocks, _) = CreateShell();
-        var blockId = CreateProjectWithLinkedCommitment(shell, blocks);
+        var (shell, blocks, tasks) = CreateShell();
+        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
 
         var changes = 0;
         shell.Calendar.DataChanged += () => changes++;
@@ -65,10 +80,10 @@ public sealed class ShellProjectRefreshTests
     }
 
     [Fact]
-    public void ResizingALinkedCommitment_RefreshesTheDetail_ButFailuresStayQuiet()
+    public void ResizingALinkedTask_RefreshesTheDetail_ButFailuresStayQuiet()
     {
-        var (shell, blocks, _) = CreateShell();
-        var blockId = CreateProjectWithLinkedCommitment(shell, blocks);
+        var (shell, blocks, tasks) = CreateShell();
+        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
 
         var changes = 0;
         shell.Calendar.DataChanged += () => changes++;
@@ -85,68 +100,170 @@ public sealed class ShellProjectRefreshTests
     }
 
     [Fact]
-    public void CompletingFromCalendar_RefreshesTheOpenProjectDetail_Once()
+    public void CompletingAnOccurrenceFromCalendar_RefreshesTheOpenProjectDetail_Once()
     {
-        var (shell, blocks, _) = CreateShell();
-        var blockId = CreateProjectWithLinkedCommitment(shell, blocks);
+        var (shell, blocks, tasks) = CreateShell();
+        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks, repeating: true);
         shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
 
         var changes = 0;
         shell.Calendar.DataChanged += () => changes++;
-        CalendarBlockFor(shell, blockId).ToggleCommitmentDoneCommand.Execute(null);
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
 
         Assert.Equal(1, changes);
-        Assert.True(CalendarBlockFor(shell, blockId).IsDone);
-        Assert.Empty(shell.Projects.Detail!.ScheduledBlocks);
-        var done = Assert.Single(shell.Projects.Detail.CompletedScheduledBlocks);
+        Assert.True(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
+        var done = Assert.Single(shell.Projects.Detail!.CompletedScheduledBlocks);
         Assert.True(done.IsDone);
+        Assert.Equal(Tomorrow, done.Date);
 
         // Reopening from the calendar updates both surfaces again.
-        CalendarBlockFor(shell, blockId).ToggleCommitmentDoneCommand.Execute(null);
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
         Assert.Equal(2, changes);
-        Assert.False(CalendarBlockFor(shell, blockId).IsDone);
-        Assert.Single(shell.Projects.Detail.ScheduledBlocks);
+        Assert.False(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
         Assert.Empty(shell.Projects.Detail.CompletedScheduledBlocks);
     }
 
+    /// <summary>
+    /// Occurrence completion from the project page announces through the same
+    /// central chain as every other mutation: the calendar reloads, the Inbox and
+    /// card counts refresh, and the open detail refreshes exactly once — never
+    /// eagerly plus again through the shared event.
+    /// </summary>
     [Fact]
-    public void CompletingFromProjectDetail_RefreshesTheCalendar_Once()
+    public void CompletingAnOccurrenceFromProjectDetail_AnnouncesThroughTheOneChain()
     {
-        var (shell, blocks, _) = CreateShell();
-        var blockId = CreateProjectWithLinkedCommitment(shell, blocks);
+        var (shell, blocks, tasks) = CreateShell();
+        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks, repeating: true);
         shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
+        var detail = shell.Projects.Detail!;
+        var (changes, detailRefreshes, inboxResets) = (0, 0, 0);
+        shell.Calendar.DataChanged += () => changes++;
+        detail.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ProjectDetailViewModel.HasOpenTasks))
+            {
+                detailRefreshes++;
+            }
+        };
+        shell.Inbox.Tasks.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == NotifyCollectionChangedAction.Reset)
+            {
+                inboxResets++;
+            }
+        };
 
-        var calendarChanges = 0;
-        shell.Projects.CalendarDataChanged += () => calendarChanges++;
-
-        var row = Assert.Single(shell.Projects.Detail!.ScheduledBlocks);
+        var row = detail.ScheduledBlocks.Single(r => r.Date == Tomorrow);
         row.ToggleCompletionCommand.Execute(null);
 
-        Assert.Equal(1, calendarChanges);
-        Assert.True(CalendarBlockFor(shell, blockId).IsDone);
-        var done = Assert.Single(shell.Projects.Detail.CompletedScheduledBlocks);
+        Assert.Equal(1, changes);
+        Assert.Equal(1, detailRefreshes);
+        Assert.Equal(1, inboxResets);
+        Assert.True(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
+        var done = Assert.Single(detail.CompletedScheduledBlocks);
 
-        // Reopening from the project page updates the calendar again.
+        // Reopening from the project page flows through the same chain again.
         done.ToggleCompletionCommand.Execute(null);
-        Assert.Equal(2, calendarChanges);
-        Assert.False(CalendarBlockFor(shell, blockId).IsDone);
+        Assert.Equal(2, changes);
+        Assert.Equal(2, detailRefreshes);
+        Assert.False(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
+
+        // A no-op request emits no success notification anywhere.
+        detail.SetOccurrenceCompletion(blockId, Tomorrow, completed: false);
+        Assert.Equal(2, changes);
+        Assert.Equal(2, detailRefreshes);
+    }
+
+    /// <summary>
+    /// Completing a scheduled one-off from the project detail must reconcile the
+    /// Task and its session outcome together, exactly like the canonical editor.
+    /// </summary>
+    [Fact]
+    public void CompletingAScheduledOneOff_FromProjectDetail_MarksItsSessionDone()
+    {
+        var (shell, blocks, tasks) = CreateShell();
+        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
+        var changes = 0;
+        shell.Calendar.DataChanged += () => changes++;
+
+        var row = shell.Projects.Detail!.OpenTasks.Single(t => t.Title == "Stats HW");
+        row.CompleteCommand.Execute(null);
+
+        var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
+        Assert.True(task.IsCompleted);
+        Assert.Equal(BlockOutcome.Done, blocks.GetById(blockId)!.Outcome);
+        Assert.Equal(1, changes);
+    }
+
+    /// <summary>
+    /// One central chain, each dependent exactly once: the open detail must not
+    /// refresh eagerly and then again through the shared event.
+    /// </summary>
+    [Fact]
+    public void CompletingATask_FromProjectDetail_RefreshesEachDependentExactlyOnce()
+    {
+        var (shell, blocks, tasks) = CreateShell();
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        shell.Projects.NewProjectName = "Schoolwork";
+        Assert.True(shell.Projects.TryCreateProject());
+        var detail = shell.Projects.Detail!;
+        var clock = new FakeClock(TestShell.DesignDate);
+        var task = TaskItem.Create("Essay plan", clock.Now, projectId: detail.Project.Id);
+        tasks.Add(task);
+        detail.Refresh();
+
+        var (changes, detailRefreshes, inboxResets, cardResets) = (0, 0, 0, 0);
+        shell.Calendar.DataChanged += () => changes++;
+        detail.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ProjectDetailViewModel.HasOpenTasks))
+            {
+                detailRefreshes++;
+            }
+        };
+        shell.Inbox.Tasks.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == NotifyCollectionChangedAction.Reset)
+            {
+                inboxResets++;
+            }
+        };
+        shell.Projects.Projects.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == NotifyCollectionChangedAction.Reset)
+            {
+                cardResets++;
+            }
+        };
+
+        detail.OpenTasks.Single(t => t.Title == "Essay plan").CompleteCommand.Execute(null);
+
+        Assert.Equal(1, detailRefreshes);
+        Assert.Equal(1, changes);
+        Assert.Equal(1, inboxResets);
+        Assert.Equal(1, cardResets);
+        Assert.Contains(detail.RecentlyCompleted, t => t.Title == "Essay plan");
     }
 
     [Fact]
     public void NoOpCompletionRequests_EmitNoChangeNotifications()
     {
-        var (shell, blocks, _) = CreateShell();
-        var blockId = CreateProjectWithLinkedCommitment(shell, blocks);
+        var (shell, blocks, tasks) = CreateShell();
+        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks, repeating: true);
 
         var changes = 0;
         shell.Calendar.DataChanged += () => changes++;
-        shell.Calendar.SetCommitmentOccurrenceDone(blockId, Tomorrow, done: false); // already open
+        shell.Calendar.SetOccurrenceDone(blockId, Tomorrow, done: false); // already open
 
         Assert.Equal(0, changes);
     }
 
-    private static CalendarBlockViewModel CalendarBlockFor(ShellViewModel shell, CalendarBlockId id)
-        => shell.Calendar.Days.SelectMany(d => d.Blocks).First(b => !b.IsProposal && b.Id == id);
+    private static CalendarBlockViewModel CalendarBlockFor(
+        ShellViewModel shell, CalendarBlockId id, DateOnly? date = null)
+        => shell.Calendar.Days
+            .Where(d => date is null || d.Date == date)
+            .SelectMany(d => d.Blocks)
+            .First(b => !b.IsProposal && b.Id == id);
 
     [Fact]
     public void MovingATaskBackedProjectBlock_RefreshesTheOpenProjectDetail()
@@ -170,5 +287,49 @@ public sealed class ShellProjectRefreshTests
         shell.NavigateCommand.Execute(AppSection.Projects);
         var updated = Assert.Single(shell.Projects.Detail!.ScheduledBlocks);
         Assert.Equal(new TimeOnly(11, 0), updated.Start);
+    }
+
+    /// <summary>
+    /// TDD phase 14, the reported failure: edit a task (PIQ2), assign it to a project
+    /// (CAPPs), save — the already-open project must list it immediately, its scheduled
+    /// session must appear in the Scheduled section, and card counts must update.
+    /// </summary>
+    [Fact]
+    public void AssigningAProjectThroughTheTaskEditor_RefreshesTheOpenProject()
+    {
+        var (shell, blocks, tasks) = CreateShell();
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        shell.Projects.NewProjectName = "CAPPs";
+        Assert.True(shell.Projects.TryCreateProject());
+
+        var clock = new FakeClock(TestShell.DesignDate);
+        var piq2 = TaskItem.Create("PIQ2", clock.Now);
+        tasks.Add(piq2);
+        shell.Calendar.ScheduleTask(piq2.Id, Tomorrow, new TimeOnly(10, 0));
+
+        // Edit through the one canonical editor while the CAPPs detail stays open.
+        shell.Calendar.OpenTaskEditorForTask(piq2.Id);
+        var editor = (WholeTaskEditorViewModel)shell.Calendar.ActiveTaskEditor!;
+        editor.SelectedProject = editor.ProjectOptions.Single(o => o.Name == "CAPPs");
+        editor.SaveCommand.Execute(null);
+
+        Assert.Equal(shell.Projects.Detail!.Project.Id, tasks.GetById(piq2.Id)!.ProjectId);
+        Assert.Contains(shell.Projects.Detail.OpenTasks, t => t.Title == "PIQ2");
+        Assert.Contains(shell.Projects.Detail.ScheduledBlocks, r => r.Title == "PIQ2");
+
+        // "No project" removes it again — still through the same chain.
+        shell.Calendar.OpenTaskEditorForTask(piq2.Id);
+        var reopened = (WholeTaskEditorViewModel)shell.Calendar.ActiveTaskEditor!;
+        reopened.SelectedProject = reopened.ProjectOptions.Single(o => o.Name == "No project");
+        reopened.SaveCommand.Execute(null);
+        Assert.DoesNotContain(shell.Projects.Detail.OpenTasks, t => t.Title == "PIQ2");
+
+        // The project index card counts refresh through the same notification chain.
+        shell.Calendar.OpenTaskEditorForTask(piq2.Id);
+        var again = (WholeTaskEditorViewModel)shell.Calendar.ActiveTaskEditor!;
+        again.SelectedProject = again.ProjectOptions.Single(o => o.Name == "CAPPs");
+        again.SaveCommand.Execute(null);
+        shell.Projects.CloseDetailCommand.Execute(null);
+        Assert.Contains("1 open task", shell.Projects.Projects.Single().MetaText);
     }
 }

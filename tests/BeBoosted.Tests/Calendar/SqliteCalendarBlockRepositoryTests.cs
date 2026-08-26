@@ -1,11 +1,9 @@
 using BeBoosted.Domain;
 using BeBoosted.Domain.Calendar;
-using BeBoosted.Domain.Projects;
 using BeBoosted.Domain.Scheduling;
 using BeBoosted.Domain.Tasks;
 using BeBoosted.Infrastructure.Calendar;
 using BeBoosted.Infrastructure.Persistence;
-using BeBoosted.Infrastructure.Projects;
 using BeBoosted.Infrastructure.Tasks;
 using BeBoosted.Tests.Support;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -20,7 +18,6 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
     private readonly TempDatabase _database = new();
     private readonly SqliteCalendarBlockRepository _repository;
     private readonly SqliteTaskRepository _tasks;
-    private readonly SqliteProjectRepository _projects;
 
     public SqliteCalendarBlockRepositoryTests()
     {
@@ -28,7 +25,6 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
             .Apply(EmbeddedMigrations.Load());
         _repository = new SqliteCalendarBlockRepository(_database.Factory);
         _tasks = new SqliteTaskRepository(_database.Factory);
-        _projects = new SqliteProjectRepository(_database.Factory);
     }
 
     private TaskId AddTask(string title)
@@ -38,30 +34,24 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
         return task.Id;
     }
 
-    private ProjectId AddProject(string name)
-    {
-        var project = Project.Create(name, "#5B8DEF", Now);
-        _projects.Add(project);
-        return project.Id;
-    }
-
     [Fact]
     public void AddAndGetById_RoundTripsEveryField()
     {
-        var block = CalendarBlock.CreateFixedCommitment(
-            "AP Economics", Date, new TimeOnly(8, 30), new TimeOnly(9, 45), Now,
+        var taskId = AddTask("AP Economics");
+        var block = CalendarBlock.CreateTaskSession(
+            taskId, Date, new TimeOnly(8, 30), new TimeOnly(9, 45), Now,
             RecurrenceRule.Weekly(1, DayOfWeek.Monday, DayOfWeek.Friday));
 
         _repository.Add(block);
         var loaded = _repository.GetById(block.Id);
 
         Assert.NotNull(loaded);
-        Assert.Equal("AP Economics", loaded.Title);
-        Assert.Null(loaded.TaskId);
+        Assert.Null(loaded.Title);
+        Assert.Equal(taskId, loaded.TaskId);
         Assert.Equal(Date, loaded.Date);
         Assert.Equal(new TimeOnly(8, 30), loaded.StartTime);
         Assert.Equal(new TimeOnly(9, 45), loaded.EndTime);
-        Assert.Equal(BlockKind.FixedCommitment, loaded.Kind);
+        Assert.Equal(BlockKind.TaskSession, loaded.Kind);
         Assert.Equal(
             [DayOfWeek.Monday, DayOfWeek.Friday],
             loaded.Recurrence!.DaysOfWeek.OrderBy(d => d));
@@ -72,9 +62,28 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void AddAndGetById_RoundTripsExternalEvents()
+    {
+        var external = CalendarBlock.Rehydrate(
+            CalendarBlockId.New(), null, "Imported standup", Date, new TimeOnly(13, 30),
+            new TimeOnly(14, 0), BlockKind.ExternalEvent, null, "google", "evt-1", 0,
+            BlockOutcome.None, null, Now, Now);
+
+        _repository.Add(external);
+        var loaded = _repository.GetById(external.Id);
+
+        Assert.NotNull(loaded);
+        Assert.Equal("Imported standup", loaded.Title);
+        Assert.Equal(BlockKind.ExternalEvent, loaded.Kind);
+        Assert.Equal("google", loaded.Provider);
+        Assert.Equal("evt-1", loaded.ExternalId);
+        Assert.True(loaded.IsExternal);
+    }
+
+    [Fact]
     public void Update_PersistsOutcome()
     {
-        var block = CalendarBlock.CreateForTask(AddTask("Task"), Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
+        var block = CalendarBlock.CreateTaskSession(AddTask("Task"), Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
         _repository.Add(block);
 
         block.RecordOutcome(BlockOutcome.NeedsMoreTime, Now.AddHours(2));
@@ -88,10 +97,10 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
     [Fact]
     public void GetCandidatesBetween_IncludesDatedInRangeAndEarlierRecurring()
     {
-        var inRange = CalendarBlock.CreateForTask(AddTask("A"), Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
-        var outOfRange = CalendarBlock.CreateForTask(AddTask("B"), Date.AddDays(30), new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
-        var recurringEarlier = CalendarBlock.CreateFixedCommitment(
-            "Class", Date.AddDays(-30), new TimeOnly(8, 0), new TimeOnly(9, 0), Now,
+        var inRange = CalendarBlock.CreateTaskSession(AddTask("A"), Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
+        var outOfRange = CalendarBlock.CreateTaskSession(AddTask("B"), Date.AddDays(30), new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
+        var recurringEarlier = CalendarBlock.CreateTaskSession(
+            AddTask("Class"), Date.AddDays(-30), new TimeOnly(8, 0), new TimeOnly(9, 0), Now,
             RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
         _repository.Add(inRange);
         _repository.Add(outOfRange);
@@ -107,10 +116,10 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
     [Fact]
     public void GetElapsedWithoutOutcome_UsesEndTimeBoundary()
     {
-        var endedEarlier = CalendarBlock.CreateForTask(AddTask("A"), Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
-        var endsAtNow = CalendarBlock.CreateForTask(AddTask("B"), Date, new TimeOnly(13, 0), new TimeOnly(14, 0), Now);
-        var future = CalendarBlock.CreateForTask(AddTask("C"), Date, new TimeOnly(18, 0), new TimeOnly(19, 0), Now);
-        var yesterday = CalendarBlock.CreateForTask(AddTask("D"), Date.AddDays(-1), new TimeOnly(18, 0), new TimeOnly(19, 0), Now);
+        var endedEarlier = CalendarBlock.CreateTaskSession(AddTask("A"), Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
+        var endsAtNow = CalendarBlock.CreateTaskSession(AddTask("B"), Date, new TimeOnly(13, 0), new TimeOnly(14, 0), Now);
+        var future = CalendarBlock.CreateTaskSession(AddTask("C"), Date, new TimeOnly(18, 0), new TimeOnly(19, 0), Now);
+        var yesterday = CalendarBlock.CreateTaskSession(AddTask("D"), Date.AddDays(-1), new TimeOnly(18, 0), new TimeOnly(19, 0), Now);
         foreach (var block in new[] { endedEarlier, endsAtNow, future, yesterday })
         {
             _repository.Add(block);
@@ -123,12 +132,38 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
     }
 
     [Fact]
+    public void GetElapsedWithoutOutcome_SkipsRepeatingSessionsAndCompletedTasks()
+    {
+        // A repeating session completes per occurrence — never listed here.
+        var repeating = CalendarBlock.CreateTaskSession(
+            AddTask("Class"), Date.AddDays(-7), new TimeOnly(8, 0), new TimeOnly(9, 0), Now,
+            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
+        // A session whose task is already completed no longer nags either.
+        var doneTask = TaskItem.Create("Done work", Now);
+        doneTask.Complete(Now);
+        _tasks.Add(doneTask);
+        var doneSession = CalendarBlock.CreateTaskSession(
+            doneTask.Id, Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
+        var open = CalendarBlock.CreateTaskSession(
+            AddTask("Open"), Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
+        foreach (var block in new[] { repeating, doneSession, open })
+        {
+            _repository.Add(block);
+        }
+
+        var elapsed = _repository.GetElapsedWithoutOutcome(Date, new TimeOnly(14, 0));
+
+        var single = Assert.Single(elapsed);
+        Assert.Equal(open.Id, single.Id);
+    }
+
+    [Fact]
     public void GetTaskIdsWithPendingBlocks_ExcludesResolvedBlocks()
     {
         var pendingTask = AddTask("Pending");
         var resolvedTask = AddTask("Resolved");
-        var pending = CalendarBlock.CreateForTask(pendingTask, Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
-        var resolved = CalendarBlock.CreateForTask(resolvedTask, Date, new TimeOnly(10, 0), new TimeOnly(11, 0), Now);
+        var pending = CalendarBlock.CreateTaskSession(pendingTask, Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
+        var resolved = CalendarBlock.CreateTaskSession(resolvedTask, Date, new TimeOnly(10, 0), new TimeOnly(11, 0), Now);
         resolved.RecordOutcome(BlockOutcome.Done, Now);
         _repository.Add(pending);
         _repository.Add(resolved);
@@ -140,56 +175,9 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
     }
 
     [Fact]
-    public void AddAndGetById_RoundTripsTheProjectLink()
-    {
-        var projectId = AddProject("Schoolwork");
-        var block = CalendarBlock.CreateFixedCommitment(
-            "AP Economics", Date, new TimeOnly(8, 30), new TimeOnly(9, 45), Now,
-            projectId: projectId);
-
-        _repository.Add(block);
-        var loaded = _repository.GetById(block.Id);
-
-        Assert.Equal(projectId, loaded!.ProjectId);
-    }
-
-    [Fact]
-    public void Update_PersistsProjectAssignment()
-    {
-        var block = CalendarBlock.CreateFixedCommitment(
-            "Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45), Now);
-        _repository.Add(block);
-
-        var projectId = AddProject("Math");
-        block.AssignToProject(projectId, Now.AddHours(1));
-        _repository.Update(block);
-        Assert.Equal(projectId, _repository.GetById(block.Id)!.ProjectId);
-
-        block.AssignToProject(null, Now.AddHours(2));
-        _repository.Update(block);
-        Assert.Null(_repository.GetById(block.Id)!.ProjectId);
-    }
-
-    [Fact]
-    public void DeletingProject_ClearsTheLink_WithoutDeletingTheCommitment()
-    {
-        var projectId = AddProject("Schoolwork");
-        var block = CalendarBlock.CreateFixedCommitment(
-            "AP Economics", Date, new TimeOnly(8, 30), new TimeOnly(9, 45), Now,
-            projectId: projectId);
-        _repository.Add(block);
-
-        _projects.Delete(projectId);
-
-        var loaded = _repository.GetById(block.Id);
-        Assert.NotNull(loaded);
-        Assert.Null(loaded.ProjectId);
-    }
-
-    [Fact]
     public void Delete_RemovesBlock()
     {
-        var block = CalendarBlock.CreateForTask(AddTask("A"), Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
+        var block = CalendarBlock.CreateTaskSession(AddTask("A"), Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
         _repository.Add(block);
         _repository.Delete(block.Id);
         Assert.Null(_repository.GetById(block.Id));
@@ -199,7 +187,7 @@ public sealed class SqliteCalendarBlockRepositoryTests : IDisposable
     public void DeletingTask_CascadesToItsBlocks()
     {
         var taskId = AddTask("Doomed");
-        var block = CalendarBlock.CreateForTask(taskId, Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
+        var block = CalendarBlock.CreateTaskSession(taskId, Date, new TimeOnly(9, 0), new TimeOnly(10, 0), Now);
         _repository.Add(block);
 
         _tasks.Delete(taskId);

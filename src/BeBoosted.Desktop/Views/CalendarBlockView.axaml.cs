@@ -14,7 +14,7 @@ namespace BeBoosted.Desktop.Views;
 /// Block interactions: pointer drag to move (snap 15 min, Alt for 5), bottom-grip resize,
 /// and keyboard movement (↑/↓ move, Alt for fine, Shift+↑/↓ resize, ←/→ change day,
 /// Enter/Space outcome menu or editor, Delete by kind). A click below the drag threshold
-/// opens the editor for local commitments. External commitments stay locked.
+/// opens the Task editor for local sessions. External synced events stay locked.
 /// </summary>
 public partial class CalendarBlockView : UserControl
 {
@@ -135,7 +135,7 @@ public partial class CalendarBlockView : UserControl
             return;
         }
 
-        // Recurring commitments move as a whole series — a day change would be rejected
+        // Repeating tasks move as a whole series — a day change would be rejected
         // on release, so their preview never leaves the origin column.
         _currentColumn = vm.IsRecurring ? _originColumn : _surface.ColumnFromX(position.X);
         if (_currentColumn != _originColumn)
@@ -177,7 +177,7 @@ public partial class CalendarBlockView : UserControl
         if (!confirmed)
         {
             // A press that never crossed the drag threshold is a click:
-            // local commitments open their editor, everything else just keeps focus.
+            // local sessions open the Task editor, everything else just keeps focus.
             Vm.Edit();
             return;
         }
@@ -264,7 +264,7 @@ public partial class CalendarBlockView : UserControl
                 e.Handled = true;
                 return;
             case Key.Delete when Vm.CanDelete:
-                // Dispatches by kind; external commitments never reach here.
+                // Dispatches by kind; external synced events never reach here.
                 Vm.UnscheduleCommand.Execute(null);
                 e.Handled = true;
                 return;

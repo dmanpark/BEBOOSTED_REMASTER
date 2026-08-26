@@ -37,6 +37,46 @@ public partial class ProjectsView : UserControl
         }
     }
 
+    // Rename flyouts seed their field on the way open, so the box shows the current
+    // name rather than whatever was typed the last time it was used.
+    private void OnBeginProjectRenameClick(object? sender, RoutedEventArgs e)
+        => Vm?.Detail?.BeginRename();
+
+    private void OnRenameProjectClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm?.Detail?.TryCommitRename() == true)
+        {
+            CloseFlyout(sender);
+        }
+    }
+
+    private void OnBeginFileRenameClick(object? sender, RoutedEventArgs e)
+        => Vm?.FileDetail?.BeginRename();
+
+    private void OnRenameFileClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm?.FileDetail?.TryCommitRename() == true)
+        {
+            CloseFlyout(sender);
+        }
+    }
+
+    private void OnBeginResourceRenameClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Control { DataContext: ResourceRowViewModel row })
+        {
+            row.BeginRename();
+        }
+    }
+
+    private void OnRenameResourceClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Control { DataContext: ResourceRowViewModel row } && row.TryCommitRename())
+        {
+            CloseFlyout(sender);
+        }
+    }
+
     private void OnAddLinkClick(object? sender, RoutedEventArgs e)
     {
         if (Vm?.FileDetail?.TryAddLink() == true)

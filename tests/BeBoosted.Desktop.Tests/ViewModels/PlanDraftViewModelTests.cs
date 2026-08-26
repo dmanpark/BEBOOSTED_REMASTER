@@ -1,4 +1,5 @@
 using BeBoosted.Desktop.Tests.Support;
+using BeBoosted.Desktop.ViewModels;
 using BeBoosted.Domain.Prioritization;
 using BeBoosted.Domain.Tasks;
 
@@ -36,6 +37,37 @@ public sealed class PlanDraftViewModelTests
         Assert.Contains("4 blocks proposed", shell.Calendar.DraftSummaryText);
         Assert.Contains("4 tasks scheduled", shell.Calendar.DraftSummaryText);
         Assert.NotNull(proposals[0].Why);
+    }
+
+    /// <summary>Leftover tasks are described in Task language — never as "flexible".</summary>
+    [Fact]
+    public void DraftSummary_DescribesLeftovers_AsUnscheduled()
+    {
+        var clock = new FakeClock(TestShell.DesignDate);
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var shell = TestShell.Create(tasks: tasks, blocks: blocks);
+        // The whole planning day is occupied, so the deadline-today task cannot fit.
+        var busy = TaskItem.Create("All-day", clock.Now);
+        tasks.Add(busy);
+        blocks.Add(Domain.Calendar.CalendarBlock.CreateTaskSession(
+            busy.Id, TestShell.DesignDate, new TimeOnly(8, 0), new TimeOnly(21, 0), clock.Now));
+        tasks.Add(TaskItem.Create(
+            "Urgent today", clock.Now,
+            estimatedDuration: TimeSpan.FromMinutes(45), deadline: TestShell.DesignDate));
+        tasks.Add(TaskItem.Create(
+            "Placeable", clock.Now, estimatedDuration: TimeSpan.FromMinutes(30)));
+        // Plan the week: the flexible-deadline task lands on another day while the
+        // deadline-today task stays unplaceable.
+        shell.Calendar.ViewKind = Application.Settings.CalendarViewKind.Week;
+        shell.Calendar.Reload();
+
+        shell.PlanCommand.Execute(null);
+
+        Assert.True(shell.Calendar.HasDraft);
+        Assert.Contains("1 remains unscheduled", shell.Calendar.DraftSummaryText);
+        Assert.DoesNotContain(
+            "flexible", shell.Calendar.DraftSummaryText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -109,14 +141,16 @@ public sealed class PlanDraftViewModelTests
     public void ProposalOverlappingFixedEvent_IsConflicted_AndFixedEventUnchanged()
     {
         var (shell, _, _) = CreateShell();
-        shell.Calendar.OpenNewCommitmentEditorCommand.Execute(null);
-        var editor = shell.Calendar.CommitmentEditor!;
+        shell.Calendar.OpenNewTaskEditorCommand.Execute(null);
+        var editor = (WholeTaskEditorViewModel)shell.Calendar.ActiveTaskEditor!;
         editor.Title = "Lunch";
-        editor.Date = new DateTimeOffset(TestShell.DesignDate.ToDateTime(TimeOnly.MinValue));
-        editor.Start = new TimeSpan(12, 0, 0);
-        editor.End = new TimeSpan(12, 45, 0);
+        editor.AddSessionCommand.Execute(null); // create mode: reveal the first session
+        editor.InlineSchedule.Date = new DateTimeOffset(
+            TestShell.DesignDate.ToDateTime(TimeOnly.MinValue));
+        editor.InlineSchedule.Start = new TimeSpan(12, 0, 0);
+        editor.InlineSchedule.End = new TimeSpan(12, 45, 0);
         editor.SaveCommand.Execute(null);
-        Assert.Null(shell.Calendar.CommitmentEditor);
+        Assert.Null(shell.Calendar.ActiveTaskEditor);
 
         shell.PlanCommand.Execute(null);
         var proposal = shell.Calendar.Days.SelectMany(d => d.Blocks).First(b => b.IsProposal);
@@ -170,5 +204,129 @@ public sealed class PlanDraftViewModelTests
             .ToList();
         Assert.Equal("Finish DECA presentation", proposals[0].Title); // rank #1 gets the earliest slot
         Assert.Contains("Rank #1", proposals[0].Why!.Priority);
+    }
+
+    /// <summary>A calendar VM over shared in-memory doubles (no shell), for guard tests.</summary>
+    private static (Desktop.ViewModels.CalendarViewModel Calendar, InMemoryTaskRepository Tasks,
+        InMemoryCalendarBlockRepository Blocks, InMemoryPlanningProposalRepository Proposals,
+        Application.Calendar.CalendarService Service, Application.Planning.PlanningService Planning,
+        FakeClock Clock)
+        CreateBareCalendar()
+    {
+        var clock = new FakeClock(TestShell.DesignDate);
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var completions = new InMemoryOccurrenceCompletionRepository();
+        var proposals = new InMemoryPlanningProposalRepository();
+        var mutations = new InMemoryCalendarMutations(blocks, completions, tasks, proposals);
+        var service = new Application.Calendar.CalendarService(
+            blocks, completions, mutations, tasks, clock);
+        var planning = new Application.Planning.PlanningService(
+            proposals, new Application.Tasks.InboxQueryService(tasks, blocks),
+            new InMemoryPrioritizationRepository(), service, mutations, clock);
+        var calendar = TestShell.CreateCalendarViewModel(
+            new InMemorySettingsStore(), clock, tasks, blocks,
+            new InMemoryProjectRepository(), service, planning);
+        return (calendar, tasks, blocks, proposals, service, planning, clock);
+    }
+
+    /// <summary>
+    /// Completing a Task after planning but before approval rejects the approval:
+    /// the VM surfaces the rejection as a plain notice and creates no block, no
+    /// Undo entry, and no refresh.
+    /// </summary>
+    [Fact]
+    public void ApprovingADraftForACompletedTask_ShowsANoticeAndChangesNothing()
+    {
+        var (calendar, tasks, blocks, _, service, _, clock) = CreateBareCalendar();
+        var task = TaskItem.Create("Essay outline", clock.Now);
+        tasks.Add(task);
+        calendar.CreateDraft(PlanningPeriod.ForToday(TestShell.DesignDate));
+        Assert.True(calendar.HasDraft);
+        service.CompleteTask(task.Id); // completed after planning, before approval
+        var changes = 0;
+        calendar.DataChanged += () => changes++;
+
+        calendar.ApproveDraftCommand.Execute(null);
+
+        // The rejection surfaces as a plain notice — no Undo offer…
+        Assert.True(calendar.IsUndoToastVisible);
+        Assert.False(calendar.IsUndoAvailable);
+        Assert.Contains("reopen", calendar.UndoToastText, StringComparison.OrdinalIgnoreCase);
+        // …and nothing was created, refreshed, or made undoable.
+        Assert.Empty(blocks.GetAll());
+        Assert.Equal(0, changes);
+        Assert.True(calendar.HasDraft);
+        calendar.UndoLastApprovalCommand.Execute(null); // no recovery entry exists
+        Assert.Empty(blocks.GetAll());
+        Assert.Equal(0, changes);
+    }
+
+    /// <summary>
+    /// Undo validates every physical block before deleting anything — safe even on
+    /// the pass-through in-memory double, which has no rollback: a rejected undo
+    /// keeps its recovery entry, announces no success, and refreshes nothing.
+    /// </summary>
+    [Fact]
+    public void AnUndoAgainstACorruptedBlock_KeepsTheEntry_AndAnnouncesNoSuccess()
+    {
+        var (calendar, tasks, blocks, _, _, _, clock) = CreateBareCalendar();
+        var task = TaskItem.Create("Essay outline", clock.Now);
+        tasks.Add(task);
+        calendar.CreateDraft(PlanningPeriod.ForToday(TestShell.DesignDate));
+        calendar.ApproveDraftCommand.Execute(null);
+        var block = Assert.Single(blocks.GetAll());
+        var stranger = TaskItem.Create("Someone else's work", clock.Now);
+        tasks.Add(stranger);
+        // Corruption: the physical block now belongs to a different Task.
+        blocks.Update(Domain.Calendar.CalendarBlock.Rehydrate(
+            block.Id, stranger.Id, title: null, block.Date, block.StartTime, block.EndTime,
+            Domain.Calendar.BlockKind.TaskSession, recurrence: null,
+            Domain.Calendar.CalendarBlock.LocalProvider, externalId: null, syncState: 0,
+            Domain.Calendar.BlockOutcome.None, outcomeRecordedAt: null, clock.Now, clock.Now));
+        var changes = 0;
+        calendar.DataChanged += () => changes++;
+
+        calendar.UndoLastApprovalCommand.Execute(null);
+
+        // Rejected before any write: the block survives, nothing announced as undone.
+        Assert.False(calendar.IsUndoAvailable);
+        Assert.Equal(0, changes);
+        Assert.NotNull(blocks.GetById(block.Id));
+
+        // Restoring the block's owner lets a plain retry undo the approval.
+        blocks.Update(Domain.Calendar.CalendarBlock.Rehydrate(
+            block.Id, task.Id, title: null, block.Date, block.StartTime, block.EndTime,
+            Domain.Calendar.BlockKind.TaskSession, recurrence: null,
+            Domain.Calendar.CalendarBlock.LocalProvider, externalId: null, syncState: 0,
+            Domain.Calendar.BlockOutcome.None, outcomeRecordedAt: null, clock.Now, clock.Now));
+        calendar.UndoLastApprovalCommand.Execute(null);
+        Assert.Empty(blocks.GetAll());
+        Assert.Equal(1, changes);
+        Assert.True(calendar.HasDraft);
+    }
+
+    /// <summary>
+    /// A duplicate-id undo request is rejected before the first write — on the
+    /// in-memory double a mid-write rejection would tear state permanently.
+    /// </summary>
+    [Fact]
+    public void UndoApproval_WithDuplicateIds_LeavesTheInMemoryStateIntact()
+    {
+        var (_, tasks, blocks, proposals, _, planning, clock) = CreateBareCalendar();
+        tasks.Add(TaskItem.Create("Essay outline", clock.Now));
+        var draft = planning.CreateDraft(PlanningPeriod.ForToday(TestShell.DesignDate)).Proposal;
+        var blockId = planning.ApproveAll(draft.Id).Single();
+
+        Assert.Throws<Domain.DomainException>(
+            () => planning.UndoApproval(draft.Id, [blockId, blockId]));
+
+        Assert.NotNull(blocks.GetById(blockId));
+        Assert.Equal(
+            Domain.Planning.ProposedBlockStatus.Approved,
+            proposals.GetById(draft.Id)!.GetBlock(blockId).Status);
+
+        planning.UndoApproval(draft.Id, [blockId]); // a valid retry still works
+        Assert.Null(blocks.GetById(blockId));
     }
 }

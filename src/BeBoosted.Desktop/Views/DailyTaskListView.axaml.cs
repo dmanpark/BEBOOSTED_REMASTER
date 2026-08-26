@@ -27,21 +27,6 @@ public partial class DailyTaskListView : UserControl
             if (_subscribed is not null)
             {
                 _subscribed.RowFocusRequested += OnRowFocusRequested;
-                _subscribed.PropertyChanged += (_, e) =>
-                {
-                    // The inline capture field should be ready to type in immediately.
-                    if (e.PropertyName == nameof(DailyListViewModel.IsAddingUnscheduled)
-                        && _subscribed.IsAddingUnscheduled)
-                    {
-                        Dispatcher.UIThread.Post(() => UnscheduledAddBox.Focus());
-                    }
-
-                    if (e.PropertyName == nameof(DailyListViewModel.IsAddingScheduled)
-                        && _subscribed.IsAddingScheduled)
-                    {
-                        Dispatcher.UIThread.Post(() => ScheduledAddTitleBox.Focus());
-                    }
-                };
             }
         };
     }
@@ -56,16 +41,6 @@ public partial class DailyTaskListView : UserControl
                     && (border.DataContext as DailyRowViewModel)?.TaskId == taskId);
             row?.Focus();
         });
-
-    /// <summary>Escape cancels the inline capture without saving anything.</summary>
-    private void OnUnscheduledAddKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Escape && DataContext is DailyListViewModel daily)
-        {
-            daily.CancelAddUnscheduled();
-            e.Handled = true;
-        }
-    }
 
     /// <summary>Reopening a schedule flyout starts from fresh defaults, not stale edits.</summary>
     private void OnScheduleFlyoutOpened(object? sender, EventArgs e)

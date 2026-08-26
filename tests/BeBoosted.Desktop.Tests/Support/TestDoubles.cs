@@ -59,6 +59,9 @@ public sealed class InMemoryCalendarBlockRepository : ICalendarBlockRepository
 {
     private readonly List<CalendarBlock> _blocks = [];
 
+    /// <summary>Mirrors the SQL join that hides sessions of completed tasks.</summary>
+    public ITaskRepository? Tasks { get; set; }
+
     public void Add(CalendarBlock block) => _blocks.Add(block);
 
     public void Update(CalendarBlock block)
@@ -86,16 +89,14 @@ public sealed class InMemoryCalendarBlockRepository : ICalendarBlockRepository
             .ToList();
 
     public IReadOnlyList<CalendarBlock> GetForTask(TaskId taskId)
-        => _blocks.Where(b => b.TaskId == taskId).OrderBy(b => b.Date).ToList();
-
-    public IReadOnlyList<CalendarBlock> GetForProject(ProjectId projectId)
-        => _blocks.Where(b => b.ProjectId == projectId)
-            .OrderBy(b => b.Date).ThenBy(b => b.StartTime)
-            .ToList();
+        => _blocks.Where(b => b.TaskId == taskId)
+            .OrderBy(b => b.Date).ThenBy(b => b.StartTime).ToList();
 
     public IReadOnlyList<CalendarBlock> GetElapsedWithoutOutcome(DateOnly today, TimeOnly now)
         => _blocks
-            .Where(b => b.Kind == BlockKind.TaskBlock && b.Outcome == BlockOutcome.None
+            .Where(b => b is { Kind: BlockKind.TaskSession, IsExternal: false, Recurrence: null }
+                && b.Outcome == BlockOutcome.None
+                && (b.TaskId is not { } taskId || Tasks?.GetById(taskId)?.IsCompleted != true)
                 && (b.Date < today || (b.Date == today && b.EndTime <= now)))
             .OrderBy(b => b.Date).ThenBy(b => b.StartTime)
             .ToList();
@@ -107,26 +108,26 @@ public sealed class InMemoryCalendarBlockRepository : ICalendarBlockRepository
             .ToHashSet();
 }
 
-public sealed class InMemoryCommitmentCompletionRepository : ICommitmentCompletionRepository
+public sealed class InMemoryOccurrenceCompletionRepository : IOccurrenceCompletionRepository
 {
-    private readonly Dictionary<(CalendarBlockId, DateOnly), CommitmentCompletion> _completions = [];
+    private readonly Dictionary<(CalendarBlockId, DateOnly), OccurrenceCompletion> _completions = [];
 
-    public void Add(CommitmentCompletion completion)
+    public void Add(OccurrenceCompletion completion)
         => _completions[(completion.BlockId, completion.OccurrenceDate)] = completion;
 
     public void Remove(CalendarBlockId blockId, DateOnly occurrenceDate)
         => _completions.Remove((blockId, occurrenceDate));
 
-    public CommitmentCompletion? Get(CalendarBlockId blockId, DateOnly occurrenceDate)
+    public OccurrenceCompletion? Get(CalendarBlockId blockId, DateOnly occurrenceDate)
         => _completions.GetValueOrDefault((blockId, occurrenceDate));
 
-    public IReadOnlyList<CommitmentCompletion> GetForBlock(CalendarBlockId blockId)
+    public IReadOnlyList<OccurrenceCompletion> GetForBlock(CalendarBlockId blockId)
         => _completions.Values
             .Where(c => c.BlockId == blockId)
             .OrderBy(c => c.OccurrenceDate)
             .ToList();
 
-    public IReadOnlyList<CommitmentCompletion> GetBetween(DateOnly from, DateOnly to)
+    public IReadOnlyList<OccurrenceCompletion> GetBetween(DateOnly from, DateOnly to)
         => _completions.Values
             .Where(c => c.OccurrenceDate >= from && c.OccurrenceDate <= to)
             .OrderBy(c => c.OccurrenceDate)
@@ -139,10 +140,17 @@ public sealed class InMemoryCommitmentCompletionRepository : ICommitmentCompleti
 /// </summary>
 public sealed class InMemoryCalendarMutations(
     ICalendarBlockRepository blocks,
-    ICommitmentCompletionRepository completions) : ICalendarMutations
+    IOccurrenceCompletionRepository completions,
+    ITaskRepository tasks,
+    IPlanningProposalRepository? proposals = null) : ICalendarMutations
 {
-    public void Execute(Action<ICalendarBlockRepository, ICommitmentCompletionRepository> mutation)
-        => mutation(blocks, completions);
+    private readonly IPlanningProposalRepository _proposals =
+        proposals ?? new InMemoryPlanningProposalRepository();
+
+    public void Execute(
+        Action<ICalendarBlockRepository, IOccurrenceCompletionRepository, ITaskRepository,
+            IPlanningProposalRepository> mutation)
+        => mutation(blocks, completions, tasks, _proposals);
 }
 
 public sealed class InMemoryPlanningProposalRepository : IPlanningProposalRepository
@@ -159,6 +167,9 @@ public sealed class InMemoryPlanningProposalRepository : IPlanningProposalReposi
             .OrderByDescending(p => p.CreatedAt)
             .FirstOrDefault();
 
+    public IReadOnlyList<PlanningProposal> GetAll()
+        => _proposals.Values.OrderBy(p => p.CreatedAt).ToList();
+
     public void Delete(PlanningProposalId id) => _proposals.Remove(id);
 }
 
@@ -166,6 +177,13 @@ public sealed class InMemoryPrioritizationRepository : IPrioritizationRepository
 {
     private readonly List<ComparisonDecision> _decisions = [];
     private readonly Dictionary<string, IReadOnlyList<PriorityRank>> _ranks = [];
+
+    public void SaveSessionResult(
+        string periodKey, IReadOnlyList<ComparisonDecision> decisions, IReadOnlyList<PriorityRank> ranks)
+    {
+        SaveDecisions(decisions);
+        ReplaceRanks(periodKey, ranks);
+    }
 
     public void SaveDecisions(IReadOnlyList<ComparisonDecision> decisions) => _decisions.AddRange(decisions);
 
@@ -249,9 +267,21 @@ public sealed class FakeResourceStorage : IResourceStorage
 {
     private readonly HashSet<string> _stored = [];
 
-    public string Store(ResourceId id, string sourcePath)
+    public string Store(string relativeFolder, string preferredFileName, string sourcePath)
     {
-        var storedPath = id + Path.GetExtension(sourcePath);
+        var storedPath = FreePath(relativeFolder, preferredFileName);
+        _stored.Add(storedPath);
+        return storedPath;
+    }
+
+    public string? MoveInto(string currentStoredPath, string relativeFolder, string preferredFileName)
+    {
+        if (!_stored.Remove(currentStoredPath))
+        {
+            return null;
+        }
+
+        var storedPath = FreePath(relativeFolder, preferredFileName);
         _stored.Add(storedPath);
         return storedPath;
     }
@@ -261,6 +291,21 @@ public sealed class FakeResourceStorage : IResourceStorage
     public bool Exists(string storedPath) => _stored.Contains(storedPath);
 
     public void Delete(string storedPath) => _stored.Remove(storedPath);
+
+    private string FreePath(string relativeFolder, string preferredFileName)
+    {
+        var stem = Path.GetFileNameWithoutExtension(preferredFileName);
+        var extension = Path.GetExtension(preferredFileName);
+        for (var attempt = 1; ; attempt++)
+        {
+            var candidate = attempt == 1 ? preferredFileName : $"{stem} ({attempt}){extension}";
+            var storedPath = Path.Combine(relativeFolder, candidate);
+            if (!_stored.Contains(storedPath))
+            {
+                return storedPath;
+            }
+        }
+    }
 }
 
 public sealed class FakeIndexer(IResourceRepository resources, IClock clock) : IResourceIndexer
@@ -320,11 +365,17 @@ public static class TestShell
 
     /// <summary>A CalendarService over in-memory doubles with its own completion store.</summary>
     public static CalendarService CreateCalendarService(
-        InMemoryCalendarBlockRepository blocks, InMemoryTaskRepository tasks, IClock clock)
+        InMemoryCalendarBlockRepository blocks,
+        InMemoryTaskRepository tasks,
+        IClock clock,
+        InMemoryPlanningProposalRepository? proposals = null)
     {
-        var completions = new InMemoryCommitmentCompletionRepository();
+        blocks.Tasks = tasks;
+        var completions = new InMemoryOccurrenceCompletionRepository();
         return new CalendarService(
-            blocks, completions, new InMemoryCalendarMutations(blocks, completions), tasks, clock);
+            blocks, completions,
+            new InMemoryCalendarMutations(blocks, completions, tasks, proposals),
+            tasks, clock);
     }
 
     /// <summary>
@@ -347,7 +398,6 @@ public static class TestShell
             new InMemoryAiProvenanceRepository(), tasks, aiPermissions, clock);
         return new CalendarViewModel(
             new AppSettings(store), clock, service, tasks, planning, projects,
-            new TaskService(tasks, clock),
             new InboxQueryService(tasks, blocks),
             new PrioritySortService(ranks ?? new InMemoryPrioritizationRepository(), clock),
             aiService);
@@ -358,30 +408,35 @@ public static class TestShell
         InMemoryTaskRepository? tasks = null,
         InMemoryCalendarBlockRepository? blocks = null,
         InMemoryProjectRepository? projects = null,
-        InMemoryCommitmentCompletionRepository? completions = null,
+        InMemoryOccurrenceCompletionRepository? completions = null,
         DateOnly? today = null,
-        InMemoryPrioritizationRepository? ranks = null)
+        InMemoryPrioritizationRepository? ranks = null,
+        BeBoosted.Desktop.Platform.IFileRevealService? reveal = null,
+        IResourceStorage? resourceStorage = null)
     {
         var settingsStore = store ?? new InMemorySettingsStore();
         var settings = new AppSettings(settingsStore);
         var clock = new FakeClock(today ?? DesignDate);
         var repository = tasks ?? new InMemoryTaskRepository();
         var blockRepository = blocks ?? new InMemoryCalendarBlockRepository();
-        var completionRepository = completions ?? new InMemoryCommitmentCompletionRepository();
+        blockRepository.Tasks = repository;
+        var completionRepository = completions ?? new InMemoryOccurrenceCompletionRepository();
         var taskService = new TaskService(repository, clock);
+        var proposalRepository = new InMemoryPlanningProposalRepository();
+        var calendarMutations = new InMemoryCalendarMutations(
+            blockRepository, completionRepository, repository, proposalRepository);
         var calendarService = new CalendarService(
-            blockRepository, completionRepository,
-            new InMemoryCalendarMutations(blockRepository, completionRepository), repository, clock);
+            blockRepository, completionRepository, calendarMutations, repository, clock);
         var inboxQuery = new InboxQueryService(repository, blockRepository);
         var prioritization = ranks ?? new InMemoryPrioritizationRepository();
         var prioritySort = new PrioritySortService(prioritization, clock);
         var planning = new PlanningService(
-            new InMemoryPlanningProposalRepository(), blockRepository,
-            inboxQuery, prioritization, calendarService, clock);
+            proposalRepository,
+            inboxQuery, prioritization, calendarService, calendarMutations, clock);
         var projectRepo = projects ?? new InMemoryProjectRepository();
         var fileRepo = new InMemoryProjectFileRepository();
         var resourceRepo = new InMemoryResourceRepository();
-        var storage = new FakeResourceStorage();
+        var storage = resourceStorage ?? new FakeResourceStorage();
         var aiPermissions = new AiPermissionSettings(settingsStore);
         var aiProvider = new BeBoosted.Infrastructure.Ai.LocalHeuristicAiProvider(resourceRepo, projectRepo);
         var aiService = new AiService(
@@ -393,11 +448,11 @@ public static class TestShell
         return new ShellViewModel(
             new CalendarViewModel(
                 settings, clock, calendarService, repository, planning, projectRepo,
-                taskService, inboxQuery, prioritySort, aiService),
-            new InboxViewModel(taskService, inboxQuery, projectRepo, aiService, clock),
+                inboxQuery, prioritySort, aiService),
+            new InboxViewModel(taskService, calendarService, inboxQuery, projectRepo, aiService, clock),
             new ProjectsViewModel(
-                projectService, projectRepo, fileRepo, resourceRepo, taskService,
-                calendarService, new FakeFileReveal(), aiService),
+                projectService, projectRepo, fileRepo, resourceRepo,
+                calendarService, reveal ?? new FakeFileReveal(), aiService),
             new SettingsViewModel(new FakePaths(), aiPermissions),
             new ChatViewModel(aiService, aiPermissions, clock),
             prioritySort,
@@ -407,8 +462,9 @@ public static class TestShell
     }
 
     /// <summary>
-    /// Seeds the calendar content of design frames 01/02: weekday classes, fixed events,
-    /// two scheduled task blocks on the design date, and one completed morning block.
+    /// Seeds the calendar content of design frames 01/02 on the unified model: a
+    /// repeating weekday class, one-off scheduled tasks across the week, two work
+    /// sessions on the design date, and one completed morning session.
     /// </summary>
     public static void SeedDesignCalendar(
         InMemoryTaskRepository tasks,
@@ -418,18 +474,21 @@ public static class TestShell
         var now = clock.Now;
         var tue = DesignDate;
 
-        blocks.Add(CalendarBlock.CreateFixedCommitment(
-            "AP Economics", tue.AddDays(-8), new TimeOnly(8, 30), new TimeOnly(9, 45), now,
+        void AddScheduled(string title, DateOnly date, TimeOnly start, TimeOnly end,
+            BeBoosted.Domain.Scheduling.RecurrenceRule? recurrence = null)
+        {
+            var task = TaskItem.Create(title, now);
+            tasks.Add(task);
+            blocks.Add(CalendarBlock.CreateTaskSession(task.Id, date, start, end, now, recurrence));
+        }
+
+        AddScheduled("AP Economics", tue.AddDays(-8), new TimeOnly(8, 30), new TimeOnly(9, 45),
             BeBoosted.Domain.Scheduling.RecurrenceRule.Weekly(
-                1, DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday)));
-        blocks.Add(CalendarBlock.CreateFixedCommitment(
-            "Lunch", tue, new TimeOnly(12, 0), new TimeOnly(12, 45), now));
-        blocks.Add(CalendarBlock.CreateFixedCommitment(
-            "DECA club meeting", tue.AddDays(1), new TimeOnly(15, 30), new TimeOnly(17, 0), now));
-        blocks.Add(CalendarBlock.CreateFixedCommitment(
-            "SAT practice test", tue.AddDays(4), new TimeOnly(10, 0), new TimeOnly(12, 0), now));
-        blocks.Add(CalendarBlock.CreateFixedCommitment(
-            "Family dinner", tue.AddDays(5), new TimeOnly(18, 0), new TimeOnly(19, 30), now));
+                1, DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday));
+        AddScheduled("Lunch", tue, new TimeOnly(12, 0), new TimeOnly(12, 45));
+        AddScheduled("DECA club meeting", tue.AddDays(1), new TimeOnly(15, 30), new TimeOnly(17, 0));
+        AddScheduled("SAT practice test", tue.AddDays(4), new TimeOnly(10, 0), new TimeOnly(12, 0));
+        AddScheduled("Family dinner", tue.AddDays(5), new TimeOnly(18, 0), new TimeOnly(19, 30));
 
         var practice = TaskItem.Create("Practice DECA role-play", now, estimatedDuration: TimeSpan.FromMinutes(90));
         var statement = TaskItem.Create("Draft personal statement", now, estimatedDuration: TimeSpan.FromMinutes(60));
@@ -438,10 +497,10 @@ public static class TestShell
         tasks.Add(statement);
         tasks.Add(reading);
 
-        blocks.Add(CalendarBlock.CreateForTask(practice.Id, tue, new TimeOnly(15, 30), new TimeOnly(17, 0), now));
-        blocks.Add(CalendarBlock.CreateForTask(statement.Id, tue, new TimeOnly(19, 0), new TimeOnly(20, 0), now));
+        blocks.Add(CalendarBlock.CreateTaskSession(practice.Id, tue, new TimeOnly(15, 30), new TimeOnly(17, 0), now));
+        blocks.Add(CalendarBlock.CreateTaskSession(statement.Id, tue, new TimeOnly(19, 0), new TimeOnly(20, 0), now));
 
-        var readingBlock = CalendarBlock.CreateForTask(reading.Id, tue, new TimeOnly(7, 10), new TimeOnly(7, 50), now);
+        var readingBlock = CalendarBlock.CreateTaskSession(reading.Id, tue, new TimeOnly(7, 10), new TimeOnly(7, 50), now);
         readingBlock.RecordOutcome(BlockOutcome.Done, now);
         blocks.Add(readingBlock);
         reading.Complete(now);
