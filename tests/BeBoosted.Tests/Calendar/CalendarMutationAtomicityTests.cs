@@ -145,6 +145,24 @@ public sealed class CalendarMutationAtomicityTests : IDisposable
     }
 
     /// <summary>
+    /// Done no longer writes the task, so a failing task write has nothing to fail:
+    /// the session outcome persists on its own and the task stays uncompleted.
+    /// </summary>
+    [Fact]
+    public void RecordOutcome_Done_WithAFailingTaskWrite_StillPersistsTheSessionOutcome()
+    {
+        var (task, session) = AddOpenTaskWithSession();
+        var service = CreateService(new FailingTaskWriteMutations(_database.Factory));
+
+        service.RecordOutcome(session.Id, BlockOutcome.Done);
+
+        var reloadedBlock = new SqliteCalendarBlockRepository(_database.Factory).GetById(session.Id)!;
+        var reloadedTask = new SqliteTaskRepository(_database.Factory).GetById(task.Id)!;
+        Assert.Equal(BlockOutcome.Done, reloadedBlock.Outcome);
+        Assert.False(reloadedTask.IsCompleted);
+    }
+
+    /// <summary>
     /// Creating a scheduled task is one transaction: when the session write fails,
     /// no orphaned Task survives either.
     /// </summary>
