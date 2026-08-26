@@ -901,4 +901,66 @@ public sealed class SessionEditorViewModelTests
         Assert.Equal(new TimeOnly(16, 0), context.Blocks.GetById(series.Id)!.StartTime);
         Assert.False(context.Service.IsOccurrenceCompleted(series.Id, Date));
     }
+
+    // ---- Session title (Task 8) ----
+
+    [Fact]
+    public void SavingASessionTitle_PersistsIt_AndBlankClearsIt()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        var session = AddSession(context, task, Date, new TimeOnly(9, 0), new TimeOnly(10, 0));
+
+        var editor = Open(context, session);
+        editor.SessionTitle = "Jane Eyre 1-10";
+        editor.SaveCommand.Execute(null);
+
+        Assert.Equal("Jane Eyre 1-10", context.Blocks.GetById(session.Id)!.Title);
+
+        var reopened = Open(context, context.Blocks.GetById(session.Id)!);
+        Assert.Equal("Jane Eyre 1-10", reopened.SessionTitle);
+        reopened.SessionTitle = "   ";
+        reopened.SaveCommand.Execute(null);
+
+        Assert.Null(context.Blocks.GetById(session.Id)!.Title);
+    }
+
+    [Fact]
+    public void TheTitlePlaceholder_IsTheParentTaskTitle_SoTheFieldReadsAsOptional()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        var session = AddSession(context, task, Date, new TimeOnly(9, 0), new TimeOnly(10, 0));
+
+        var editor = Open(context, session);
+
+        Assert.Equal("Read Jane Eyre 1-20", editor.TitlePlaceholder);
+        Assert.Equal(string.Empty, editor.SessionTitle); // untitled session
+    }
+
+    /// <summary>
+    /// Trap 2: the title lives outside <see cref="ScheduleFieldsViewModel"/>, so
+    /// IsDirty and MarkSaved must be extended by hand. A title-only edit — no
+    /// schedule field touched — must register as dirty before save, actually
+    /// persist, and clear back to clean after save.
+    /// </summary>
+    [Fact]
+    public void SessionTitleOnlyChange_IsDirty_AndPersists_AndClearsDirtyAfterSave()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        var session = AddSession(context, task, Date, new TimeOnly(9, 0), new TimeOnly(10, 0));
+        var editor = Open(context, session);
+        Assert.False(editor.IsDirty);
+
+        editor.SessionTitle = "Jane Eyre 1-10";
+
+        Assert.True(editor.IsDirty);
+
+        editor.SaveCommand.Execute(null);
+
+        Assert.Equal("Jane Eyre 1-10", context.Blocks.GetById(session.Id)!.Title);
+        var reopened = Open(context, context.Blocks.GetById(session.Id)!);
+        Assert.False(reopened.IsDirty);
+    }
 }

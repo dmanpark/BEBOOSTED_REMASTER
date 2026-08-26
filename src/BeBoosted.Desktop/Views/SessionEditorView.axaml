@@ -197,6 +197,16 @@
             <TextBlock Classes="meta" TextWrapping="Wrap" Text="{Binding NumberingNote}"
                        IsVisible="{Binding NumberingNote, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
+            <!-- This sitting's own name (Task 8) — optional, falls back to the Task's title. -->
+            <StackPanel Spacing="6">
+              <TextBlock Classes="metaLabel" Text="TITLE" />
+              <Border Classes="focusRing">
+                <TextBox Name="SessionTitleBox" Text="{Binding SessionTitle}"
+                         PlaceholderText="{Binding TitlePlaceholder}"
+                         AutomationProperties.Name="Session title" />
+              </Border>
+            </StackPanel>
+
             <!-- THIS OCCURRENCE — completion only, one day only (frame 4g) -->
             <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="0,1,0,0"
                     Padding="0,12,0,0" IsVisible="{Binding ShowOccurrenceSection}">

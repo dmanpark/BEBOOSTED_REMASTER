@@ -636,6 +636,11 @@ public sealed partial class CalendarViewModel : ViewModelBase
             return false;
         }
 
+        // Title is session-editor-only state, not a ScheduleFieldsViewModel field
+        // (that type is shared with the whole-task editor's inline schedule), so
+        // it's attached here rather than built into TryBuildSchedule.
+        schedule = schedule with { Title = editor.SessionTitle };
+
         try
         {
             if (editor.Mode == SessionEditorMode.New)

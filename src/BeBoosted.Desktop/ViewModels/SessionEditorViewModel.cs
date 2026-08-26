@@ -34,6 +34,7 @@ public sealed partial class SessionEditorViewModel : ViewModelBase
     private readonly TimeOnly? _persistedEnd;
     private ScheduleSnapshot _snapshot = new(null, null, null, false, []);
     private bool _savedOccurrenceCompleted;
+    private string _savedSessionTitle = string.Empty;
     private Action? _pendingConfirmedAction;
 
     internal SessionEditorViewModel(
@@ -60,6 +61,7 @@ public sealed partial class SessionEditorViewModel : ViewModelBase
             _persistedDate = session.Date;
             _persistedStart = session.StartTime;
             _persistedEnd = session.EndTime;
+            SessionTitle = session.Title ?? string.Empty;
         }
 
         IsOccurrenceCompleted = isOccurrenceCompleted;
@@ -152,6 +154,15 @@ public sealed partial class SessionEditorViewModel : ViewModelBase
 
     /// <summary>The parent task's title — read-only context, never editable here.</summary>
     public string TaskTitle { get; }
+
+    /// <summary>
+    /// This sitting's own name ("Jane Eyre 1-10"). Empty keeps the Task's title,
+    /// which is what the placeholder shows.
+    /// </summary>
+    [ObservableProperty]
+    public partial string SessionTitle { get; set; } = string.Empty;
+
+    public string TitlePlaceholder => TaskTitle;
 
     /// <summary>"DECA · due Sun, Aug 16" — project and deadline context, possibly empty.</summary>
     public string TaskContext { get; }
@@ -247,13 +258,16 @@ public sealed partial class SessionEditorViewModel : ViewModelBase
     }
 
     internal bool IsDirty
-        => Schedule.IsDirtyAgainst(_snapshot) || IsOccurrenceCompleted != _savedOccurrenceCompleted;
+        => Schedule.IsDirtyAgainst(_snapshot)
+            || IsOccurrenceCompleted != _savedOccurrenceCompleted
+            || SessionTitle != _savedSessionTitle;
 
     /// <summary>The dirty snapshot advances to the just-persisted values.</summary>
     internal void MarkSaved()
     {
         _snapshot = Schedule.Capture();
         _savedOccurrenceCompleted = IsOccurrenceCompleted;
+        _savedSessionTitle = SessionTitle;
         Error = null; // an earlier failure never outlives this success
     }
 
