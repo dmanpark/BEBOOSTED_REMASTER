@@ -55,6 +55,7 @@ public sealed partial class DailyRowViewModel : ViewModelBase
         DailyListViewModel owner,
         BlockOccurrence occurrence,
         string title,
+        string? parentTitle,
         string? projectName,
         PriorityRank? rank,
         TaskItem? task,
@@ -82,6 +83,7 @@ public sealed partial class DailyRowViewModel : ViewModelBase
             IsDone = isDone,
             NeedsOutcome = needsOutcome,
             Outcome = occurrence.Block.Outcome,
+            ParentTitle = parentTitle,
         };
 
     internal static DailyRowViewModel ForProposal(
@@ -126,6 +128,14 @@ public sealed partial class DailyRowViewModel : ViewModelBase
     public DailyRowKind Kind { get; }
 
     public string Title { get; }
+
+    /// <summary>
+    /// The owning Task's title, set only when this session carries its own title —
+    /// the row then leads with the session and names its parent beneath.
+    /// </summary>
+    public string? ParentTitle { get; internal set; }
+
+    public bool HasParentTitle => ParentTitle is not null;
 
     public DateOnly Date { get; }
 

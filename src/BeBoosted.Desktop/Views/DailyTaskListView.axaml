@@ -303,6 +303,10 @@
                   StrokeThickness="1.2" Stroke="{StaticResource BrushPencilGray}"
                   IsVisible="{Binding IsLocked}" VerticalAlignment="Center"
                   ToolTip.Tip="Synced event — locked. BeBoosted never edits it." />
+            <!-- A titled session leads with its own title; this names the parent task beneath it. -->
+            <TextBlock Classes="meta" Text="{Binding ParentTitle, StringFormat='· {0}'}"
+                       IsVisible="{Binding HasParentTitle}" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis" />
             <TextBlock Classes="meta" Text="{Binding ProjectName}"
                        IsVisible="{Binding ShowProjectLabel}" VerticalAlignment="Center" />
             <TextBlock Classes="meta" Text="{Binding MetaText}"

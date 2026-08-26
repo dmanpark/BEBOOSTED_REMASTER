@@ -1092,4 +1092,39 @@ public sealed class DailyListViewModelTests
         Assert.Equal(BlockOutcome.Done, context.Blocks.GetById(evening.Id)!.Outcome);
         Assert.Empty(context.Daily.UnscheduledRows);
     }
+
+    // ---- Per-session titles: a titled session leads with its own title and
+    // ---- names its parent task beneath it ----
+
+    [Fact]
+    public void ATitledSessionRow_LeadsWithItsOwnTitle_AndNamesTheParentTask()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        context.Service.AddSession(
+            task.Id,
+            new TaskScheduleRequest(Date, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "Jane Eyre 1-10"));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single();
+
+        Assert.Equal("Jane Eyre 1-10", row.Title);
+        Assert.Equal("Read Jane Eyre 1-20", row.ParentTitle);
+        Assert.True(row.HasParentTitle);
+    }
+
+    [Fact]
+    public void AnUntitledSessionRow_ShowsTheTaskTitle_AndNoParentSubtext()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single();
+
+        Assert.Equal("Read Jane Eyre 1-20", row.Title);
+        Assert.Null(row.ParentTitle);
+        Assert.False(row.HasParentTitle);
+    }
 }

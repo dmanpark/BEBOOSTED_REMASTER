@@ -258,6 +258,8 @@ public sealed partial class DailyListViewModel : ViewModelBase
     {
         var block = occurrence.Block;
         var title = block.Title ?? task?.Title ?? "(deleted task)";
+        // Only a session with its own title needs its parent named beneath it.
+        var parentTitle = block.Title is not null && !block.IsExternal ? task?.Title : null;
         var projectName = ProjectNameFor(task?.ProjectId);
         // A repeating session is done per occurrence; a one-off through its Task.
         var isDone = block.Recurrence is not null
@@ -271,6 +273,7 @@ public sealed partial class DailyListViewModel : ViewModelBase
             this,
             occurrence,
             title,
+            parentTitle,
             projectName,
             task is null ? null : ranks.GetValueOrDefault(task.Id),
             task,
