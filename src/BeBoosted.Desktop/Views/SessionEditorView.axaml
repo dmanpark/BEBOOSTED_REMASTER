@@ -197,7 +197,7 @@
             <TextBlock Classes="meta" TextWrapping="Wrap" Text="{Binding NumberingNote}"
                        IsVisible="{Binding NumberingNote, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
-            <!-- This sitting's own name (Task 8) — optional, falls back to the Task's title. -->
+            <!-- This sitting's own name — optional, falls back to the Task's title. -->
             <StackPanel Spacing="6">
               <TextBlock Classes="metaLabel" Text="TITLE" />
               <Border Classes="focusRing">

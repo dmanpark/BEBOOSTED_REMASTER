@@ -307,7 +307,8 @@ public sealed partial class DailyListViewModel : ViewModelBase
         // Only a session with its own title needs its parent named beneath it.
         var parentTitle = block.Title is not null && !block.IsExternal ? task?.Title : null;
         var projectName = ProjectNameFor(task?.ProjectId);
-        // A repeating session is done per occurrence; a one-off through its Task.
+        // A repeating session is done per occurrence; a one-off by its own outcome,
+        // or because its parent Task was completed as a whole.
         var isDone = block.Recurrence is not null
             ? occurrence.IsCompleted
             : block.Outcome == BlockOutcome.Done || task?.IsCompleted == true;
@@ -446,9 +447,27 @@ public sealed partial class DailyListViewModel : ViewModelBase
         }
         else if (row.Kind == DailyRowKind.Session && row.BlockId is { } sessionId)
         {
-            // Per-session: this session's outcome only. Its siblings and its Task
-            // are untouched.
-            _owner.ClearSessionOutcome(sessionId);
+            // A session row also renders done when its parent Task was completed as
+            // a whole (the OR in BuildOccurrenceRow) — and the completed-task sweep
+            // then suppresses the task's own row, leaving this session as the only
+            // way back. Clearing just this session's outcome would leave the task
+            // complete, re-render the row identically, and strand an unresolved
+            // session on a completed task; so undo here means the aggregate
+            // inverse — reopen the Task, which clears its Done sessions with it.
+            if (row.TaskId is { } completedTaskId
+                && _tasks.GetById(completedTaskId)?.IsCompleted == true)
+            {
+                if (_calendar.ReopenTask(completedTaskId))
+                {
+                    _owner.NotifyTasksMutated();
+                }
+            }
+            else
+            {
+                // Per-session: this session's outcome only. Its siblings and its
+                // Task are untouched.
+                _owner.ClearSessionOutcome(sessionId);
+            }
         }
         else if (row.Kind == DailyRowKind.Task
             && row.TaskId is { } taskId

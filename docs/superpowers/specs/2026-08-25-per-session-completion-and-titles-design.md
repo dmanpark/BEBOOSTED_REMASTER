@@ -284,6 +284,10 @@ Existing assertions that invert, deliberately:
 - A task whose sessions are all done still sits in Unscheduled until ticked. That is
   the chosen product behavior, not an oversight, but it means finished work can
   linger visibly.
+- Because that task re-enters `GetInboxTasks` once every session is resolved,
+  `PlanningService` may propose *new* sessions for work the user has already
+  finished. It follows directly from the chosen design — the task stays open until
+  ticked — and is recorded rather than fixed.
 - The Calendar view's own block controls keep their existing outcome affordances.
   Today and Calendar continue to differ in how a session is completed; unifying them
   remains out of scope, as it was in the predecessor spec.

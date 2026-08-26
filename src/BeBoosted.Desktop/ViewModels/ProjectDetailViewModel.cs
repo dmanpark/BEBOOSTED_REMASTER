@@ -197,7 +197,9 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
 
     /// <summary>
     /// One one-off session's completion, recorded against the block. The Task stays
-    /// open — only the Task's own control completes it.
+    /// open — only the Task's own control completes it. Undo is the exception: a row
+    /// of a task completed as a whole also renders Done, so reopening it there means
+    /// reopening the Task (see <see cref="CompletedParentTaskOf"/>).
     /// </summary>
     internal void SetSessionCompletion(Domain.CalendarBlockId blockId, bool completed)
     {
@@ -206,6 +208,13 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             if (completed)
             {
                 _calendar.RecordOutcome(blockId, BlockOutcome.Done);
+            }
+            else if (CompletedParentTaskOf(blockId) is { } completedTaskId)
+            {
+                if (!_calendar.ReopenTask(completedTaskId))
+                {
+                    return;
+                }
             }
             else if (!_calendar.ClearSessionOutcome(blockId))
             {
@@ -219,6 +228,19 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
 
         _owner.NotifyTasksMutated();
     }
+
+    /// <summary>
+    /// This session's task id when that task is completed as a whole, else null.
+    /// A row of such a task renders Done whatever its own outcome, so clearing the
+    /// session alone would change nothing visible and would strand an unresolved
+    /// session on a completed task; the aggregate inverse — reopening the Task,
+    /// which clears its Done sessions with it — is what undo means there.
+    /// </summary>
+    private TaskId? CompletedParentTaskOf(Domain.CalendarBlockId blockId)
+        => _calendar.GetBlock(blockId)?.TaskId is { } taskId
+            && _calendar.GetTask(taskId)?.IsCompleted == true
+                ? taskId
+                : null;
 
     /// <summary>
     /// Whole-task completion from a project row: the authoritative service path

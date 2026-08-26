@@ -1199,6 +1199,36 @@ public sealed class DailyListViewModelTests
         Assert.Empty(context.Daily.UnscheduledRows);
     }
 
+    /// <summary>
+    /// A task completed as a whole suppresses its own row whenever one of its
+    /// sessions already represents it today — so that session row is the ONLY way
+    /// back. Undoing there must reopen the TASK: clearing this session's outcome
+    /// alone would leave the task complete, re-render the row identically (a dead
+    /// click), and strand an unresolved session on a completed task — the corrupt
+    /// aggregate the service otherwise has to repair.
+    /// </summary>
+    [Fact]
+    public void UndoingTheSessionOfATaskCompletedAsAWhole_ReopensTheTask()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        var session = context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Service.CompleteTask(task.Id);
+        context.Calendar.Reload();
+        var completed = Assert.Single(context.Daily.CompletedRows);
+        Assert.Equal(session.Id, completed.BlockId); // the task's own row is suppressed
+        Assert.True(completed.IsDone);
+
+        completed.ToggleDoneCommand.Execute(null);
+
+        Assert.False(context.Tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.None, context.Blocks.GetById(session.Id)!.Outcome);
+        Assert.Empty(context.Daily.CompletedRows);
+        var scheduled = Assert.Single(context.Daily.ScheduledRows);
+        Assert.Equal(session.Id, scheduled.BlockId);
+        Assert.False(scheduled.IsDone);
+    }
+
     // ---- Per-session titles: a titled session leads with its own title and
     // ---- names its parent task beneath it ----
 

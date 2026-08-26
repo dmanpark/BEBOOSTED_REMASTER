@@ -202,6 +202,35 @@ public sealed class ShellProjectRefreshTests
     }
 
     /// <summary>
+    /// A one-off row also renders Done because its parent Task was completed as a
+    /// whole. Undoing there must reopen the TASK: clearing this session's outcome
+    /// alone would leave the row checked (a dead click) and strand an unresolved
+    /// session on a completed task.
+    /// </summary>
+    [Fact]
+    public void UndoingAOneOffSessionOfACompletedTask_FromTheProjectPage_ReopensTheTask()
+    {
+        var (shell, blocks, tasks) = CreateShell();
+        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
+        var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        shell.Projects.Detail!.OpenTasks.Single(t => t.Title == "Stats HW")
+            .CompleteCommand.Execute(null);
+        var done = Assert.Single(shell.Projects.Detail!.CompletedScheduledBlocks);
+        Assert.Equal(blockId, done.BlockId);
+        Assert.True(done.IsDone);
+
+        done.ToggleCompletionCommand.Execute(null);
+
+        Assert.False(tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.None, blocks.GetById(blockId)!.Outcome);
+        Assert.Empty(shell.Projects.Detail!.CompletedScheduledBlocks);
+        var reopened = Assert.Single(shell.Projects.Detail!.ScheduledBlocks);
+        Assert.Equal(blockId, reopened.BlockId);
+        Assert.False(reopened.IsDone);
+    }
+
+    /// <summary>
     /// The branch on the toggle exists to protect this: a repeating row must keep
     /// completing per occurrence through the same path as before, and must never
     /// throw now that one-off rows also carry a completion control.

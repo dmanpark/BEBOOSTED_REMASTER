@@ -264,5 +264,24 @@ public sealed class SessionScheduleEditingTests : IDisposable
         Assert.Null(_blocks.GetById(session.Id)!.Title);
     }
 
+    /// <summary>
+    /// The create path carries the session title too. No production caller can supply
+    /// one on it yet, so nothing else pins the contract — dropping it there would keep
+    /// the suite green while silently losing the name on the very first save.
+    /// </summary>
+    [Fact]
+    public void CreateTask_WithATitledSchedule_PersistsTheSessionTitle()
+    {
+        var task = _service.CreateTask(
+            new TaskDetailsRequest("Read Jane Eyre 1-20", null, null, null),
+            new TaskScheduleRequest(
+                Anchor, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "Jane Eyre 1-10"));
+
+        var session = Assert.Single(_blocks.GetForTask(task.Id));
+        Assert.Equal("Jane Eyre 1-10", session.Title);
+        var restarted = new SqliteCalendarBlockRepository(_database.Factory);
+        Assert.Equal("Jane Eyre 1-10", restarted.GetById(session.Id)!.Title);
+    }
+
     public void Dispose() => _database.Dispose();
 }

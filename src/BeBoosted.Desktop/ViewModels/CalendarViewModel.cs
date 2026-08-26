@@ -1273,7 +1273,8 @@ public sealed partial class CalendarViewModel : ViewModelBase
             ? info
             : ((string Title, bool IsDone)?)null;
         var title = block.Title ?? taskInfo?.Title ?? "(deleted task)";
-        // A repeating session is done per occurrence; a one-off through its Task.
+        // A repeating session is done per occurrence; a one-off by its own outcome,
+        // or because its parent Task was completed as a whole.
         var isDone = block.Recurrence is not null
             ? occurrence.IsCompleted
             : block.Outcome == BlockOutcome.Done || taskInfo?.IsDone == true;
