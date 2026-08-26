@@ -272,73 +272,84 @@
                     ToolTip.Tip="{Binding PriorityAccessibleText}" />
           </Panel>
 
-          <!-- Title, badges, and inline metadata -->
-          <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"
-                      ClipToBounds="True">
-            <!-- An obligation row's title opens the Task editor -->
-            <Button Classes="link" IsVisible="{Binding CanEditRow}"
-                    Command="{Binding EditRowCommand}"
-                    AutomationProperties.Name="{Binding Title, StringFormat='Edit task {0}'}">
-              <TextBlock Classes="rowTitle" Classes.done="{Binding IsDone}"
-                         FontWeight="SemiBold" Text="{Binding Title}"
+          <!-- Title, badges, and inline metadata. A titled session gets a second line
+               naming its parent task (plus project/meta); every other row stays one line. -->
+          <StackPanel Grid.Column="4" Spacing="2" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"
+                        ClipToBounds="True">
+              <!-- An obligation row's title opens the Task editor -->
+              <Button Classes="link" IsVisible="{Binding CanEditRow}"
+                      Command="{Binding EditRowCommand}"
+                      AutomationProperties.Name="{Binding Title, StringFormat='Edit task {0}'}">
+                <TextBlock Classes="rowTitle" Classes.done="{Binding IsDone}"
+                           FontWeight="SemiBold" Text="{Binding Title}"
+                           TextTrimming="CharacterEllipsis" />
+              </Button>
+              <!-- The source row stays marked while its task's editor is open (frame 3a). -->
+              <Border IsVisible="{Binding IsEditing}"
+                      Background="{StaticResource BrushLimeWash}"
+                      BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
+                      CornerRadius="{StaticResource RadiusSmall}" Padding="6,1"
+                      VerticalAlignment="Center">
+                <TextBlock Classes="mono" FontSize="{StaticResource TextSizeMeta}" Text="Editing" />
+              </Border>
+              <TextBlock Classes="rowTitle"
+                         Classes.p1="{Binding IsP1}" Classes.p2="{Binding IsP2}"
+                         Classes.done="{Binding IsDone}"
+                         Text="{Binding Title}" TextTrimming="CharacterEllipsis"
+                         VerticalAlignment="Center"
+                         IsVisible="{Binding !CanEditRow}" />
+              <TextBlock Classes="meta" Text="{Binding SessionLabel}"
+                         IsVisible="{Binding HasSessionLabel}" VerticalAlignment="Center" />
+              <Path Classes="icon" Data="{StaticResource IconLock}" Width="11" Height="11"
+                    StrokeThickness="1.2" Stroke="{StaticResource BrushPencilGray}"
+                    IsVisible="{Binding IsLocked}" VerticalAlignment="Center"
+                    ToolTip.Tip="Synced event — locked. BeBoosted never edits it." />
+              <TextBlock Classes="meta" Text="{Binding ProjectName}"
+                         IsVisible="{Binding ShowInlineProjectLabel}" VerticalAlignment="Center" />
+              <TextBlock Classes="meta" Text="{Binding MetaText}"
+                         IsVisible="{Binding HasInlineMeta}" VerticalAlignment="Center" />
+              <Border Background="{StaticResource BrushLimeWash}"
+                      BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                      CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
+                      IsVisible="{Binding IsAiOrigin}"
+                      ToolTip.Tip="Created by BeBoosted — provenance retained">
+                <TextBlock Classes="meta" Text="AI added" Foreground="{StaticResource BrushGraphite}" />
+              </Border>
+              <Border Background="{StaticResource BrushWorkbenchCream}"
+                      BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
+                      CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
+                      IsVisible="{Binding NeedsReview}"
+                      ToolTip.Tip="A source this task was based on changed or was removed">
+                <TextBlock Classes="meta" Text="Needs review" />
+              </Border>
+              <Border Background="{StaticResource BrushWorkbenchCream}"
+                      BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                      CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
+                      IsVisible="{Binding NeedsOutcome}"
+                      ToolTip.Tip="This block has elapsed — record what happened">
+                <TextBlock Classes="meta" Text="Needs outcome" />
+              </Border>
+              <Border Background="Transparent"
+                      BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
+                      CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
+                      IsVisible="{Binding IsConflicted}"
+                      ToolTip.Tip="Overlaps another block on this day">
+                <TextBlock Classes="meta" Text="conflict" />
+              </Border>
+            </StackPanel>
+
+            <!-- A titled session leads with its own title above; this second line names
+                 the parent task beneath it, followed by the project and meta it displaced. -->
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"
+                        ClipToBounds="True" IsVisible="{Binding HasParentTitle}">
+              <TextBlock Classes="meta" Text="{Binding ParentTitle}" VerticalAlignment="Center"
                          TextTrimming="CharacterEllipsis" />
-            </Button>
-            <!-- The source row stays marked while its task's editor is open (frame 3a). -->
-            <Border IsVisible="{Binding IsEditing}"
-                    Background="{StaticResource BrushLimeWash}"
-                    BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
-                    CornerRadius="{StaticResource RadiusSmall}" Padding="6,1"
-                    VerticalAlignment="Center">
-              <TextBlock Classes="mono" FontSize="{StaticResource TextSizeMeta}" Text="Editing" />
-            </Border>
-            <TextBlock Classes="rowTitle"
-                       Classes.p1="{Binding IsP1}" Classes.p2="{Binding IsP2}"
-                       Classes.done="{Binding IsDone}"
-                       Text="{Binding Title}" TextTrimming="CharacterEllipsis"
-                       VerticalAlignment="Center"
-                       IsVisible="{Binding !CanEditRow}" />
-            <TextBlock Classes="meta" Text="{Binding SessionLabel}"
-                       IsVisible="{Binding HasSessionLabel}" VerticalAlignment="Center" />
-            <Path Classes="icon" Data="{StaticResource IconLock}" Width="11" Height="11"
-                  StrokeThickness="1.2" Stroke="{StaticResource BrushPencilGray}"
-                  IsVisible="{Binding IsLocked}" VerticalAlignment="Center"
-                  ToolTip.Tip="Synced event — locked. BeBoosted never edits it." />
-            <!-- A titled session leads with its own title; this names the parent task beneath it. -->
-            <TextBlock Classes="meta" Text="{Binding ParentTitle, StringFormat='· {0}'}"
-                       IsVisible="{Binding HasParentTitle}" VerticalAlignment="Center"
-                       TextTrimming="CharacterEllipsis" />
-            <TextBlock Classes="meta" Text="{Binding ProjectName}"
-                       IsVisible="{Binding ShowProjectLabel}" VerticalAlignment="Center" />
-            <TextBlock Classes="meta" Text="{Binding MetaText}"
-                       IsVisible="{Binding HasMeta}" VerticalAlignment="Center" />
-            <Border Background="{StaticResource BrushLimeWash}"
-                    BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
-                    CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
-                    IsVisible="{Binding IsAiOrigin}"
-                    ToolTip.Tip="Created by BeBoosted — provenance retained">
-              <TextBlock Classes="meta" Text="AI added" Foreground="{StaticResource BrushGraphite}" />
-            </Border>
-            <Border Background="{StaticResource BrushWorkbenchCream}"
-                    BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
-                    CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
-                    IsVisible="{Binding NeedsReview}"
-                    ToolTip.Tip="A source this task was based on changed or was removed">
-              <TextBlock Classes="meta" Text="Needs review" />
-            </Border>
-            <Border Background="{StaticResource BrushWorkbenchCream}"
-                    BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
-                    CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
-                    IsVisible="{Binding NeedsOutcome}"
-                    ToolTip.Tip="This block has elapsed — record what happened">
-              <TextBlock Classes="meta" Text="Needs outcome" />
-            </Border>
-            <Border Background="Transparent"
-                    BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
-                    CornerRadius="3" Padding="5,0" VerticalAlignment="Center"
-                    IsVisible="{Binding IsConflicted}"
-                    ToolTip.Tip="Overlaps another block on this day">
-              <TextBlock Classes="meta" Text="conflict" />
-            </Border>
+              <TextBlock Classes="meta" Text="{Binding ProjectName, StringFormat='· {0}'}"
+                         IsVisible="{Binding ShowProjectLabel}" VerticalAlignment="Center" />
+              <TextBlock Classes="meta" Text="{Binding MetaText, StringFormat='· {0}'}"
+                         IsVisible="{Binding HasMeta}" VerticalAlignment="Center" />
+            </StackPanel>
           </StackPanel>
 
           <!-- Quiet per-kind actions -->

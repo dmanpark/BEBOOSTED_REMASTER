@@ -247,6 +247,15 @@ public sealed partial class DailyRowViewModel : ViewModelBase
     /// <summary>Block-backed rows show just the project; the metadata line already covers Task rows.</summary>
     public bool ShowProjectLabel => HasProject && Kind != DailyRowKind.Task;
 
+    /// <summary>
+    /// A titled session moves the project onto its own second line (alongside the
+    /// parent title), so the first line shows it only when there is no parent line.
+    /// </summary>
+    public bool ShowInlineProjectLabel => ShowProjectLabel && !HasParentTitle;
+
+    /// <summary>Same reasoning as <see cref="ShowInlineProjectLabel"/>, for the meta text.</summary>
+    public bool HasInlineMeta => HasMeta && !HasParentTitle;
+
     // ---- Time (metadata, right-aligned) ----
 
     public string TimeText => Kind switch

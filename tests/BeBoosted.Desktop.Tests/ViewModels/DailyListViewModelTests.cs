@@ -1127,4 +1127,67 @@ public sealed class DailyListViewModelTests
         Assert.Null(row.ParentTitle);
         Assert.False(row.HasParentTitle);
     }
+
+    /// <summary>
+    /// A titled session's project moves to the new second line, alongside the
+    /// parent title — it must stop rendering on the first line, or it would
+    /// show up twice.
+    /// </summary>
+    [Fact]
+    public void ATitledSessionRow_MovesItsProjectOffTheFirstLine()
+    {
+        var context = Create();
+        var schoolwork = Project.Create("Schoolwork", "#5B8DEF", context.Clock.Now);
+        context.Projects.Add(schoolwork);
+        var task = AddTask(context, "Read Jane Eyre 1-20", projectId: schoolwork.Id);
+        context.Service.AddSession(
+            task.Id,
+            new TaskScheduleRequest(Date, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "Jane Eyre 1-10"));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single();
+
+        Assert.True(row.HasParentTitle);
+        Assert.True(row.ShowProjectLabel); // still carries the project...
+        Assert.False(row.ShowInlineProjectLabel); // ...but not on the first line anymore
+    }
+
+    /// <summary>
+    /// The real risk in adding the two-line layout: an ordinary row (no parent
+    /// title) must keep showing its project inline, exactly as before.
+    /// </summary>
+    [Fact]
+    public void UntitledSessionRow_WithAProject_StillShowsItInline()
+    {
+        var context = Create();
+        var schoolwork = Project.Create("Schoolwork", "#5B8DEF", context.Clock.Now);
+        context.Projects.Add(schoolwork);
+        var task = AddTask(context, "Read Jane Eyre 1-20", projectId: schoolwork.Id);
+        context.Service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single();
+
+        Assert.False(row.HasParentTitle);
+        Assert.True(row.ShowProjectLabel);
+        Assert.True(row.ShowInlineProjectLabel);
+    }
+
+    /// <summary>
+    /// Same risk, for the meta text (project · deadline · duration) that bare
+    /// task rows carry — a row with no parent title must keep it inline.
+    /// </summary>
+    [Fact]
+    public void UnscheduledTaskRow_WithMeta_StillShowsItInline()
+    {
+        var context = Create();
+        AddTask(context, "No deadline task", duration: TimeSpan.FromMinutes(30), deadline: Date.AddDays(2));
+        context.Calendar.Reload();
+
+        var row = context.Daily.UnscheduledRows.Single();
+
+        Assert.False(row.HasParentTitle);
+        Assert.True(row.HasMeta);
+        Assert.True(row.HasInlineMeta);
+    }
 }
