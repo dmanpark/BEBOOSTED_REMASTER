@@ -1190,4 +1190,44 @@ public sealed class DailyListViewModelTests
         Assert.True(row.HasMeta);
         Assert.True(row.HasInlineMeta);
     }
+
+    /// <summary>
+    /// The parent task's own deadline belongs on the second line too — TaskRow is
+    /// populated on session rows, so ParentMetaText can reach it without touching
+    /// MetaText's Task-only gate.
+    /// </summary>
+    [Fact]
+    public void ATitledSessionRow_WhoseParentHasADeadline_ExposesItThroughParentMetaText()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20", deadline: Date.AddDays(2)); // Tue + 2 = Thu
+        context.Service.AddSession(
+            task.Id,
+            new TaskScheduleRequest(Date, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "Jane Eyre 1-10"));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single();
+
+        Assert.True(row.HasParentTitle);
+        Assert.Equal("Thu", row.ParentMetaText);
+        Assert.True(row.HasParentMetaText);
+    }
+
+    /// <summary>Pins the no-dangling-separator case: no deadline or estimate means empty, not "· ".</summary>
+    [Fact]
+    public void ATitledSessionRow_WhoseParentHasNoDeadline_ExposesNoParentMetaText()
+    {
+        var context = Create();
+        var task = AddTask(context, "Read Jane Eyre 1-20");
+        context.Service.AddSession(
+            task.Id,
+            new TaskScheduleRequest(Date, new TimeOnly(9, 0), new TimeOnly(10, 0), null, "Jane Eyre 1-10"));
+        context.Calendar.Reload();
+
+        var row = context.Daily.ScheduledRows.Single();
+
+        Assert.True(row.HasParentTitle);
+        Assert.Equal(string.Empty, row.ParentMetaText);
+        Assert.False(row.HasParentMetaText);
+    }
 }

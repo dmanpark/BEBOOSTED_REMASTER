@@ -244,6 +244,17 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
     public bool HasMeta => MetaText.Length > 0;
 
+    /// <summary>
+    /// The parent task's formatted metadata (deadline · duration), shown on a titled
+    /// session's second line alongside its parent title. <see cref="TaskRow"/> is
+    /// populated on session rows too, so this is reachable without touching
+    /// <see cref="MetaText"/>'s Task-only gate. Empty when there is no parent line,
+    /// or when the parent task itself carries no deadline or estimate.
+    /// </summary>
+    public string ParentMetaText => HasParentTitle ? TaskRow?.MetaText ?? string.Empty : string.Empty;
+
+    public bool HasParentMetaText => ParentMetaText.Length > 0;
+
     /// <summary>Block-backed rows show just the project; the metadata line already covers Task rows.</summary>
     public bool ShowProjectLabel => HasProject && Kind != DailyRowKind.Task;
 

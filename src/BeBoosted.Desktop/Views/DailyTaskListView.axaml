@@ -340,15 +340,17 @@
             </StackPanel>
 
             <!-- A titled session leads with its own title above; this second line names
-                 the parent task beneath it, followed by the project and meta it displaced. -->
+                 the parent task beneath it, followed by the project and the parent
+                 task's own deadline/duration (ParentMetaText — reachable from TaskRow
+                 on a session row, unlike the Task-only MetaText). -->
             <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"
                         ClipToBounds="True" IsVisible="{Binding HasParentTitle}">
               <TextBlock Classes="meta" Text="{Binding ParentTitle}" VerticalAlignment="Center"
                          TextTrimming="CharacterEllipsis" />
               <TextBlock Classes="meta" Text="{Binding ProjectName, StringFormat='· {0}'}"
                          IsVisible="{Binding ShowProjectLabel}" VerticalAlignment="Center" />
-              <TextBlock Classes="meta" Text="{Binding MetaText, StringFormat='· {0}'}"
-                         IsVisible="{Binding HasMeta}" VerticalAlignment="Center" />
+              <TextBlock Classes="meta" Text="{Binding ParentMetaText, StringFormat='· {0}'}"
+                         IsVisible="{Binding HasParentMetaText}" VerticalAlignment="Center" />
             </StackPanel>
           </StackPanel>
 
