@@ -26,8 +26,7 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
         ProposedBlock? proposal,
         bool isConflicted,
         bool isDone,
-        bool needsOutcome,
-        bool taskRepeats = false)
+        bool needsOutcome)
     {
         _owner = owner;
         _block = block;
@@ -37,7 +36,6 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
         IsConflicted = isConflicted;
         IsDone = isDone;
         NeedsOutcome = needsOutcome;
-        TaskRepeats = taskRepeats;
     }
 
     public static CalendarBlockViewModel ForBlock(
@@ -46,11 +44,10 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
         string title,
         bool isConflicted,
         bool isDone,
-        bool needsOutcome,
-        bool taskRepeats = false)
+        bool needsOutcome)
         => new(
             owner, title, occurrence.Date, occurrence.Block, null, isConflicted, isDone,
-            needsOutcome, taskRepeats);
+            needsOutcome);
 
     public static CalendarBlockViewModel ForProposal(
         CalendarViewModel owner,
@@ -115,21 +112,6 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
     /// <summary>One-off sessions record what happened through the outcome flyout.</summary>
     public bool ShowCompletionControl => IsLocalSession && !IsRecurring && !IsDone;
 
-    /// <summary>This one-off's Task also has a repeating session somewhere.</summary>
-    public bool TaskRepeats { get; }
-
-    /// <summary>
-    /// Done is a whole-Task statement: while any sibling session repeats, the Task
-    /// completes per occurrence, so this one-off may not record Done. (Needs more
-    /// time and Didn't happen stay valid — they never complete the Task.)
-    /// </summary>
-    public bool CanRecordDone => !TaskRepeats;
-
-    public bool ShowRepeatingCompletionNote => TaskRepeats;
-
-    public string RepeatingCompletionNote
-        => "This task repeats — complete each repeating occurrence separately.";
-
     /// <summary>
     /// The single-click done circle for repeating sessions (completes one occurrence)
     /// — never for one-off sessions (they keep the multi-outcome flyout), proposals,
@@ -181,7 +163,7 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
 
     // ---- Outcomes (approved task blocks) ----
 
-    [RelayCommand(CanExecute = nameof(CanRecordDone))]
+    [RelayCommand]
     private void RecordDone() => _owner.RecordOutcome(Id, BlockOutcome.Done, null);
 
     [RelayCommand]

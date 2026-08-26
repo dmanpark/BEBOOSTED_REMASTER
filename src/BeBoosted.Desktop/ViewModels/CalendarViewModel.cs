@@ -1277,18 +1277,8 @@ public sealed partial class CalendarViewModel : ViewModelBase
         var needsOutcome = block is { Kind: BlockKind.TaskSession, IsExternal: false, Recurrence: null }
             && block.Outcome == BlockOutcome.None && taskInfo?.IsDone != true && elapsed;
         return CalendarBlockViewModel.ForBlock(
-            this, occurrence, title, conflicts.Contains(block.Id), isDone, needsOutcome,
-            TaskRepeatsFor(block));
+            this, occurrence, title, conflicts.Contains(block.Id), isDone, needsOutcome);
     }
-
-    /// <summary>
-    /// Whether a one-off session's Task also repeats somewhere — Done is then
-    /// occurrence-scoped and this session may not complete the whole Task.
-    /// </summary>
-    private bool TaskRepeatsFor(CalendarBlock block)
-        => block is { Kind: BlockKind.TaskSession, IsExternal: false, Recurrence: null }
-            && block.TaskId is { } taskId
-            && _calendar.GetSessionsForTask(taskId).Any(s => s.Recurrence is not null);
 
     private void RefreshReviewNotice(Dictionary<TaskId, (string Title, bool IsDone)> titles)
     {
@@ -1304,8 +1294,7 @@ public sealed partial class CalendarViewModel : ViewModelBase
                 title,
                 isConflicted: false,
                 isDone: false,
-                needsOutcome: true,
-                TaskRepeatsFor(block)));
+                needsOutcome: true));
         }
 
         ReviewNoticeCount = ReviewBlocks.Count;

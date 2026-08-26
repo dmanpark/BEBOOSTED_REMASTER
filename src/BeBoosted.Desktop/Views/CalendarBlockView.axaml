@@ -49,13 +49,8 @@
                 <StackPanel Width="228" Spacing="6" Margin="2">
                   <Button Classes="primary" HorizontalAlignment="Stretch"
                           Content="Done"
-                          IsVisible="{Binding CanRecordDone}"
                           Command="{Binding RecordDoneCommand}"
                           Click="OnFlyoutActionClick" />
-                  <!-- Done is whole-Task; a repeating sibling scopes it away. -->
-                  <TextBlock Classes="meta" TextWrapping="Wrap"
-                             Text="{Binding RepeatingCompletionNote}"
-                             IsVisible="{Binding ShowRepeatingCompletionNote}" />
                   <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
                           CornerRadius="{StaticResource RadiusControl}" Padding="8,7">
                     <StackPanel Spacing="6">

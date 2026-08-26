@@ -85,33 +85,26 @@ public sealed class CalendarBlockCapabilityTests
     }
 
     /// <summary>
-    /// Done is decided from the whole Task aggregate: with a repeating sibling the
-    /// one-off keeps its outcome flyout, but the global Done choice disappears in
-    /// favor of an explanatory note. A plain one-off keeps Done.
+    /// Done is local to the session now: a one-off's outcome flyout offers every
+    /// outcome, including Done, even when its Task has a repeating sibling
+    /// elsewhere. A mixed schedule is no longer a reason to withhold it.
     /// </summary>
     [Fact]
-    public void MixedScheduleOneOff_OffersOutcomes_ButNeverGlobalDone()
+    public void MixedScheduleOneOff_OffersEveryOutcome_IncludingDone()
     {
         var context = Create();
         var (oneOff, _) = AddMixedScheduleTask(context);
 
         var vm = FindBlock(context, oneOff.Id);
         Assert.True(vm.ShowCompletionControl); // the flyout itself stays available
-        Assert.False(vm.CanRecordDone);
-        Assert.False(vm.RecordDoneCommand.CanExecute(null));
+        Assert.True(vm.RecordDoneCommand.CanExecute(null));
         Assert.True(vm.RecordNeedsMoreTimeCommand.CanExecute(null));
         Assert.True(vm.RecordDidntHappenCommand.CanExecute(null));
-        Assert.True(vm.ShowRepeatingCompletionNote);
-        Assert.Equal(
-            "This task repeats — complete each repeating occurrence separately.",
-            vm.RepeatingCompletionNote);
 
         var solo = AddScheduledTask(
             context, "Solo work", TestShell.DesignDate, new TimeOnly(12, 0), new TimeOnly(13, 0));
         var soloVm = FindBlock(context, solo.Id);
-        Assert.True(soloVm.CanRecordDone);
         Assert.True(soloVm.RecordDoneCommand.CanExecute(null));
-        Assert.False(soloVm.ShowRepeatingCompletionNote);
     }
 
     /// <summary>
