@@ -153,19 +153,62 @@ groups sharing a title could split or share one.
 
 1. The service computes the preferred segment as `ResourceLayout.Sanitize(title, id)` —
    pure, unchanged.
-2. It passes that, the parent folder (`<project>/<file>`), and the folder segments
-   already taken by sibling groups of the same File, to the storage layer.
+2. It passes that, the parent folder (`<project>/<file>`), the folder segments already
+   held by *other* groups of the same File, and — on rename — the segment this group
+   currently owns, to the storage layer.
 3. `IResourceStorage.ReserveFolderSegment` returns a free segment, appending the same
    ` (2)`, ` (3)` suffixes `ResourceLayout.CandidateName` uses for files, skipping any
-   name occupied on disk or already claimed by a sibling group.
-4. The service persists the returned segment on the group row.
+   name occupied on disk **as a file or a directory** or held by a sibling group.
+4. **It claims the segment by creating the directory** before returning it.
+5. The service persists the returned segment on the group row.
+
+### Reservation must claim, not merely check
+
+A reservation that only *checks* is advisory, and it fails in both directions:
+
+- **Empty group, later import.** A group reserves `Notes`, but nothing exists on disk
+  because the group has no resources yet. A later loose import of an extensionless
+  file named `Notes` then takes that exact path as a *file*. The group's persisted
+  segment is now permanently unusable: every reconcile tries to create a directory
+  where a file sits, fails, and retries forever. Re-reservation only happens on
+  rename, so nothing recovers it.
+- **Existing group directory, later import.** `LocalResourceStorage.ReserveFreePath`
+  tests only `File.Exists`, so a *directory* named `Notes` reads as free. A loose
+  import named `Notes` is handed that path and `File.Copy` is attempted onto a
+  directory — uncaught in `Store`, so it surfaces to the user; caught in `MoveInto`,
+  so it silently retries forever.
+
+Both are fixed by two changes that belong together:
+
+- `ReserveFolderSegment` creates the directory it returns. The directory *is* the
+  claim, so nothing else can take the name afterwards.
+- `ReserveFreePath` treats a path occupied by **either** a file or a directory as
+  taken, so file placement can never target a group's folder.
+
+`IResourceStorage.Exists` keeps its file-only meaning. It answers "are this
+resource's bytes still here", and the reconciler's `FindUnrecordedPlacement` depends
+on that reading — a directory sitting at a probed path correctly reports "no adoptable
+file here".
+
+### Rename may keep the segment it already owns
+
+Because reservation now creates directories, a rename must be told which segment the
+group already holds. Otherwise a case-only or sanitization-equivalent rename —
+`Notes` → `notes`, or a change that trims to the same characters — finds its *own*
+directory occupying the name and pointlessly advances to `notes (2)`, moving every
+byte in the group for no reason.
+
+So `ReserveFolderSegment` takes the currently owned segment and returns it unchanged
+when the preferred segment resolves to it. `claimed` carries only *other* groups'
+segments; the caller filters the group itself out.
 
 `FolderFor` then reads the persisted value, so the desired folder is stable across
 restarts, identical for every resource in the group, and distinct between same-titled
 groups. `IsAlreadyPlaced` needs no change and stops churning.
 
-A rename that resolves to a new segment leaves the old folder behind once the
-reconciler has moved the bytes out — the same outcome a File rename already produces.
+A rename that genuinely resolves to a new segment leaves the old directory behind once
+the reconciler has moved the bytes out — the same outcome a File rename already
+produces.
 
 ## Components
 
@@ -240,11 +283,19 @@ One new member:
 
 ```csharp
 /// <summary>
-/// Reserves a free folder name under <paramref name="relativeParent"/> for a group,
-/// skipping names taken on disk or already claimed by <paramref name="claimed"/>.
-/// Returns the segment actually reserved.
+/// Claims a folder for a group under <paramref name="relativeParent"/> and returns the
+/// segment taken. Skips names occupied on disk by a file OR a directory, and names held
+/// by <paramref name="claimed"/> (the File's other groups). Creating the directory IS
+/// the claim — a checked-but-uncreated name can be taken by a later import.
+/// <paramref name="ownedSegment"/> is the segment this group already holds, if any: it
+/// is returned unchanged when the preferred segment resolves to it, so a case-only
+/// rename does not advance to "(2)".
 /// </summary>
-string ReserveFolderSegment(string relativeParent, string preferredSegment, IReadOnlySet<string> claimed);
+string ReserveFolderSegment(
+    string relativeParent,
+    string preferredSegment,
+    IReadOnlySet<string> claimed,
+    string? ownedSegment = null);
 ```
 
 ### `BeBoosted.Application` — `ProjectService`
@@ -271,6 +322,16 @@ string ReserveFolderSegment(string relativeParent, string preferredSegment, IRea
 - The reconciler loads the File's groups once per File and resolves each resource's
   group when computing its desired folder.
 
+### `BeBoosted.Infrastructure` — `LocalResourceStorage`
+
+- Implements `ReserveFolderSegment` per the contract above, creating the directory.
+- **`ReserveFreePath` changes**: its loop currently returns the first candidate for
+  which `!File.Exists(...)`. It must also reject a candidate occupied by a directory,
+  so a loose resource can never be handed a group's folder path. This is a two-token
+  change with real consequences — `Store` does not catch the `File.Copy` failure that
+  results today.
+- `Exists` is deliberately unchanged and stays file-only.
+
 ### `BeBoosted.Desktop`
 
 - `FileDetailViewModel` exposes `Groups` (each with its resource rows, title, count,
@@ -282,12 +343,17 @@ string ReserveFolderSegment(string relativeParent, string preferredSegment, IRea
 
 ## Risks
 
-**Reservation is not transactional with the row write.** `ReserveFolderSegment` checks
-the filesystem, then the service persists the result. Nothing else in this
-single-user desktop app writes that directory between the two, and a stale
-reservation degrades the same way every other placement does: `MoveInto` returns null,
-the resource keeps its current path, and the next reconcile retries. Worth stating,
-not worth a lock.
+**Reservation is not transactional with the row write.** `ReserveFolderSegment`
+creates the directory, then the service persists the segment. If the row write fails,
+an empty directory is orphaned. This is the same shape as `ImportFile`, which copies
+bytes before adding the row, and the consequence is smaller — an empty folder rather
+than an orphaned file. Not worth a compensating delete.
+
+**A group's directory can still be removed behind the app's back.** If the user
+deletes the folder in Explorer, the persisted segment names a directory that no longer
+exists. `Store` and `MoveInto` both call `Directory.CreateDirectory` before writing, so
+it is recreated on next use and nothing breaks. The claim is lost in the window
+between, which is the same exposure every stored path already has.
 
 **Reconciler cost.** The reconciler already walks every project, file, and resource.
 This adds one group query per File. Negligible at the scale of a personal planner, and
@@ -304,14 +370,25 @@ resource and its bytes while delete removes both; moving a resource into a group
 another group, and back to loose relocates the bytes on disk and survives a restart;
 moving a resource into a group of a different File is rejected.
 
-Folder identity — the reason this design exists:
+Folder identity — the reason this design exists. Each of these fails under a
+plausible-looking simpler implementation, so each needs its own test:
 
-- A group whose sanitized title collides with a loose resource's stored file name
-  reserves a distinct segment, and every resource in that group lands in it.
-- Two groups in one File with the same title reserve different segments.
-- **A reconcile run twice moves nothing the second time.** This is the churn
-  regression: with a derived-and-disambiguated segment it would move on every run.
-- Renaming a group re-reserves, and the bytes follow.
+- **File first, then group.** A group whose sanitized title collides with an existing
+  loose resource's stored file name reserves a distinct segment, and every resource in
+  that group lands in it.
+- **Group first, then file.** A loose resource whose file name collides with an
+  existing group's directory is placed at a distinct path — never handed the
+  directory. Fails today: `ReserveFreePath` tests only `File.Exists`.
+- **Empty group, then colliding import.** A group is created but left empty, then a
+  loose extensionless resource of the same name is imported. The group keeps its
+  directory and the resource goes elsewhere. Fails if reservation only checks and does
+  not create — the import would take the name and block the group forever.
+- **Two groups in one File with the same title** reserve different segments.
+- **A reconcile run twice moves nothing the second time.** The churn regression: with a
+  derived-and-disambiguated segment it would move on every run, forever.
+- **Rename keeps an owned segment.** A case-only or sanitization-equivalent rename
+  returns the same segment and moves no bytes — it must not advance to `(2)`.
+- **Rename to a genuinely new title** re-reserves, and the bytes follow.
 
 Persistence: `group_id` and `folder_segment` round-trip; the migration leaves existing
 resources loose; **deleting a group row directly sets its resources' `group_id` to
@@ -329,6 +406,9 @@ surface in tests.
 
 - Groups do not nest, by design. A File that needs two levels of structure wants a
   second File.
+- Creating a group creates its (initially empty) folder on disk immediately. That is
+  the claim that makes the segment durable, and it keeps the directory browsable
+  outside the app the way the rest of the layout is.
 - Deleting or renaming a group leaves its now-empty folder on disk, matching the
   existing behaviour for a deleted or renamed File.
 - Phase 1 ships no reordering; groups appear in creation order.
