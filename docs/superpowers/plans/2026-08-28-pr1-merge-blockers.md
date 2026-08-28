@@ -131,39 +131,71 @@ A repository failure leaves a live row pointing at permanently deleted bytes —
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/BeBoosted.Tests/Projects/ProjectServiceTests.cs`. The file already has `_database`, `_projects`, `_files`, `_resources`, `_storage`, `_paths`, `_clock`, and `_service`.
+**Read this before writing them.** An earlier draft of this plan injected a failing
+`IResourceRepository` into the service and expected the transaction to blow up. It
+cannot: `SqliteProjectMutations.Execute` constructs its OWN transaction-bound
+repositories and hands them to the callback, so the service's injected repository is
+used for *reads* only and is never invoked inside `Execute`. Those tests would have
+passed while proving nothing.
+
+The failure has to be injected at the **mutations** seam instead. Append to
+`tests/BeBoosted.Tests/Projects/ProjectServiceTests.cs`, which already has
+`_database`, `_projects`, `_files`, `_resources`, `_storage`, `_paths`, `_clock`,
+and `_service`:
 
 ```csharp
-    /// <summary>Delegates to the real repository, but throws on Delete while armed.</summary>
-    private sealed class FailingResourceDelete(SqliteConnectionFactory factory) : IResourceRepository
+    /// <summary>
+    /// Runs the real mutation inside the real transaction, then throws before commit —
+    /// so the callback's writes are genuinely rolled back, not merely never attempted.
+    /// </summary>
+    private sealed class FailAfterMutation(SqliteConnectionFactory factory) : IProjectMutations
     {
-        private readonly SqliteResourceRepository _inner = new(factory);
-
-        public void Add(Resource resource) => _inner.Add(resource);
-
-        public void Update(Resource resource) => _inner.Update(resource);
-
-        public void Delete(ResourceId id)
-            => throw new InvalidOperationException("injected failure");
-
-        public Resource? GetById(ResourceId id) => _inner.GetById(id);
-
-        public IReadOnlyList<Resource> GetForFile(ProjectFileId fileId) => _inner.GetForFile(fileId);
-
-        public int CountForFile(ProjectFileId fileId) => _inner.CountForFile(fileId);
-
-        public void SetIndexText(ResourceId id, string text) => _inner.SetIndexText(id, text);
-
-        public IReadOnlyList<Resource> SearchInProject(ProjectId projectId, string query)
-            => _inner.SearchInProject(projectId, query);
+        public void Execute(
+            Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository> mutation)
+        {
+            using var connection = factory.Open();
+            using var transaction = connection.BeginTransaction();
+            mutation(
+                new SqliteProjectRepository(connection, transaction),
+                new SqliteProjectFileRepository(connection, transaction),
+                new SqliteResourceRepository(connection, transaction),
+                new SqliteTaskRepository(connection, transaction));
+            throw new InvalidOperationException("injected failure");
+        }
     }
 
     /// <summary>
-    /// A failed row delete must not have destroyed the bytes first. Orphaned bytes are
-    /// recoverable; a live row pointing at a deleted file is not.
+    /// The transaction is real: work done inside a mutation that then throws must leave
+    /// no trace. This pins SqliteProjectMutations itself, independently of the service.
     /// </summary>
     [Fact]
-    public void DeleteResource_WhenTheRowDeleteFails_LeavesTheBytesOnDisk()
+    public void ProjectMutations_WhenTheMutationThrows_RollsBackEveryWrite()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var link = _service.AddLink(file.Id, "SAT", "https://collegeboard.org");
+
+        var mutations = new SqliteProjectMutations(_database.Factory);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            mutations.Execute((_, fileRepo, resourceRepo, _) =>
+            {
+                resourceRepo.Delete(link.Id);
+                fileRepo.Delete(file.Id);
+                throw new InvalidOperationException("injected failure");
+            }));
+
+        Assert.NotNull(new SqliteResourceRepository(_database.Factory).GetById(link.Id));
+        Assert.NotNull(new SqliteProjectFileRepository(_database.Factory).GetById(file.Id));
+    }
+
+    /// <summary>
+    /// Bytes go only after the transaction commits. A failed mutation must leave the
+    /// file on disk — orphaned bytes are recoverable, a row pointing at a deleted file
+    /// is not.
+    /// </summary>
+    [Fact]
+    public void DeleteResource_WhenTheMutationFails_LeavesTheRowAndTheBytes()
     {
         var project = _service.CreateProject("College Admissions");
         var file = _service.CreateFile(project.Id, "Metric Proof", null);
@@ -172,7 +204,7 @@ Append to `tests/BeBoosted.Tests/Projects/ProjectServiceTests.cs`. The file alre
         var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
         var storedPath = _resources.GetById(resource.Id)!.StoredPath!;
 
-        var service = CreateServiceWith(new FailingResourceDelete(_database.Factory));
+        var service = CreateServiceWith(new FailAfterMutation(_database.Factory));
 
         Assert.Throws<InvalidOperationException>(() => service.DeleteResource(resource.Id));
 
@@ -181,36 +213,52 @@ Append to `tests/BeBoosted.Tests/Projects/ProjectServiceTests.cs`. The file alre
         Assert.Equal("fake pdf bytes", File.ReadAllText(_storage.ResolvePath(storedPath)));
     }
 
-    /// <summary>
-    /// A File delete that fails partway must roll its whole database half back: no
-    /// half-deleted File with some resources gone and others surviving.
-    /// </summary>
     [Fact]
-    public void DeleteFile_WhenARowDeleteFails_RollsBackEveryRow()
+    public void DeleteFile_WhenTheMutationFails_LeavesTheFileItsResourcesAndTheirBytes()
     {
         var project = _service.CreateProject("College Admissions");
         var file = _service.CreateFile(project.Id, "Metric Proof", null);
-        var first = _service.AddLink(file.Id, "SAT", "https://collegeboard.org");
-        var second = _service.AddLink(file.Id, "ACT", "https://act.org");
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+        var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
+        var storedPath = _resources.GetById(resource.Id)!.StoredPath!;
 
-        var service = CreateServiceWith(new FailingResourceDelete(_database.Factory));
+        var service = CreateServiceWith(new FailAfterMutation(_database.Factory));
 
         Assert.Throws<InvalidOperationException>(() => service.DeleteFile(file.Id));
 
         Assert.NotNull(_files.GetById(file.Id));
-        Assert.NotNull(_resources.GetById(first.Id));
-        Assert.NotNull(_resources.GetById(second.Id));
+        Assert.NotNull(_resources.GetById(resource.Id));
+        Assert.True(_storage.Exists(storedPath));
+    }
+
+    /// <summary>The happy path still removes the bytes — after the commit, not before.</summary>
+    [Fact]
+    public void DeleteFile_OnSuccess_RemovesTheRowsAndTheBytes()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+        var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
+        var storedPath = _resources.GetById(resource.Id)!.StoredPath!;
+
+        _service.DeleteFile(file.Id);
+
+        Assert.Null(_files.GetById(file.Id));
+        Assert.Null(_resources.GetById(resource.Id));
+        Assert.False(_storage.Exists(storedPath));
     }
 ```
 
-Add the fixture helper beside the existing constructor:
+Add the fixture helper beside the existing constructor, swapping the **mutations**
+seam rather than a repository:
 
 ```csharp
-    /// <summary>The same service, with one repository swapped for a failing double.</summary>
-    private ProjectService CreateServiceWith(IResourceRepository resources)
+    /// <summary>The same service, with the mutations seam swapped for a failing double.</summary>
+    private ProjectService CreateServiceWith(IProjectMutations mutations)
         => new(
-            _projects, _files, resources, _storage,
-            new SqliteProjectMutations(_database.Factory),
+            _projects, _files, _resources, _storage, mutations,
             new SimpleLocalIndexer(_resources, _storage, _clock), _tasks,
             new SqliteCalendarBlockRepository(_database.Factory), _completions, _clock);
 ```
@@ -284,13 +332,21 @@ Register it in `ServiceCollectionExtensions` beside `SqliteCalendarMutations`.
 
 - [ ] **Step 4: Rewrite the three destructive operations**
 
-Each collects the paths to remove, does all database work in one `Execute`, and deletes bytes only after it returns.
+**Let the cascades do the relational work.** `project_files.project_id` and
+`resources.file_id` are both `ON DELETE CASCADE`, and foreign keys are enforced (see
+Global Constraints). Deleting the root row therefore removes its children. An earlier
+draft of this plan deleted every child row explicitly, which contradicted that
+constraint and added failure points for work the database already does correctly.
+
+What the service must still do by hand is the part no foreign key can: collect the
+stored paths **before** the transaction, delete those bytes **after** it commits, and
+invalidate provenance for each removed resource.
 
 ```csharp
     /// <summary>
     /// Removes one resource. The row goes first, inside a transaction; the bytes go
-    /// only once that commits. A failure therefore orphans bytes — invisible and
-    /// tolerated by the reconciler — rather than leaving a row pointing at a file
+    /// only once that commits. A failure therefore orphans bytes - invisible and
+    /// tolerated by the reconciler - rather than leaving a row pointing at a file
     /// that no longer exists.
     /// </summary>
     public void DeleteResource(ResourceId id)
@@ -311,20 +367,16 @@ Each collects the paths to remove, does all database work in one `Execute`, and 
         provenanceInvalidator?.InvalidateForResource(id);
     }
 
+    /// <summary>
+    /// Deletes a File. Its resource rows go with it through the foreign-key cascade;
+    /// the service collects their bytes first and removes those after the commit.
+    /// </summary>
     public void DeleteFile(ProjectFileId id)
     {
         var doomed = resources.GetForFile(id);
         var paths = doomed.Select(r => r.StoredPath).OfType<string>().ToList();
 
-        mutations.Execute((_, fileRepo, resourceRepo, _) =>
-        {
-            foreach (var resource in doomed)
-            {
-                resourceRepo.Delete(resource.Id);
-            }
-
-            fileRepo.Delete(id);
-        });
+        mutations.Execute((_, fileRepo, _, _) => fileRepo.Delete(id));
 
         foreach (var path in paths)
         {
@@ -339,28 +391,19 @@ Each collects the paths to remove, does all database work in one `Execute`, and 
 
     /// <summary>
     /// Deletes the project and its Files/resources (and stored bytes), and unlinks
-    /// its tasks — the tasks and their schedules survive. Every row change is one
-    /// transaction; bytes follow only once it commits.
+    /// its tasks - the tasks and their schedules survive. Files and resources go
+    /// through the cascade; the task unlink and the root delete share one transaction.
     /// </summary>
     public void DeleteProject(ProjectId id)
     {
-        var doomedFiles = files.GetForProject(id);
-        var doomedResources = doomedFiles.SelectMany(f => resources.GetForFile(f.Id)).ToList();
+        var doomedResources = files.GetForProject(id)
+            .SelectMany(f => resources.GetForFile(f.Id))
+            .ToList();
         var paths = doomedResources.Select(r => r.StoredPath).OfType<string>().ToList();
         var orphaned = tasks.GetAll().Where(t => t.ProjectId == id).ToList();
 
-        mutations.Execute((projectRepo, fileRepo, resourceRepo, taskRepo) =>
+        mutations.Execute((projectRepo, _, _, taskRepo) =>
         {
-            foreach (var resource in doomedResources)
-            {
-                resourceRepo.Delete(resource.Id);
-            }
-
-            foreach (var file in doomedFiles)
-            {
-                fileRepo.Delete(file.Id);
-            }
-
             foreach (var task in orphaned)
             {
                 task.AssignToProject(null, clock.Now);
@@ -382,7 +425,13 @@ Each collects the paths to remove, does all database work in one `Execute`, and 
     }
 ```
 
-Add `IProjectMutations mutations` to the constructor after `IResourceStorage storage`, and fix every construction site the compiler flags.
+Add `IProjectMutations mutations` to the constructor after `IResourceStorage storage`,
+and fix every construction site the compiler flags.
+
+**A cascade test is required**, because nothing else now proves the children go:
+deleting a File removes its resource rows, and deleting a Project removes its Files
+and their resources. If foreign keys were ever disabled these fail loudly, rather than
+silently leaking rows.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -420,34 +469,57 @@ Two small view-model gaps, batched because both wire an existing pattern into a 
 
 - [ ] **Step 1: Write the failing tests**
 
+**Counting announcements is not enough.** `TasksMutated` firing proves the plumbing is
+wired, not that any surface refreshed. The required outcome is that the Project list,
+the Inbox, and the Daily/Calendar project labels all show the new state **without a
+manual reload**. Write these in
+`tests/BeBoosted.Desktop.Tests/ViewModels/ShellProjectRefreshTests.cs`, which already
+builds a full shell with a project-linked scheduled task via `CreateShell()` and
+`CreateProjectWithScheduledTask(...)`. Use that fixture, not the Projects-only one.
+
 ```csharp
     [Fact]
-    public void RenamingAProject_AnnouncesThroughTheShellChain()
+    public void RenamingAProject_RefreshesEverySurfaceWithoutAManualReload()
     {
-        var projects = WithProjectAndFile();
-        var detail = projects.Detail!;
-        var announcements = 0;
-        projects.TasksMutated += () => announcements++;
+        var (shell, blocks, tasks) = CreateShell();
+        CreateProjectWithScheduledTask(shell, blocks, tasks);
 
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        var detail = shell.Projects.Detail!;
         detail.BeginRename();
-        detail.RenameName = "College Apps";
+        detail.RenameName = "Coursework";
         Assert.True(detail.TryCommitRename());
 
-        Assert.Equal(1, announcements);
+        // No ReloadList(), no re-navigation: the chain must have done it.
+        Assert.Equal("Coursework", detail.Name);
+        Assert.Contains(shell.Projects.Projects, card => card.Name == "Coursework");
+        Assert.DoesNotContain(shell.Projects.Projects, card => card.Name == "Schoolwork");
+
+        // The Daily list caches a project label on every row it builds.
+        shell.NavigateCommand.Execute(AppSection.Calendar);
+        Assert.DoesNotContain(
+            shell.Calendar.Daily.ScheduledRows.Concat(shell.Calendar.Daily.UnscheduledRows),
+            row => row.ProjectName == "Schoolwork");
     }
 
     [Fact]
-    public void DeletingAProject_AnnouncesThroughTheShellChain()
+    public void DeletingAProject_ClearsItsLabelsEverywhereWithoutAManualReload()
     {
-        var projects = WithProjectAndFile();
-        var detail = projects.Detail!;
-        var announcements = 0;
-        projects.TasksMutated += () => announcements++;
+        var (shell, blocks, tasks) = CreateShell();
+        CreateProjectWithScheduledTask(shell, blocks, tasks);
 
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        var detail = shell.Projects.Detail!;
         detail.RequestDeleteCommand.Execute(null);
         detail.ConfirmPromptCommand.Execute(null);
 
-        Assert.Equal(1, announcements);
+        Assert.Empty(shell.Projects.Projects);
+
+        // The task survives, unassigned, and no surface still claims the old project.
+        shell.NavigateCommand.Execute(AppSection.Calendar);
+        var rows = shell.Calendar.Daily.ScheduledRows.Concat(shell.Calendar.Daily.UnscheduledRows);
+        Assert.Contains(rows, row => row.Title == "Stats HW");
+        Assert.DoesNotContain(rows, row => row.ProjectName == "Schoolwork");
     }
 
     [Fact]
@@ -497,9 +569,18 @@ Two small view-model gaps, batched because both wire an existing pattern into a 
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `dotnet test tests/BeBoosted.Desktop.Tests/BeBoosted.Desktop.Tests.csproj --filter "FullyQualifiedName~AnnouncesThroughTheShellChain|FullyQualifiedName~RemovingAResource|FullyQualifiedName~AResourceRemoval|FullyQualifiedName~ShowsTheNewNameOnTheHeaderAndInTheList"`
+Run: `dotnet test tests/BeBoosted.Desktop.Tests/BeBoosted.Desktop.Tests.csproj --filter "FullyQualifiedName~WithoutAManualReload|FullyQualifiedName~RemovingAResource|FullyQualifiedName~AResourceRemoval|FullyQualifiedName~ShowsTheNewNameOnTheHeaderAndInTheList"`
 
-Expected: the two announcement tests fail with `0` announcements; the three removal tests fail because `Confirmation` is null and the resource is already gone; the de-masked rename test fails on the stale list.
+Expected, and check each failure reason rather than just the count:
+
+- `RenamingAProject_RefreshesEverySurfaceWithoutAManualReload` fails on the Projects
+  list still holding "Schoolwork" — the chain never fired.
+- `DeletingAProject_ClearsItsLabelsEverywhereWithoutAManualReload` fails the same way.
+- The three removal tests fail because `Confirmation` is null and the resource is
+  already gone — it was deleted on the first click.
+- `RenamingAProject_ShowsTheNewNameOnTheHeaderAndInTheList` fails on the stale list
+  once its manual `ReloadList()` is removed. **If it still passes, you did not delete
+  that line** — it is the line that hid this defect through a full review.
 
 - [ ] **Step 3: Announce project rename and delete**
 
@@ -587,7 +668,31 @@ A persistence test that the column round-trips, and a domain test that `Relocate
 
 - [ ] **Step 3: Run to verify they fail, then implement**
 
-Add `FolderSegment` and `RelocateTo` to both domain types, mirroring `Resource.RelocateTo`'s contract — called only after a reservation succeeded, so the row never names a folder that was never claimed. Then read and write the column in both repositories.
+Add `FolderSegment` and `RelocateTo` to both domain types, mirroring
+`Resource.RelocateTo`'s contract — called only after a reservation succeeded, so the
+row never names a folder that was never claimed. Then read and write the column in
+both repositories.
+
+**Construction order is forced, and it is not obvious.** `ResourceLayout.FolderFor`
+sanitizes with the entity's own id as the fallback:
+
+```csharp
+Sanitize(project.Name, project.Id.ToString())
+```
+
+So the id must exist *before* a segment can be computed — which means `Create` cannot
+require a real segment. The order is:
+
+1. `Create(...)` with `FolderSegment` set to the empty sentinel `""`. The factory
+   generates the id.
+2. Compute the preferred segment using that id as the sanitize fallback.
+3. Reserve it (Task 5), which claims the directory.
+4. `RelocateTo(reserved, now)`.
+5. Persist the row.
+
+`Create` therefore takes no `folderSegment` parameter; only `Rehydrate` does, since it
+reads a row that already has one. A row briefly holding `""` in memory before step 4
+is expected — a row persisted with `""` is what Task 7's backfill looks for.
 
 - [ ] **Step 4: Full suite and commit**
 
@@ -691,15 +796,45 @@ Every Project and File created before migration `0012` has `folder_segment = ''`
 - Modify: `src/BeBoosted.Desktop/App.axaml.cs`, `ServiceCollectionExtensions.cs`
 - Test: `tests/BeBoosted.Tests/Projects/FolderIdentityBackfillTests.cs`
 
+**Naive reservation relocates everything, which is the opposite of the goal.** An
+existing Project's bytes already sit in `resources/College Admissions/`. If the
+backfill calls `ReserveFolderSegment` with no `ownedSegment`, that directory reads as
+occupied and the Project is handed `College Admissions (2)` — so the reconciler then
+moves every file the migration was supposed to leave alone.
+
+The backfill must offer the derived legacy segment as **provisionally owned**: pass it
+as `ownedSegment` so an existing directory of that name is treated as this entity's
+own rather than as an obstacle.
+
+**A sibling claim outranks provisional ownership.** Two Projects that sanitize to the
+same segment cannot both own it. Whichever the backfill reaches first claims it for
+real; the second finds it in `claimed` and must advance to `(2)` even though it would
+also derive that name. So `claimed` is checked before `ownedSegment` is honoured, and
+the backfill adds each segment to `claimed` as it goes.
+
 - [ ] **Step 1: Write the failing tests**
 
-- A Project with an empty segment gets one derived from its current name, and its resources do not move.
-- Two Projects that sanitize identically get **different** segments, and the second one's bytes are relocated into it.
-- A Project that already has a segment is left alone — the backfill is idempotent and running it twice changes nothing.
+- A Project with an empty segment gets the segment derived from its current name, and
+  a subsequent reconcile moves **nothing** — its resources stay exactly where they are.
+- Two Projects that sanitize identically get **different** segments: the first keeps
+  the legacy directory, the second is relocated into its own.
+- A File is backfilled within its Project's folder, and `claimed` is scoped to that
+  Project's Files — two Files of *different* Projects may hold the same segment.
+- Running the backfill twice changes nothing: it is idempotent, and an entity that
+  already has a non-empty segment is skipped entirely.
 
 - [ ] **Step 2: Run to verify they fail, then implement**
 
-For each Project then each File with `FolderSegment == ""`: compute the preferred segment with `ResourceLayout.Sanitize`, reserve it (passing siblings already backfilled as `claimed`), and persist. Run it at startup **before** `ResourceLayoutReconciler.Reconcile()` in `App.axaml.cs`, inside the same try/catch — layout is cosmetic and a failure must not block startup.
+For each Project, then each File within it, whose `FolderSegment == ""`:
+
+1. Derive the preferred segment with `ResourceLayout.Sanitize(name, id.ToString())`.
+2. Call `ReserveFolderSegment(parent, preferred, claimed, ownedSegment: preferred)` —
+   the derived name is offered as provisionally owned.
+3. Add the returned segment to `claimed` before moving to the next entity.
+4. `RelocateTo` and persist.
+
+Run it at startup **before** `ResourceLayoutReconciler.Reconcile()` in `App.axaml.cs`,
+inside the same try/catch — layout is cosmetic and a failure must not block startup.
 
 - [ ] **Step 3: Full suite and commit**
 

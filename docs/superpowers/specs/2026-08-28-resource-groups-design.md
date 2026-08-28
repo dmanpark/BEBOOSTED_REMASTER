@@ -231,7 +231,7 @@ produces.
   is the ungrouped case) and touches `ModifiedAt`.
 - `Rehydrate` gains the `groupId` parameter.
 
-### Migration `0012_resource_groups.sql`
+### Migration `0013_resource_groups.sql`
 
 ```sql
 CREATE TABLE resource_groups (
@@ -401,6 +401,14 @@ the resource's current location; deleting a group prompts with the correct count
 
 Manual: the File surface in the running app, since XAML binding failures do not
 surface in tests.
+
+## Note on migration numbering
+
+This spec originally declared `0012_resource_groups.sql`. `0012` is now taken by
+`0012_folder_segments.sql`, from the PR #1 merge-blocker repair, which applies this
+spec's durable-folder-identity mechanism one level up to Projects and Files. Resource
+groups therefore land on `0013`, and inherit `ReserveFolderSegment` rather than
+introducing it.
 
 ## Known limitations
 
