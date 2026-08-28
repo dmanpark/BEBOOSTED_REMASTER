@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Status: Approved design, ready for implementation planning
+Status: Approved design, revised after review, ready for implementation planning
 
 ## Problem
 
@@ -33,6 +33,11 @@ hold together.
 - **No manual reordering UI in phase 1.** The schema carries `sort_order` so ordering
   has somewhere to live, but phase 1 orders groups by creation and ships no reorder
   control. Drag-to-reorder belongs with phase 2's drag-and-drop.
+- **No group-targeted import in phase 1.** `AddLink`, `AddNote`, and `ImportFile` take
+  only a `fileId` today and keep that signature. A new resource arrives loose in the
+  File and is placed with the Move-to flyout. Adding an optional `groupId` to those
+  three is phase-2 work, when a UI exists that would actually pass one — until then
+  the parameter would have no caller.
 - No per-group description, colour, or icon. A group is a title and its contents.
 - No change to indexing, search, or AI provenance. `SearchInProject` still searches
   every resource in a project regardless of grouping; a group is not itself indexed.
@@ -43,11 +48,10 @@ hold together.
 Approach A of three considered: **a first-class `resource_groups` table with a
 nullable `group_id` on `resources`.**
 
-A group is a row of its own — `id, file_id, title, sort_order, created_at,
-modified_at` — mirroring how `ProjectFile` relates to `Project`. A resource's
-`group_id` is null when it is loose in the File. Rename, delete, and ordering then
-work the way the rest of the model already works, and a group can exist before it has
-contents.
+A group is a row of its own, mirroring how `ProjectFile` relates to `Project`. A
+resource's `group_id` is null when it is loose in the File. Rename, delete, and
+ordering then work the way the rest of the model already works, and a group can exist
+before it has contents.
 
 The two rejected alternatives:
 
@@ -57,8 +61,8 @@ The two rejected alternatives:
   inherits all of that, muddying the single concept the Projects page is built on.
 - **A `group_title` string column on `resources`.** No new table, but renaming a group
   becomes an UPDATE across rows, an empty group cannot exist, and `sort_order` has
-  nowhere to live. This is the "sections, not containers" shape, which was considered
-  and rejected in favour of real containers.
+  nowhere to live. This is the "sections, not containers" shape, considered and
+  rejected in favour of real containers.
 
 ## Behavior
 
@@ -97,7 +101,7 @@ Chosen deliberately over a single destructive delete:
 
 - **Ungroup** clears `group_id` on the group's resources, so they become loose in the
   File, then removes the group. Nothing is lost. No confirmation — it is not
-  destructive and is trivially reversible by regrouping.
+  destructive and is trivially reversed by regrouping.
 - **Delete group** removes the group *and* its resources, including their stored
   bytes, behind the same two-step `ConfirmationPrompt` a File deletion uses, with the
   message naming the count: *"Delete 'Unit 3 — Federalism'? Its 4 documents and any
@@ -115,27 +119,65 @@ loose section. The flyout remains, and remains the keyboard-accessible path.
 
 ### On disk
 
-`ResourceLayout.FolderFor` gains an optional group segment:
-
 | Resource | Folder |
 | --- | --- |
-| in a group | `<project>/<file>/<group>` |
+| in a group | `<project>/<file>/<group folder segment>` |
 | loose | `<project>/<file>` |
 
-`ResourceLayoutReconciler` resolves each resource's group when computing its desired
-folder. Renaming a group, ungrouping, and moving between groups therefore all relocate
-the real bytes through the mechanism that already handles Project and File renames —
-best-effort, with a locked or missing file staying put and being retried on the next
-run.
+The group's folder segment is **persisted on the group row**, not derived from its
+title at read time. See "Durable folder identity" below — this is the correction that
+makes renames, collisions, and multi-resource groups behave.
+
+## Durable folder identity for groups
+
+A group's on-disk folder name is resolved **once**, when the group is created, and
+re-resolved when it is renamed. The result is stored in `resource_groups.folder_segment`
+and is what `ResourceLayout.FolderFor` uses.
+
+**Why not derive it from the title.** `ResourceLayout` is pure by design — "every rule
+here is decidable without touching the filesystem, which is what makes it testable and
+what keeps collision handling (the one genuinely filesystem-dependent part) in the
+storage layer." So a derived segment cannot know that the name it wants is already
+taken by a loose resource's file (a resource whose original name has no extension, e.g.
+`…/Gov Textbook/Notes`) or by a sibling group with the same title.
+
+Deriving it and disambiguating per resource does not work either, and this is the
+sharper failure. `ResourceLayout.IsAlreadyPlaced` compares the folder with
+`string.Equals(..., OrdinalIgnoreCase)`; its numbered-variant tolerance applies only to
+the *file* name, never the folder. So a resource parked in `Notes (2)` while its group
+still derives `Notes` is judged out of place on **every** reconcile, and the mover runs
+forever. Two resources of one group could also land in different folders, and two
+groups sharing a title could split or share one.
+
+**Resolution.** At create and at rename:
+
+1. The service computes the preferred segment as `ResourceLayout.Sanitize(title, id)` —
+   pure, unchanged.
+2. It passes that, the parent folder (`<project>/<file>`), and the folder segments
+   already taken by sibling groups of the same File, to the storage layer.
+3. `IResourceStorage.ReserveFolderSegment` returns a free segment, appending the same
+   ` (2)`, ` (3)` suffixes `ResourceLayout.CandidateName` uses for files, skipping any
+   name occupied on disk or already claimed by a sibling group.
+4. The service persists the returned segment on the group row.
+
+`FolderFor` then reads the persisted value, so the desired folder is stable across
+restarts, identical for every resource in the group, and distinct between same-titled
+groups. `IsAlreadyPlaced` needs no change and stops churning.
+
+A rename that resolves to a new segment leaves the old folder behind once the
+reconciler has moved the bytes out — the same outcome a File rename already produces.
 
 ## Components
 
 ### `BeBoosted.Domain` — new `ResourceGroup`
 
-- `Create(ProjectFileId fileId, string title, int sortOrder, DateTimeOffset now)` and
-  `Rehydrate(...)`, matching `ProjectFile`'s shape.
+- `Create(ProjectFileId fileId, string title, string folderSegment, int sortOrder, DateTimeOffset now)`
+  and `Rehydrate(...)`, matching `ProjectFile`'s shape.
 - `Rename(string title, DateTimeOffset now)` — trims; a blank title throws
   `DomainException("A group needs a title.")`, mirroring `ProjectFile.ValidateTitle`.
+- `RelocateTo(string folderSegment, DateTimeOffset now)` — records a newly reserved
+  segment, mirroring `Resource.RelocateTo`'s contract: called only after the
+  reservation succeeded, so the row never names a folder that was never reserved.
 - `Reorder(int sortOrder, DateTimeOffset now)` — present for the schema's sake; no UI
   calls it in phase 1.
 
@@ -153,6 +195,7 @@ CREATE TABLE resource_groups (
     id TEXT PRIMARY KEY NOT NULL,
     file_id TEXT NOT NULL REFERENCES project_files (id) ON DELETE CASCADE,
     title TEXT NOT NULL,
+    folder_segment TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     modified_at TEXT NOT NULL
@@ -166,58 +209,72 @@ ALTER TABLE resources ADD COLUMN group_id TEXT
 CREATE INDEX idx_resources_group ON resources (group_id);
 ```
 
-`ON DELETE SET NULL` states the intent, but **it does not enforce it**.
-`SqliteConnectionFactory` sets only `PRAGMA journal_mode=WAL` and never
-`PRAGMA foreign_keys=ON`, so SQLite's default applies and foreign-key actions do not
-fire. The existing `ON DELETE CASCADE` on `resources.file_id` is in the same
-position, which is precisely why `DeleteFile` walks its resources explicitly rather
-than relying on it.
+**Foreign keys are enforced.** `SqliteConnectionFactory` sets `ForeignKeys = true` on
+the connection string, which Microsoft.Data.Sqlite issues as `PRAGMA foreign_keys` on
+every open. Three existing tests depend on it —
+`SqliteCalendarBlockRepositoryTests.DeletingTask_CascadesToItsBlocks`,
+`SqliteOccurrenceCompletionRepositoryTests.DeletingTheBlock_CascadesToItsCompletions`,
+and `ProposedBlockIntegrityMigrationTests.CleanDatabase_DeletingATask_CascadesToItsProposedBlocks`.
 
-So both group removal paths do their own work in the service, and the declared action
-is documentation that matches the code:
+So `ON DELETE CASCADE` and `ON DELETE SET NULL` both fire, and deleting a File really
+does remove its groups.
 
-- **Ungroup** explicitly clears `group_id` on the group's resources, then deletes the
-  group row.
-- **Delete group** explicitly deletes the resources through `DeleteResource`, then the
-  group row.
+The service still acts explicitly, for a different reason than the database:
+`DeleteFile` walks its resources to delete **stored bytes** and invalidate
+**AI provenance** — neither of which a foreign key can do. `DeleteGroup` walks its
+resources for exactly the same reason, through `DeleteResource`. `UngroupGroup` clears
+`group_id` explicitly so the intent is legible at the call site and does not depend on
+delete order, even though `SET NULL` would also produce it.
 
 Existing rows get `group_id = NULL` and are therefore loose, so every File keeps
 rendering as it does today.
 
 ### `BeBoosted.Application` — `IResourceGroupRepository`
 
-`Add`, `Update`, `Delete`, `GetById`, `GetForFile` — the same surface
-`IProjectFileRepository` exposes.
+`Add`, `Update`, `Delete`, `GetById`, `GetForFile` — the surface
+`IProjectFileRepository` already exposes.
+
+### `BeBoosted.Application` — `IResourceStorage`
+
+One new member:
+
+```csharp
+/// <summary>
+/// Reserves a free folder name under <paramref name="relativeParent"/> for a group,
+/// skipping names taken on disk or already claimed by <paramref name="claimed"/>.
+/// Returns the segment actually reserved.
+/// </summary>
+string ReserveFolderSegment(string relativeParent, string preferredSegment, IReadOnlySet<string> claimed);
+```
 
 ### `BeBoosted.Application` — `ProjectService`
 
-- `ResourceGroup CreateGroup(ProjectFileId fileId, string title)`
-- `ResourceGroup RenameGroup(ResourceGroupId id, string title)` — reconciles the
-  file's project afterwards so the folder follows, exactly as `RenameFile` does.
-- `void UngroupGroup(ResourceGroupId id)` — clears `group_id` on its resources, deletes
-  the group, reconciles.
-- `void DeleteGroup(ResourceGroupId id)` — deletes its resources through the existing
-  `DeleteResource` (bytes and provenance included), then the group.
-- `Resource MoveResourceToGroup(ResourceId id, ResourceGroupId? groupId)` — validates
-  that the group belongs to the resource's File, then reconciles.
+- `CreateGroup(ProjectFileId fileId, string title)` — reserves and persists the folder
+  segment.
+- `RenameGroup(ResourceGroupId id, string title)` — renames, re-reserves the segment,
+  persists it, then reconciles the file's project so the bytes follow, exactly as
+  `RenameFile` does.
+- `UngroupGroup(ResourceGroupId id)` — clears `group_id` on its resources, deletes the
+  group, reconciles.
+- `DeleteGroup(ResourceGroupId id)` — deletes its resources through `DeleteResource`
+  (bytes and provenance included), then the group.
+- `MoveResourceToGroup(ResourceId id, ResourceGroupId? groupId)` — rejects a group
+  belonging to a different File, then reconciles.
 - `GetGroups(ProjectFileId fileId)` and a per-group resource count for the headers.
 
 ### `BeBoosted.Application` — `ResourceLayout` / `ResourceLayoutReconciler`
 
-- `FolderFor(Project, ProjectFile, ResourceGroup?)` appends a sanitized group segment
-  when the group is non-null. `ResourceLayout` stays pure — no filesystem access.
+- `FolderFor(Project, ProjectFile, ResourceGroup?)` appends the group's **persisted**
+  `FolderSegment` when the group is non-null. `ResourceLayout` stays pure; it does no
+  sanitizing of the segment at this point because the segment was sanitized and
+  reserved when it was stored.
 - The reconciler loads the File's groups once per File and resolves each resource's
   group when computing its desired folder.
 
-### `BeBoosted.Infrastructure` — `LocalResourceStorage`
-
-Reserves a free **folder** path the way it already reserves a free file name. See
-Risks below.
-
 ### `BeBoosted.Desktop`
 
-- `FileDetailViewModel` exposes `Groups` (each with its own resource rows, title,
-  count, and collapsed state) alongside `LooseResources`, replacing the single flat
+- `FileDetailViewModel` exposes `Groups` (each with its resource rows, title, count,
+  and collapsed state) alongside `LooseResources`, replacing the single flat
   `Resources` collection. `HasGroups` drives whether any group chrome renders at all.
 - `ResourceRowViewModel` gains the Move-to flyout's target list and commit.
 - `ProjectsView.axaml` renders group headers, the loose section, and the New group
@@ -225,46 +282,41 @@ Risks below.
 
 ## Risks
 
-**A group folder can collide with a loose resource's file name.** `ResourceLayout` is
-deliberately pure — "every rule here is decidable without touching the filesystem,
-which is what makes it testable and what keeps collision handling (the one genuinely
-filesystem-dependent part) in the storage layer." So it cannot see that a loose
-resource stored as `…/Gov Textbook/Notes` (an original file name with no extension)
-occupies the exact path a group named `Notes` needs for its folder.
-
-`Directory.CreateDirectory` then throws `IOException`. `MoveInto` catches it and
-returns null, so a *move* degrades to "stays put, retried next run" — safe but
-silently permanent. `Store` does **not** catch it, so a fresh import into a colliding
-group would surface the error to the user.
-
-Mitigation, consistent with the stated architecture: `LocalResourceStorage` reserves a
-free folder path — appending the same ` (2)`, ` (3)` suffixes `CandidateName` uses for
-files — and the reconciler records where the bytes actually went, as it already does.
-The pure layout rules stay pure; the filesystem-dependent disambiguation stays in the
-storage layer.
+**Reservation is not transactional with the row write.** `ReserveFolderSegment` checks
+the filesystem, then the service persists the result. Nothing else in this
+single-user desktop app writes that directory between the two, and a stale
+reservation degrades the same way every other placement does: `MoveInto` returns null,
+the resource keeps its current path, and the next reconcile retries. Worth stating,
+not worth a lock.
 
 **Reconciler cost.** The reconciler already walks every project, file, and resource.
 This adds one group query per File. Negligible at the scale of a personal planner, and
-the reconciler runs at startup, not per interaction.
+it runs at startup rather than per interaction.
 
 ## Testing
 
 Domain: group title validation and trimming; `MoveToGroup(null)` is the valid
-ungrouped case; `Rename` touches `ModifiedAt`.
+ungrouped case; `RelocateTo` records a reserved segment; `Rename` touches
+`ModifiedAt`.
 
 Application: create / rename / ungroup / delete-with-contents; ungroup preserves every
 resource and its bytes while delete removes both; moving a resource into a group, to
 another group, and back to loose relocates the bytes on disk and survives a restart;
-moving a resource into a group belonging to a different File is rejected; the folder
-collision degrades safely rather than throwing.
+moving a resource into a group of a different File is rejected.
 
-Persistence: `group_id` round-trips; the migration leaves existing resources loose.
+Folder identity — the reason this design exists:
 
-**Do not** write a test asserting that deleting a group row sets its resources'
-`group_id` to null — foreign-key enforcement is off, so it would fail. Assert instead
-that `UngroupGroup` leaves every resource present with a null `group_id`, read back
-through a fresh repository. That pins the behaviour the service is actually
-responsible for.
+- A group whose sanitized title collides with a loose resource's stored file name
+  reserves a distinct segment, and every resource in that group lands in it.
+- Two groups in one File with the same title reserve different segments.
+- **A reconcile run twice moves nothing the second time.** This is the churn
+  regression: with a derived-and-disambiguated segment it would move on every run.
+- Renaming a group re-reserves, and the bytes follow.
+
+Persistence: `group_id` and `folder_segment` round-trip; the migration leaves existing
+resources loose; **deleting a group row directly sets its resources' `group_id` to
+null** (foreign keys are enforced — this test is worth having and will pass); deleting
+a File removes its groups.
 
 View model: a File with no groups renders exactly as before; an empty group renders
 with a zero count; the Move-to flyout lists the File's groups plus loose and excludes
@@ -277,8 +329,9 @@ surface in tests.
 
 - Groups do not nest, by design. A File that needs two levels of structure wants a
   second File.
-- Deleting a group leaves its now-empty folder on disk, matching the existing
-  behaviour for a deleted File.
+- Deleting or renaming a group leaves its now-empty folder on disk, matching the
+  existing behaviour for a deleted or renamed File.
 - Phase 1 ships no reordering; groups appear in creation order.
+- Phase 1 imports arrive loose and are then moved; there is no group-targeted import.
 - A group is not searchable and does not participate in AI provenance — only its
   resources do, exactly as today.
