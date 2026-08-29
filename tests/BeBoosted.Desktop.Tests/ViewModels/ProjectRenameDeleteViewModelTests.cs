@@ -195,6 +195,71 @@ public sealed class ProjectRenameDeleteViewModelTests
         Assert.Equal(original, file.Resources.Single().Title);
     }
 
+    // ---- Resource delete ----
+
+    [Fact]
+    public void RemovingAResource_AsksFirstAndNamesTheStoredDocument()
+    {
+        var projects = WithProjectAndFile();
+        var file = projects.FileDetail!;
+        file.Import(ResourceKind.Document, [@"C:\anywhere\Transcript.pdf"]);
+        var row = file.Resources.Single();
+
+        row.DeleteCommand.Execute(null);
+
+        Assert.NotNull(file.Confirmation);
+        Assert.Contains("Transcript", file.Confirmation!.Message, StringComparison.Ordinal);
+        Assert.Single(file.Resources); // nothing removed yet
+    }
+
+    [Fact]
+    public void ConfirmingAResourceRemoval_RemovesIt()
+    {
+        var projects = WithProjectAndFile();
+        var file = projects.FileDetail!;
+        file.Import(ResourceKind.Document, [@"C:\anywhere\Transcript.pdf"]);
+        file.Resources.Single().DeleteCommand.Execute(null);
+
+        file.ConfirmPromptCommand.Execute(null);
+
+        Assert.Empty(file.Resources);
+    }
+
+    /// <summary>
+    /// A link has no stored document, so the prompt must not claim one is deleted.
+    /// Both branches of the wording need a pinned case.
+    /// </summary>
+    [Fact]
+    public void RemovingALink_AsksWithoutTheStoredDocumentWarning()
+    {
+        var projects = WithProjectAndFile();
+        var file = projects.FileDetail!;
+        file.NewLinkUrl = "https://collegeboard.org/scores";
+        file.NewLinkTitle = "SAT Scores";
+        Assert.True(file.TryAddLink());
+        var row = file.Resources.Single(r => r.Title == "SAT Scores");
+
+        row.DeleteCommand.Execute(null);
+
+        Assert.NotNull(file.Confirmation);
+        Assert.Contains("SAT Scores", file.Confirmation!.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("stored document", file.Confirmation.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void DismissingAResourceRemoval_KeepsIt()
+    {
+        var projects = WithProjectAndFile();
+        var file = projects.FileDetail!;
+        file.Import(ResourceKind.Document, [@"C:\anywhere\Transcript.pdf"]);
+        file.Resources.Single().DeleteCommand.Execute(null);
+
+        file.KeepPromptCommand.Execute(null);
+
+        Assert.Null(file.Confirmation);
+        Assert.Single(file.Resources);
+    }
+
     // ---- Project rename ----
 
     [Fact]
@@ -208,7 +273,6 @@ public sealed class ProjectRenameDeleteViewModelTests
 
         Assert.True(detail.TryCommitRename());
         Assert.Equal("College Apps", detail.Name);
-        projects.ReloadList();
         Assert.Equal("College Apps", projects.Projects.Single().Name);
     }
 

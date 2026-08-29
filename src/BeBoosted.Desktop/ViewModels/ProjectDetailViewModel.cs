@@ -85,6 +85,10 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
 
         Project = _service.RenameProject(Project.Id, RenameName);
         OnPropertyChanged(nameof(Name));
+
+        // Project labels are cached in Inbox, Daily, and Calendar snapshots; the one
+        // central chain refreshes every dependent surface.
+        _owner.NotifyTasksMutated();
         return true;
     }
 
@@ -112,6 +116,7 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
         _pendingConfirmedAction = () =>
         {
             _service.DeleteProject(Project.Id);
+            _owner.NotifyTasksMutated();
             _owner.CloseDetail();
         };
     }

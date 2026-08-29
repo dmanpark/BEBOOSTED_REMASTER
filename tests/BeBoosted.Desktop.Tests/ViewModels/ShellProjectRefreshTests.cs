@@ -63,6 +63,78 @@ public sealed class ShellProjectRefreshTests
         return blocks.GetForTask(task.Id).Single().Id;
     }
 
+    /// <summary>A second task on the same project, left unscheduled so it sits in the Inbox.</summary>
+    private static void AddUnscheduledProjectTask(
+        ShellViewModel shell, InMemoryTaskRepository tasks, string title)
+    {
+        var project = shell.Projects.Projects.Single().Project;
+        var task = TaskItem.Create(title, TestShell.DesignDate.ToDateTime(TimeOnly.MinValue), projectId: project.Id);
+        tasks.Add(task);
+    }
+
+    [Fact]
+    public void RenamingAProject_RelabelsEverySurfaceWithoutAManualReload()
+    {
+        var (shell, blocks, tasks) = CreateShell();
+        CreateProjectWithScheduledTask(shell, blocks, tasks);
+        AddUnscheduledProjectTask(shell, tasks, "Read chapter 4");
+
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        var detail = shell.Projects.Detail!;
+        detail.BeginRename();
+        detail.RenameName = "Coursework";
+        Assert.True(detail.TryCommitRename());
+
+        // No ReloadList(), no re-navigation: the chain must have done it.
+        Assert.Equal("Coursework", detail.Name);
+        Assert.Equal("Coursework", shell.Projects.Projects.Single().Name);
+
+        shell.NavigateCommand.Execute(AppSection.Calendar);
+        shell.Calendar.VisibleDate = Tomorrow; // the Daily list defaults to today; the session is tomorrow
+
+        // Positively: the scheduled row now carries the new label.
+        var scheduled = shell.Calendar.Daily.ScheduledRows.Single(r => r.Title == "Stats HW");
+        Assert.Equal("Coursework", scheduled.ProjectName);
+
+        // Positively: the Daily list's unscheduled row does too.
+        var unscheduled = shell.Calendar.Daily.UnscheduledRows.Single(r => r.Title == "Read chapter 4");
+        Assert.Equal("Coursework", unscheduled.ProjectName);
+
+        // And the Inbox proper, which is a different surface with its own snapshot.
+        var inboxRow = shell.Inbox.Tasks.Single(r => r.Title == "Read chapter 4");
+        Assert.Equal("Coursework", inboxRow.MetaText);
+    }
+
+    [Fact]
+    public void DeletingAProject_ClearsItsLabelsOnEverySurfaceWithoutAManualReload()
+    {
+        var (shell, blocks, tasks) = CreateShell();
+        CreateProjectWithScheduledTask(shell, blocks, tasks);
+        AddUnscheduledProjectTask(shell, tasks, "Read chapter 4");
+
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        var detail = shell.Projects.Detail!;
+        detail.RequestDeleteCommand.Execute(null);
+        detail.ConfirmPromptCommand.Execute(null);
+
+        Assert.Empty(shell.Projects.Projects);
+
+        shell.NavigateCommand.Execute(AppSection.Calendar);
+        shell.Calendar.VisibleDate = Tomorrow; // the Daily list defaults to today; the session is tomorrow
+
+        // Both tasks survive, both unassigned — asserted on the rows themselves, so a
+        // vanished row cannot pass for a cleared label.
+        var scheduled = shell.Calendar.Daily.ScheduledRows.Single(r => r.Title == "Stats HW");
+        Assert.Null(scheduled.ProjectName);
+
+        var unscheduled = shell.Calendar.Daily.UnscheduledRows.Single(r => r.Title == "Read chapter 4");
+        Assert.Null(unscheduled.ProjectName);
+
+        // The Inbox proper: no project, so MetaText collapses to empty.
+        var inboxRow = shell.Inbox.Tasks.Single(r => r.Title == "Read chapter 4");
+        Assert.Equal(string.Empty, inboxRow.MetaText);
+    }
+
     [Fact]
     public void MovingALinkedTask_RefreshesTheOpenProjectDetail()
     {

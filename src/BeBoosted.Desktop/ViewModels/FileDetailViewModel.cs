@@ -239,6 +239,19 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         Refresh();
     }
 
+    /// <summary>
+    /// Removing a resource deletes its stored document too, so it asks first — the
+    /// same two-step prompt a File or Project deletion uses.
+    /// </summary>
+    internal void RequestDeleteResource(ResourceRowViewModel row)
+    {
+        var message = row.Resource.StoredPath is null
+            ? $"Remove '{row.Title}' from this File?"
+            : $"Remove '{row.Title}' from this File? Its stored document is deleted too.";
+        Confirmation = new ConfirmationPrompt(message, "Remove", IsTaskDeletion: false);
+        _pendingConfirmedAction = () => DeleteResource(row);
+    }
+
     public void DeleteResource(ResourceRowViewModel row)
     {
         _service.DeleteResource(row.Resource.Id);
@@ -417,7 +430,7 @@ public sealed partial class ResourceRowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void Delete() => _owner.DeleteResource(this);
+    private void Delete() => _owner.RequestDeleteResource(this);
 
     // Rename-this-resource flyout
     [ObservableProperty]
