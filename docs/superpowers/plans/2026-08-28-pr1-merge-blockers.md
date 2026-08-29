@@ -298,7 +298,7 @@ Adjust the argument order to match the constructor you write in Step 3.
 
 Run: `dotnet test tests/BeBoosted.Tests/BeBoosted.Tests.csproj --filter "FullyQualifiedName~ProjectMutations_WhenTheMutationThrows|FullyQualifiedName~WhenTheMutationFails|FullyQualifiedName~DeleteFile_OnSuccess"`
 
-**Confirm the filter matched 5 tests.** A `--filter` naming tests that do not exist
+**Confirm the filter matched 6 tests.** A `--filter` naming tests that do not exist
 runs zero and reports success — a green result that proves nothing. If the run says
 "No test matches", the filter is stale: fix it before reading anything into the
 result.
@@ -547,7 +547,7 @@ above if they differ.
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `dotnet test tests/BeBoosted.Tests/BeBoosted.Tests.csproj --filter "FullyQualifiedName~ProjectMutations_WhenTheMutationThrows|FullyQualifiedName~WhenTheMutationFails|FullyQualifiedName~DeleteFile_OnSuccess"`
-Expected: **PASS, 5 tests** — the count matters as much as the colour. Fewer than 5
+Expected: **PASS, 6 tests** — the count matters as much as the colour. Fewer than 6
 means the filter missed one, not that one was fixed.
 
 Then `dotnet test BeBoosted.slnx` — everything else still green. `ProjectServiceTests.DeleteProject_*` and `DeleteFile_*` exercise the rewritten paths and must still pass unchanged.
