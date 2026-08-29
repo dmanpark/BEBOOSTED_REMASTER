@@ -470,19 +470,79 @@ deleting a File removes its resource rows, and deleting a Project removes its Fi
 and their resources. If foreign keys were ever disabled these fail loudly, rather than
 silently leaking rows.
 
-**Aggregate provenance needs its own coverage.** `AiServiceTests.DeletingACitedResource_FlagsDerivedItems`
-(line 148) already pins the single-resource path through `DeleteResource`. Nothing
-covers the aggregate paths, and this rewrite moved that invalidation to *after* the
-transaction, where a missed loop is silent. Add, in the same file and following its
-fixture:
+**Aggregate provenance needs its own coverage, split across two files.**
+`AiServiceTests.DeletingACitedResource_FlagsDerivedItems` (line 148) already pins the
+single-resource path through `DeleteResource`. Nothing covers the aggregate paths, and
+this rewrite moved that invalidation to *after* the transaction, where a missed loop is
+silent.
 
-- Deleting a **File** flags the derived items of **every** resource it held — build two
+**First, fix the fixture you are about to break.** `AiServiceTests` constructs
+`ProjectService` positionally at line 66:
+
+```csharp
+        _projectService = new ProjectService(
+            projects, files, _resources, storage,
+            new SimpleLocalIndexer(_resources, storage, _clock),
+            _tasks, new SqliteCalendarBlockRepository(_database.Factory),
+            new SqliteOccurrenceCompletionRepository(_database.Factory), _clock, _service);
+```
+
+Inserting `IProjectMutations` after `storage` breaks this call. Update it to pass
+`new SqliteProjectMutations(_database.Factory)` in that position. It is a real
+mutations implementation, which is what the success-path tests want.
+
+**In `AiServiceTests`, the two success paths** — its fixture already wires `_service`
+as the provenance invalidator, so derived items are observable there:
+
+- Deleting a **File** flags the derived items of **every** resource it held. Build two
   cited resources in one File and assert both are flagged, so a loop that invalidates
   only the first is caught.
 - Deleting a **Project** does the same across its Files.
-- **A failed mutation invalidates nothing.** Using `FailAfterMutation`, assert no
-  derived item is flagged — invalidation must not run ahead of a commit that never
-  happened, or a rolled-back delete permanently marks live items "Needs review".
+
+**In `ProjectServiceTests`, the rollback path**, because that is where
+`FailAfterMutation` lives and `AiServiceTests` has no injectable seam. Extend the
+existing helper to take an invalidator as well:
+
+```csharp
+    /// <summary>Records every invalidation so a test can assert none happened.</summary>
+    private sealed class RecordingInvalidator : IProvenanceInvalidator
+    {
+        public List<ResourceId> Invalidated { get; } = [];
+
+        public void InvalidateForResource(ResourceId id) => Invalidated.Add(id);
+    }
+
+    private ProjectService CreateServiceWith(
+        IProjectMutations mutations, IProvenanceInvalidator? invalidator = null)
+        => new(
+            _projects, _files, _resources, _storage, mutations,
+            new SimpleLocalIndexer(_resources, _storage, _clock), _tasks,
+            new SqliteCalendarBlockRepository(_database.Factory), _completions, _clock,
+            invalidator);
+
+    /// <summary>
+    /// Invalidation must not run ahead of a commit that never happened, or a
+    /// rolled-back delete permanently marks live items "Needs review".
+    /// </summary>
+    [Fact]
+    public void DeleteFile_WhenTheMutationFails_InvalidatesNothing()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        _service.AddLink(file.Id, "SAT", "https://collegeboard.org");
+        _service.AddLink(file.Id, "ACT", "https://act.org");
+
+        var recorder = new RecordingInvalidator();
+        var service = CreateServiceWith(new FailAfterMutation(_database.Factory), recorder);
+
+        Assert.Throws<InvalidOperationException>(() => service.DeleteFile(file.Id));
+
+        Assert.Empty(recorder.Invalidated);
+    }
+```
+
+Match `IProvenanceInvalidator`'s real member name and signature rather than the sketch
+above if they differ.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -529,7 +589,6 @@ manual reload**. Write these in
 builds a full shell with a project-linked scheduled task via `CreateShell()` and
 `CreateProjectWithScheduledTask(...)`. Use that fixture, not the Projects-only one.
 
-```csharp
 **Assert the new value, not the absence of the old one.** `DoesNotContain("Schoolwork")`
 passes if the row vanished, if the label went null, or if the collection is empty —
 none of which is the required outcome. Each surface must positively show "Coursework".
@@ -537,7 +596,21 @@ none of which is the required outcome. Each surface must positively show "Course
 **The Inbox needs a task to hold.** `CreateProjectWithScheduledTask` produces a
 *scheduled* task, so it lands in Scheduled and the Inbox is empty — a fixture that
 cannot exercise the Inbox at all. Add a second, unscheduled task linked to the same
-project so `UnscheduledRows` is non-empty and its label can be asserted.
+project.
+
+**`Daily.UnscheduledRows` is not the Inbox.** They are separate surfaces:
+`ShellViewModel.Inbox` is an `InboxViewModel` holding
+`ObservableCollection<TaskRowViewModel> Tasks`. Finding 3 names three surfaces —
+Projects list, Inbox, Daily/Calendar — so assert all three. Keep the
+`Daily.UnscheduledRows` checks AND add separate ones against `shell.Inbox.Tasks`.
+
+The Inbox row exposes `MetaText`, which composes `project · deadline · duration`. The
+extra task is deliberately created with no deadline and no estimate, so that string is
+exactly the project name and nothing else — which makes it an exact-equality assertion
+rather than a substring check:
+
+- after rename, the surviving Inbox row's `MetaText` equals `"Coursework"`
+- after delete, the surviving Inbox row's `MetaText` is empty
 
 ```csharp
     /// <summary>A second task on the same project, left unscheduled so it sits in the Inbox.</summary>
@@ -572,9 +645,13 @@ project so `UnscheduledRows` is non-empty and its label can be asserted.
         var scheduled = shell.Calendar.Daily.ScheduledRows.Single(r => r.Title == "Stats HW");
         Assert.Equal("Coursework", scheduled.ProjectName);
 
-        // Positively: the Inbox row does too.
-        var inbox = shell.Calendar.Daily.UnscheduledRows.Single(r => r.Title == "Read chapter 4");
-        Assert.Equal("Coursework", inbox.ProjectName);
+        // Positively: the Daily list's unscheduled row does too.
+        var unscheduled = shell.Calendar.Daily.UnscheduledRows.Single(r => r.Title == "Read chapter 4");
+        Assert.Equal("Coursework", unscheduled.ProjectName);
+
+        // And the Inbox proper, which is a different surface with its own snapshot.
+        var inboxRow = shell.Inbox.Tasks.Single(r => r.Title == "Read chapter 4");
+        Assert.Equal("Coursework", inboxRow.MetaText);
     }
 
     [Fact]
@@ -598,8 +675,12 @@ project so `UnscheduledRows` is non-empty and its label can be asserted.
         var scheduled = shell.Calendar.Daily.ScheduledRows.Single(r => r.Title == "Stats HW");
         Assert.Null(scheduled.ProjectName);
 
-        var inbox = shell.Calendar.Daily.UnscheduledRows.Single(r => r.Title == "Read chapter 4");
-        Assert.Null(inbox.ProjectName);
+        var unscheduled = shell.Calendar.Daily.UnscheduledRows.Single(r => r.Title == "Read chapter 4");
+        Assert.Null(unscheduled.ProjectName);
+
+        // The Inbox proper: no project, so MetaText collapses to empty.
+        var inboxRow = shell.Inbox.Tasks.Single(r => r.Title == "Read chapter 4");
+        Assert.Equal(string.Empty, inboxRow.MetaText);
     }
 
     [Fact]
