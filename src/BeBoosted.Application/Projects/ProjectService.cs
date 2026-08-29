@@ -15,6 +15,7 @@ public sealed class ProjectService(
     IProjectFileRepository files,
     IResourceRepository resources,
     IResourceStorage storage,
+    IProjectMutations mutations,
     IResourceIndexer indexer,
     ITaskRepository tasks,
     ICalendarBlockRepository blocks,
@@ -46,22 +47,38 @@ public sealed class ProjectService(
 
     /// <summary>
     /// Deletes the project and its Files/resources (and stored bytes), and unlinks
-    /// its tasks — the tasks and their schedules survive.
+    /// its tasks — the tasks and their schedules survive. Files and resources go
+    /// through the foreign-key cascade; the task unlink and the root delete share one
+    /// transaction, so a failure leaves the project exactly as it was.
     /// </summary>
     public void DeleteProject(ProjectId id)
     {
-        foreach (var file in files.GetForProject(id))
+        var doomedResources = files.GetForProject(id)
+            .SelectMany(f => resources.GetForFile(f.Id))
+            .ToList();
+        var paths = doomedResources.Select(r => r.StoredPath).OfType<string>().ToList();
+        var orphaned = tasks.GetAll().Where(t => t.ProjectId == id).ToList();
+
+        mutations.Execute((projectRepo, _, _, taskRepo) =>
         {
-            DeleteFile(file.Id);
+            foreach (var task in orphaned)
+            {
+                task.AssignToProject(null, clock.Now);
+                taskRepo.Update(task);
+            }
+
+            projectRepo.Delete(id);
+        });
+
+        foreach (var path in paths)
+        {
+            storage.Delete(path);
         }
 
-        foreach (var task in tasks.GetAll().Where(t => t.ProjectId == id))
+        foreach (var resource in doomedResources)
         {
-            task.AssignToProject(null, clock.Now);
-            tasks.Update(task);
+            provenanceInvalidator?.InvalidateForResource(resource.Id);
         }
-
-        projects.Delete(id);
     }
 
     public ProjectFile CreateFile(ProjectId projectId, string title, string? description)
@@ -86,14 +103,26 @@ public sealed class ProjectService(
         return file;
     }
 
+    /// <summary>
+    /// Deletes a File. Its resource rows go with it through the foreign-key cascade;
+    /// the service collects their bytes first and removes those after the commit.
+    /// </summary>
     public void DeleteFile(ProjectFileId id)
     {
-        foreach (var resource in resources.GetForFile(id))
+        var doomed = resources.GetForFile(id);
+        var paths = doomed.Select(r => r.StoredPath).OfType<string>().ToList();
+
+        mutations.Execute((_, fileRepo, _, _) => fileRepo.Delete(id));
+
+        foreach (var path in paths)
         {
-            DeleteResource(resource.Id);
+            storage.Delete(path);
         }
 
-        files.Delete(id);
+        foreach (var resource in doomed)
+        {
+            provenanceInvalidator?.InvalidateForResource(resource.Id);
+        }
     }
 
     public Resource AddLink(ProjectFileId fileId, string title, string url)
@@ -134,20 +163,28 @@ public sealed class ProjectService(
         return resource;
     }
 
+    /// <summary>
+    /// Removes one resource. The row goes first, inside a transaction; the bytes go
+    /// only once that commits. A failure therefore orphans bytes — invisible and
+    /// tolerated by the reconciler — rather than leaving a row pointing at a file
+    /// that no longer exists.
+    /// </summary>
     public void DeleteResource(ResourceId id)
     {
-        if (resources.GetById(id) is { } resource)
+        if (resources.GetById(id) is not { } resource)
         {
-            if (resource.StoredPath is { } storedPath)
-            {
-                storage.Delete(storedPath);
-            }
-
-            resources.Delete(id);
-
-            // A removed source flags everything derived from it as Needs review.
-            provenanceInvalidator?.InvalidateForResource(id);
+            return;
         }
+
+        mutations.Execute((_, _, resourceRepo, _) => resourceRepo.Delete(id));
+
+        if (resource.StoredPath is { } storedPath)
+        {
+            storage.Delete(storedPath);
+        }
+
+        // A removed source flags everything derived from it as Needs review.
+        provenanceInvalidator?.InvalidateForResource(id);
     }
 
     /// <summary>Edits a note's content: re-indexes it and flags derived items for review.</summary>

@@ -1,6 +1,8 @@
 using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Ai;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Projects;
+using BeBoosted.Application.Tasks;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Projects;
 using BeBoosted.Domain.Scheduling;
@@ -73,10 +75,47 @@ public sealed class ProjectServiceTests : IDisposable
         _completions = new SqliteOccurrenceCompletionRepository(_database.Factory);
         var blocks = new SqliteCalendarBlockRepository(_database.Factory);
         _service = new ProjectService(
-            _projects, _files, _resources, _storage,
+            _projects, _files, _resources, _storage, new SqliteProjectMutations(_database.Factory),
             new SimpleLocalIndexer(_resources, _storage, _clock), _tasks, blocks, _completions, _clock,
             provenanceInvalidator: null,
             reconciler: new ResourceLayoutReconciler(_projects, _files, _resources, _storage, _clock));
+    }
+
+    /// <summary>The same service, with the mutations seam swapped for a failing double.</summary>
+    private ProjectService CreateServiceWith(
+        IProjectMutations mutations, IProvenanceInvalidator? invalidator = null)
+        => new(
+            _projects, _files, _resources, _storage, mutations,
+            new SimpleLocalIndexer(_resources, _storage, _clock), _tasks,
+            new SqliteCalendarBlockRepository(_database.Factory), _completions, _clock,
+            invalidator);
+
+    /// <summary>
+    /// Runs the real mutation inside the real transaction, then throws before commit —
+    /// so the callback's writes are genuinely rolled back, not merely never attempted.
+    /// </summary>
+    private sealed class FailAfterMutation(SqliteConnectionFactory factory) : IProjectMutations
+    {
+        public void Execute(
+            Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository> mutation)
+        {
+            using var connection = factory.Open();
+            using var transaction = connection.BeginTransaction();
+            mutation(
+                new SqliteProjectRepository(connection, transaction),
+                new SqliteProjectFileRepository(connection, transaction),
+                new SqliteResourceRepository(connection, transaction),
+                new SqliteTaskRepository(connection, transaction));
+            throw new InvalidOperationException("injected failure");
+        }
+    }
+
+    /// <summary>Records every invalidation so a test can assert none happened.</summary>
+    private sealed class RecordingInvalidator : IProvenanceInvalidator
+    {
+        public List<ResourceId> Invalidated { get; } = [];
+
+        public void InvalidateForResource(ResourceId resourceId) => Invalidated.Add(resourceId);
     }
 
     private CalendarService CreateCalendarService()
@@ -321,6 +360,7 @@ public sealed class ProjectServiceTests : IDisposable
         var service2 = new ProjectService(
             projects2, new SqliteProjectFileRepository(_database.Factory),
             new SqliteResourceRepository(_database.Factory), _storage,
+            new SqliteProjectMutations(_database.Factory),
             new SimpleLocalIndexer(new SqliteResourceRepository(_database.Factory), _storage, _clock),
             tasks2, blocks2, new SqliteOccurrenceCompletionRepository(_database.Factory), _clock);
 
@@ -449,6 +489,161 @@ public sealed class ProjectServiceTests : IDisposable
 
         Assert.Throws<DomainException>(() => _service.RenameResource(link.Id, ""));
         Assert.Equal("SAT Scores", _resources.GetById(link.Id)!.Title);
+    }
+
+    /// <summary>
+    /// The transaction is real: work done inside a mutation that then throws must leave
+    /// no trace. This pins SqliteProjectMutations itself, independently of the service.
+    /// </summary>
+    [Fact]
+    public void ProjectMutations_WhenTheMutationThrows_RollsBackEveryWrite()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var link = _service.AddLink(file.Id, "SAT", "https://collegeboard.org");
+
+        var mutations = new SqliteProjectMutations(_database.Factory);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            mutations.Execute((_, fileRepo, resourceRepo, _) =>
+            {
+                resourceRepo.Delete(link.Id);
+                fileRepo.Delete(file.Id);
+                throw new InvalidOperationException("injected failure");
+            }));
+
+        Assert.NotNull(new SqliteResourceRepository(_database.Factory).GetById(link.Id));
+        Assert.NotNull(new SqliteProjectFileRepository(_database.Factory).GetById(file.Id));
+    }
+
+    /// <summary>
+    /// Bytes go only after the transaction commits. A failed mutation must leave the
+    /// file on disk — orphaned bytes are recoverable, a row pointing at a deleted file
+    /// is not.
+    /// </summary>
+    [Fact]
+    public void DeleteResource_WhenTheMutationFails_LeavesTheRowAndTheBytes()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+        var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
+        var storedPath = _resources.GetById(resource.Id)!.StoredPath!;
+
+        var service = CreateServiceWith(new FailAfterMutation(_database.Factory));
+
+        Assert.Throws<InvalidOperationException>(() => service.DeleteResource(resource.Id));
+
+        Assert.NotNull(_resources.GetById(resource.Id));
+        Assert.True(_storage.Exists(storedPath));
+        Assert.Equal("fake pdf bytes", File.ReadAllText(_storage.ResolvePath(storedPath)));
+    }
+
+    [Fact]
+    public void DeleteFile_WhenTheMutationFails_LeavesTheFileItsResourcesAndTheirBytes()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+        var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
+        var storedPath = _resources.GetById(resource.Id)!.StoredPath!;
+
+        var service = CreateServiceWith(new FailAfterMutation(_database.Factory));
+
+        Assert.Throws<InvalidOperationException>(() => service.DeleteFile(file.Id));
+
+        Assert.NotNull(_files.GetById(file.Id));
+        Assert.NotNull(_resources.GetById(resource.Id));
+        Assert.True(_storage.Exists(storedPath));
+    }
+
+    /// <summary>
+    /// The widest rollback: a failed project delete must leave the project, its File,
+    /// its resources, their bytes, AND the task's project assignment exactly as they
+    /// were. The task unlink shares the transaction, so it must roll back too.
+    /// </summary>
+    [Fact]
+    public void DeleteProject_WhenTheMutationFails_LeavesEveryRowTheAssignmentAndTheBytes()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+        var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
+        var storedPath = _resources.GetById(resource.Id)!.StoredPath!;
+
+        var task = TaskItem.Create("Essay", _clock.Now, projectId: project.Id);
+        _tasks.Add(task);
+
+        var service = CreateServiceWith(new FailAfterMutation(_database.Factory));
+
+        Assert.Throws<InvalidOperationException>(() => service.DeleteProject(project.Id));
+
+        Assert.NotNull(_projects.GetById(project.Id));
+        Assert.NotNull(_files.GetById(file.Id));
+        Assert.NotNull(_resources.GetById(resource.Id));
+        Assert.True(_storage.Exists(storedPath));
+        Assert.Equal(project.Id, _tasks.GetById(task.Id)!.ProjectId);
+    }
+
+    /// <summary>The happy path still removes the bytes — after the commit, not before.</summary>
+    [Fact]
+    public void DeleteFile_OnSuccess_RemovesTheRowsAndTheBytes()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+        var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
+        var storedPath = _resources.GetById(resource.Id)!.StoredPath!;
+
+        _service.DeleteFile(file.Id);
+
+        Assert.Null(_files.GetById(file.Id));
+        Assert.Null(_resources.GetById(resource.Id));
+        Assert.False(_storage.Exists(storedPath));
+    }
+
+    /// <summary>
+    /// Invalidation must not run ahead of a commit that never happened, or a
+    /// rolled-back delete permanently marks live items "Needs review".
+    /// </summary>
+    [Fact]
+    public void DeleteFile_WhenTheMutationFails_InvalidatesNothing()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        _service.AddLink(file.Id, "SAT", "https://collegeboard.org");
+        _service.AddLink(file.Id, "ACT", "https://act.org");
+
+        var recorder = new RecordingInvalidator();
+        var service = CreateServiceWith(new FailAfterMutation(_database.Factory), recorder);
+
+        Assert.Throws<InvalidOperationException>(() => service.DeleteFile(file.Id));
+
+        Assert.Empty(recorder.Invalidated);
+    }
+
+    /// <summary>
+    /// Nothing in the service deletes resource rows for a doomed File any more — the
+    /// foreign key does. If cascades were ever disabled this fails loudly instead of
+    /// silently leaking rows.
+    /// </summary>
+    [Fact]
+    public void DeleteFile_CascadesToItsResourceRows()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var link = _service.AddLink(file.Id, "SAT", "https://collegeboard.org");
+        var note = _service.AddNote(file.Id, "Leadership", "Led three DECA teams.");
+
+        _service.DeleteFile(file.Id);
+
+        Assert.Null(_files.GetById(file.Id));
+        Assert.Null(_resources.GetById(link.Id));
+        Assert.Null(_resources.GetById(note.Id));
     }
 
     public void Dispose()

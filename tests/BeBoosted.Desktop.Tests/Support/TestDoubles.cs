@@ -153,6 +153,21 @@ public sealed class InMemoryCalendarMutations(
         => mutation(blocks, completions, tasks, _proposals);
 }
 
+/// <summary>
+/// Passes the shared in-memory repositories straight through — no transaction and no
+/// rollback, so atomicity itself is proven against real SQLite in BeBoosted.Tests.
+/// </summary>
+public sealed class InMemoryProjectMutations(
+    IProjectRepository projects,
+    IProjectFileRepository files,
+    IResourceRepository resources,
+    ITaskRepository tasks) : IProjectMutations
+{
+    public void Execute(
+        Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository> mutation)
+        => mutation(projects, files, resources, tasks);
+}
+
 public sealed class InMemoryPlanningProposalRepository : IPlanningProposalRepository
 {
     private readonly Dictionary<PlanningProposalId, PlanningProposal> _proposals = [];
@@ -443,6 +458,7 @@ public static class TestShell
             aiProvider, new InMemoryAiProvenanceRepository(), repository, aiPermissions, clock);
         var projectService = new ProjectService(
             projectRepo, fileRepo, resourceRepo, storage,
+            new InMemoryProjectMutations(projectRepo, fileRepo, resourceRepo, repository),
             new FakeIndexer(resourceRepo, clock), repository, blockRepository,
             completionRepository, clock, aiService);
         return new ShellViewModel(
