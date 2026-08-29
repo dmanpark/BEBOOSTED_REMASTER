@@ -61,6 +61,9 @@ public sealed class ProjectService(
 
         mutations.Execute((projectRepo, _, _, taskRepo) =>
         {
+            // A rollback undoes the row but not this in-memory unlink, which is safe
+            // only because `orphaned` was read fresh here and is discarded on throw.
+            // Do not hoist it to a caller-held list.
             foreach (var task in orphaned)
             {
                 task.AssignToProject(null, clock.Now);

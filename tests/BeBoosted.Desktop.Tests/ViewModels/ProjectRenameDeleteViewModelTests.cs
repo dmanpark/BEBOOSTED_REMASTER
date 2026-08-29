@@ -1,5 +1,6 @@
 using BeBoosted.Desktop.Tests.Support;
 using BeBoosted.Desktop.ViewModels;
+using BeBoosted.Domain;
 using BeBoosted.Domain.Projects;
 
 namespace BeBoosted.Desktop.Tests.ViewModels;
@@ -19,6 +20,37 @@ public sealed class ProjectRenameDeleteViewModelTests
         projects.Detail!.NewFileTitle = "Metric Proof";
         projects.Detail.TryCreateFile();
         return projects;
+    }
+
+    /// <summary>
+    /// The same fixture, but keeping the repositories so a test can assert on the rows
+    /// left behind. The view-model surface alone cannot see an orphan: it only ever
+    /// lists resources for a File it still has.
+    /// </summary>
+    private static (ProjectsViewModel Projects, InMemoryProjectFileRepository Files,
+        InMemoryResourceRepository Resources) WithRepositories()
+    {
+        var projectRepo = new InMemoryProjectRepository();
+        var projects = TestShell.Create(projects: projectRepo).Projects;
+        projects.NewProjectName = "College Admissions";
+        projects.TryCreateProject();
+        projects.Detail!.NewFileTitle = "Metric Proof";
+        projects.Detail.TryCreateFile();
+
+        var files = projectRepo.Files;
+        Assert.NotNull(files);
+        var resources = files.Resources;
+        Assert.NotNull(resources);
+        return (projects, files, resources);
+    }
+
+    /// <summary>Adds one link to the open File and returns its id.</summary>
+    private static ResourceId AddLinkTo(FileDetailViewModel file)
+    {
+        file.NewLinkTitle = "SAT Score Report";
+        file.NewLinkUrl = "https://collegeboard.org/scores";
+        Assert.True(file.TryAddLink());
+        return file.Resources.Single().Resource.Id;
     }
 
     // ---- File rename ----
@@ -91,6 +123,29 @@ public sealed class ProjectRenameDeleteViewModelTests
 
         Assert.Null(projects.FileDetail);
         Assert.Empty(projects.Detail!.Files);
+    }
+
+    /// <summary>
+    /// A deleted File takes its resource rows with it. The service leaves that to the
+    /// database's ON DELETE CASCADE, so the doubles must model the cascade too —
+    /// otherwise a live resource row survives with its bytes already deleted, which is
+    /// exactly the defect the mutations seam exists to make impossible.
+    /// ConfirmingAFileDeletion_RemovesItAndClosesTheFileSurface cannot catch this: its
+    /// File is empty, so there is no child row to leak.
+    /// </summary>
+    [Fact]
+    public void ConfirmingAFileDeletion_TakesItsResourceRowsWithIt()
+    {
+        var (projects, _, resources) = WithRepositories();
+        var file = projects.FileDetail!;
+        var resourceId = AddLinkTo(file);
+        Assert.NotNull(resources.GetById(resourceId));
+
+        file.RequestDeleteCommand.Execute(null);
+        file.ConfirmPromptCommand.Execute(null);
+
+        Assert.Empty(projects.Detail!.Files);
+        Assert.Null(resources.GetById(resourceId));
     }
 
     [Fact]
@@ -200,6 +255,27 @@ public sealed class ProjectRenameDeleteViewModelTests
         Assert.Null(projects.Detail);
         Assert.Null(projects.FileDetail);
         Assert.Empty(projects.Projects);
+    }
+
+    /// <summary>
+    /// The same one level up: a deleted project leaves neither its Files nor their
+    /// resources behind. Both hops of the cascade have to fire.
+    /// </summary>
+    [Fact]
+    public void ConfirmingAProjectDeletion_TakesItsFilesAndTheirResourcesWithIt()
+    {
+        var (projects, files, resources) = WithRepositories();
+        var file = projects.FileDetail!;
+        var resourceId = AddLinkTo(file);
+        var fileId = file.File.Id;
+        var detail = projects.Detail!;
+
+        detail.RequestDeleteCommand.Execute(null);
+        detail.ConfirmPromptCommand.Execute(null);
+
+        Assert.Empty(projects.Projects);
+        Assert.Null(files.GetById(fileId));
+        Assert.Null(resources.GetById(resourceId));
     }
 
     [Fact]

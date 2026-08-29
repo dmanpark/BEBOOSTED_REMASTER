@@ -216,11 +216,25 @@ public sealed class InMemoryProjectRepository : IProjectRepository
 {
     private readonly Dictionary<ProjectId, Project> _projects = [];
 
+    /// <summary>Mirrors project_files.project_id ON DELETE CASCADE.</summary>
+    public InMemoryProjectFileRepository? Files { get; set; }
+
     public void Add(Project project) => _projects[project.Id] = project;
 
     public void Update(Project project) => _projects[project.Id] = project;
 
-    public void Delete(ProjectId id) => _projects.Remove(id);
+    public void Delete(ProjectId id)
+    {
+        if (Files is { } files)
+        {
+            foreach (var file in files.GetForProject(id))
+            {
+                files.Delete(file.Id);
+            }
+        }
+
+        _projects.Remove(id);
+    }
 
     public Project? GetById(ProjectId id) => _projects.GetValueOrDefault(id);
 
@@ -231,11 +245,25 @@ public sealed class InMemoryProjectFileRepository : IProjectFileRepository
 {
     private readonly Dictionary<ProjectFileId, ProjectFile> _files = [];
 
+    /// <summary>Mirrors resources.file_id ON DELETE CASCADE.</summary>
+    public InMemoryResourceRepository? Resources { get; set; }
+
     public void Add(ProjectFile file) => _files[file.Id] = file;
 
     public void Update(ProjectFile file) => _files[file.Id] = file;
 
-    public void Delete(ProjectFileId id) => _files.Remove(id);
+    public void Delete(ProjectFileId id)
+    {
+        if (Resources is { } resources)
+        {
+            foreach (var resource in resources.GetForFile(id))
+            {
+                resources.Delete(resource.Id);
+            }
+        }
+
+        _files.Remove(id);
+    }
 
     public ProjectFile? GetById(ProjectFileId id) => _files.GetValueOrDefault(id);
 
@@ -451,6 +479,11 @@ public static class TestShell
         var projectRepo = projects ?? new InMemoryProjectRepository();
         var fileRepo = new InMemoryProjectFileRepository();
         var resourceRepo = new InMemoryResourceRepository();
+
+        // The service now leaves child rows to the database's ON DELETE CASCADE, so the
+        // doubles have to model it or they model the very bug this seam prevents.
+        projectRepo.Files = fileRepo;
+        fileRepo.Resources = resourceRepo;
         var storage = resourceStorage ?? new FakeResourceStorage();
         var aiPermissions = new AiPermissionSettings(settingsStore);
         var aiProvider = new BeBoosted.Infrastructure.Ai.LocalHeuristicAiProvider(resourceRepo, projectRepo);
