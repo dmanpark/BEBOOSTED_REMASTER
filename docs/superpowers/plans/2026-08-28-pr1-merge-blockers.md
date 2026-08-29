@@ -232,6 +232,35 @@ and `_service`:
         Assert.True(_storage.Exists(storedPath));
     }
 
+    /// <summary>
+    /// The widest rollback: a failed project delete must leave the project, its File,
+    /// its resources, their bytes, AND the task's project assignment exactly as they
+    /// were. The task unlink shares the transaction, so it must roll back too.
+    /// </summary>
+    [Fact]
+    public void DeleteProject_WhenTheMutationFails_LeavesEveryRowTheAssignmentAndTheBytes()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+        var resource = _service.ImportFile(file.Id, ResourceKind.Document, source);
+        var storedPath = _resources.GetById(resource.Id)!.StoredPath!;
+
+        var task = TaskItem.Create("Essay", _clock.Now, projectId: project.Id);
+        _tasks.Add(task);
+
+        var service = CreateServiceWith(new FailAfterMutation(_database.Factory));
+
+        Assert.Throws<InvalidOperationException>(() => service.DeleteProject(project.Id));
+
+        Assert.NotNull(_projects.GetById(project.Id));
+        Assert.NotNull(_files.GetById(file.Id));
+        Assert.NotNull(_resources.GetById(resource.Id));
+        Assert.True(_storage.Exists(storedPath));
+        Assert.Equal(project.Id, _tasks.GetById(task.Id)!.ProjectId);
+    }
+
     /// <summary>The happy path still removes the bytes — after the commit, not before.</summary>
     [Fact]
     public void DeleteFile_OnSuccess_RemovesTheRowsAndTheBytes()
@@ -267,11 +296,19 @@ Adjust the argument order to match the constructor you write in Step 3.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `dotnet test tests/BeBoosted.Tests/BeBoosted.Tests.csproj --filter "FullyQualifiedName~WhenTheRowDeleteFails|FullyQualifiedName~WhenARowDeleteFails"`
+Run: `dotnet test tests/BeBoosted.Tests/BeBoosted.Tests.csproj --filter "FullyQualifiedName~ProjectMutations_WhenTheMutationThrows|FullyQualifiedName~WhenTheMutationFails|FullyQualifiedName~DeleteFile_OnSuccess"`
 
-Expected: FAIL to compile — `IProjectMutations` and `SqliteProjectMutations` do not exist.
+**Confirm the filter matched 5 tests.** A `--filter` naming tests that do not exist
+runs zero and reports success — a green result that proves nothing. If the run says
+"No test matches", the filter is stale: fix it before reading anything into the
+result.
 
-Once they compile (after Step 3's interface exists but before the service is rewritten), the first test fails on `Assert.True(_storage.Exists(storedPath))` — the bytes are already gone. That is the defect.
+Expected: FAIL to compile — `IProjectMutations` and `SqliteProjectMutations` do not
+exist.
+
+Once they compile (after Step 3's interface exists but before the service is
+rewritten), the failure tests fail on `Assert.True(_storage.Exists(storedPath))` — the
+bytes are already gone. That is the defect.
 
 - [ ] **Step 3: Add the mutations abstraction**
 
@@ -433,10 +470,25 @@ deleting a File removes its resource rows, and deleting a Project removes its Fi
 and their resources. If foreign keys were ever disabled these fail loudly, rather than
 silently leaking rows.
 
+**Aggregate provenance needs its own coverage.** `AiServiceTests.DeletingACitedResource_FlagsDerivedItems`
+(line 148) already pins the single-resource path through `DeleteResource`. Nothing
+covers the aggregate paths, and this rewrite moved that invalidation to *after* the
+transaction, where a missed loop is silent. Add, in the same file and following its
+fixture:
+
+- Deleting a **File** flags the derived items of **every** resource it held — build two
+  cited resources in one File and assert both are flagged, so a loop that invalidates
+  only the first is caught.
+- Deleting a **Project** does the same across its Files.
+- **A failed mutation invalidates nothing.** Using `FailAfterMutation`, assert no
+  derived item is flagged — invalidation must not run ahead of a commit that never
+  happened, or a rolled-back delete permanently marks live items "Needs review".
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `dotnet test tests/BeBoosted.Tests/BeBoosted.Tests.csproj --filter "FullyQualifiedName~WhenTheRowDeleteFails|FullyQualifiedName~WhenARowDeleteFails"`
-Expected: PASS, 2 tests.
+Run: `dotnet test tests/BeBoosted.Tests/BeBoosted.Tests.csproj --filter "FullyQualifiedName~ProjectMutations_WhenTheMutationThrows|FullyQualifiedName~WhenTheMutationFails|FullyQualifiedName~DeleteFile_OnSuccess"`
+Expected: **PASS, 5 tests** — the count matters as much as the colour. Fewer than 5
+means the filter missed one, not that one was fixed.
 
 Then `dotnet test BeBoosted.slnx` — everything else still green. `ProjectServiceTests.DeleteProject_*` and `DeleteFile_*` exercise the rewritten paths and must still pass unchanged.
 
@@ -478,11 +530,31 @@ builds a full shell with a project-linked scheduled task via `CreateShell()` and
 `CreateProjectWithScheduledTask(...)`. Use that fixture, not the Projects-only one.
 
 ```csharp
+**Assert the new value, not the absence of the old one.** `DoesNotContain("Schoolwork")`
+passes if the row vanished, if the label went null, or if the collection is empty —
+none of which is the required outcome. Each surface must positively show "Coursework".
+
+**The Inbox needs a task to hold.** `CreateProjectWithScheduledTask` produces a
+*scheduled* task, so it lands in Scheduled and the Inbox is empty — a fixture that
+cannot exercise the Inbox at all. Add a second, unscheduled task linked to the same
+project so `UnscheduledRows` is non-empty and its label can be asserted.
+
+```csharp
+    /// <summary>A second task on the same project, left unscheduled so it sits in the Inbox.</summary>
+    private static void AddUnscheduledProjectTask(
+        ShellViewModel shell, InMemoryTaskRepository tasks, string title)
+    {
+        var project = shell.Projects.Projects.Single().Project;
+        var task = TaskItem.Create(title, TestShell.DesignDate.ToDateTime(TimeOnly.MinValue), projectId: project.Id);
+        tasks.Add(task);
+    }
+
     [Fact]
-    public void RenamingAProject_RefreshesEverySurfaceWithoutAManualReload()
+    public void RenamingAProject_RelabelsEverySurfaceWithoutAManualReload()
     {
         var (shell, blocks, tasks) = CreateShell();
         CreateProjectWithScheduledTask(shell, blocks, tasks);
+        AddUnscheduledProjectTask(shell, tasks, "Read chapter 4");
 
         shell.NavigateCommand.Execute(AppSection.Projects);
         var detail = shell.Projects.Detail!;
@@ -492,21 +564,25 @@ builds a full shell with a project-linked scheduled task via `CreateShell()` and
 
         // No ReloadList(), no re-navigation: the chain must have done it.
         Assert.Equal("Coursework", detail.Name);
-        Assert.Contains(shell.Projects.Projects, card => card.Name == "Coursework");
-        Assert.DoesNotContain(shell.Projects.Projects, card => card.Name == "Schoolwork");
+        Assert.Equal("Coursework", shell.Projects.Projects.Single().Name);
 
-        // The Daily list caches a project label on every row it builds.
         shell.NavigateCommand.Execute(AppSection.Calendar);
-        Assert.DoesNotContain(
-            shell.Calendar.Daily.ScheduledRows.Concat(shell.Calendar.Daily.UnscheduledRows),
-            row => row.ProjectName == "Schoolwork");
+
+        // Positively: the scheduled row now carries the new label.
+        var scheduled = shell.Calendar.Daily.ScheduledRows.Single(r => r.Title == "Stats HW");
+        Assert.Equal("Coursework", scheduled.ProjectName);
+
+        // Positively: the Inbox row does too.
+        var inbox = shell.Calendar.Daily.UnscheduledRows.Single(r => r.Title == "Read chapter 4");
+        Assert.Equal("Coursework", inbox.ProjectName);
     }
 
     [Fact]
-    public void DeletingAProject_ClearsItsLabelsEverywhereWithoutAManualReload()
+    public void DeletingAProject_ClearsItsLabelsOnEverySurfaceWithoutAManualReload()
     {
         var (shell, blocks, tasks) = CreateShell();
         CreateProjectWithScheduledTask(shell, blocks, tasks);
+        AddUnscheduledProjectTask(shell, tasks, "Read chapter 4");
 
         shell.NavigateCommand.Execute(AppSection.Projects);
         var detail = shell.Projects.Detail!;
@@ -515,11 +591,15 @@ builds a full shell with a project-linked scheduled task via `CreateShell()` and
 
         Assert.Empty(shell.Projects.Projects);
 
-        // The task survives, unassigned, and no surface still claims the old project.
         shell.NavigateCommand.Execute(AppSection.Calendar);
-        var rows = shell.Calendar.Daily.ScheduledRows.Concat(shell.Calendar.Daily.UnscheduledRows);
-        Assert.Contains(rows, row => row.Title == "Stats HW");
-        Assert.DoesNotContain(rows, row => row.ProjectName == "Schoolwork");
+
+        // Both tasks survive, both unassigned — asserted on the rows themselves, so a
+        // vanished row cannot pass for a cleared label.
+        var scheduled = shell.Calendar.Daily.ScheduledRows.Single(r => r.Title == "Stats HW");
+        Assert.Null(scheduled.ProjectName);
+
+        var inbox = shell.Calendar.Daily.UnscheduledRows.Single(r => r.Title == "Read chapter 4");
+        Assert.Null(inbox.ProjectName);
     }
 
     [Fact]
@@ -550,6 +630,27 @@ builds a full shell with a project-linked scheduled task via `CreateShell()` and
         Assert.Empty(file.Resources);
     }
 
+    /// <summary>
+    /// A link has no stored document, so the prompt must not claim one is deleted.
+    /// Both branches of the wording need a pinned case.
+    /// </summary>
+    [Fact]
+    public void RemovingALink_AsksWithoutTheStoredDocumentWarning()
+    {
+        var projects = WithProjectAndFile();
+        var file = projects.FileDetail!;
+        file.NewLinkUrl = "https://collegeboard.org/scores";
+        file.NewLinkTitle = "SAT Scores";
+        Assert.True(file.TryAddLink());
+        var row = file.Resources.Single(r => r.Title == "SAT Scores");
+
+        row.DeleteCommand.Execute(null);
+
+        Assert.NotNull(file.Confirmation);
+        Assert.Contains("SAT Scores", file.Confirmation!.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("stored document", file.Confirmation.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void DismissingAResourceRemoval_KeepsIt()
     {
@@ -569,13 +670,16 @@ builds a full shell with a project-linked scheduled task via `CreateShell()` and
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `dotnet test tests/BeBoosted.Desktop.Tests/BeBoosted.Desktop.Tests.csproj --filter "FullyQualifiedName~WithoutAManualReload|FullyQualifiedName~RemovingAResource|FullyQualifiedName~AResourceRemoval|FullyQualifiedName~ShowsTheNewNameOnTheHeaderAndInTheList"`
+Run: `dotnet test tests/BeBoosted.Desktop.Tests/BeBoosted.Desktop.Tests.csproj --filter "FullyQualifiedName~WithoutAManualReload|FullyQualifiedName~RemovingAResource|FullyQualifiedName~AResourceRemoval|FullyQualifiedName~RemovingALink|FullyQualifiedName~ShowsTheNewNameOnTheHeaderAndInTheList"`
+
+**Confirm the filter matched 7 tests** before reading anything into the result — a
+filter naming tests that do not exist runs zero and reports success.
 
 Expected, and check each failure reason rather than just the count:
 
-- `RenamingAProject_RefreshesEverySurfaceWithoutAManualReload` fails on the Projects
+- `RenamingAProject_RelabelsEverySurfaceWithoutAManualReload` fails on the Projects
   list still holding "Schoolwork" — the chain never fired.
-- `DeletingAProject_ClearsItsLabelsEverywhereWithoutAManualReload` fails the same way.
+- `DeletingAProject_ClearsItsLabelsOnEverySurfaceWithoutAManualReload` fails the same way.
 - The three removal tests fail because `Confirmation` is null and the resource is
   already gone — it was deleted on the first click.
 - `RenamingAProject_ShowsTheNewNameOnTheHeaderAndInTheList` fails on the stale list
@@ -766,9 +870,17 @@ git commit -m "fix: claim folder names and treat directories as occupied"
 
 - [ ] **Step 1: Write the failing tests**
 
-- Two Projects whose names sanitize identically resolve to **different** folders, and each one's resources land in its own.
+- Two Projects whose names sanitize identically resolve to **different** folders, and
+  each one's resources land in its own.
 - **A reconcile run twice moves nothing the second time** — the churn regression.
-- The reconciler cannot adopt a file belonging to another Project or File.
+- **The reconciler cannot adopt a file belonging to another Project or File — driven
+  through `ReconcileProject(targetProjectId)`, not `Reconcile()`.** This matters: the
+  rename path calls the single-project overload, and `claimed` is assembled from the
+  entities that overload walks. A test that only exercises the full `Reconcile()` sweep
+  can pass while the narrower, more common path stays vulnerable, because the full
+  sweep happens to visit the other owner's resources and the scoped one does not.
+  Build two Projects that sanitize to the same legacy folder with bytes sitting in it,
+  then reconcile **only the second** and assert it did not adopt the first's file.
 
 - [ ] **Step 2: Run to verify they fail, then implement**
 
@@ -820,6 +932,11 @@ the backfill adds each segment to `claimed` as it goes.
   the legacy directory, the second is relocated into its own.
 - A File is backfilled within its Project's folder, and `claimed` is scoped to that
   Project's Files — two Files of *different* Projects may hold the same segment.
+- **Order is forced: Projects before Files.** Starting with a Project and its File
+  BOTH holding the empty sentinel, the File must be claimed beneath its Project's
+  newly backfilled segment. A File backfilled first has no parent folder to resolve
+  against and would claim beneath the wrong path — or beneath `""`. This test fails if
+  the loops are ever reordered or flattened.
 - Running the backfill twice changes nothing: it is idempotent, and an entity that
   already has a non-empty segment is skipped entirely.
 
