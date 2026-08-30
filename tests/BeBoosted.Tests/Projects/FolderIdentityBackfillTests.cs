@@ -1,0 +1,263 @@
+using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Projects;
+using BeBoosted.Domain.Projects;
+using BeBoosted.Infrastructure.Persistence;
+using BeBoosted.Infrastructure.Projects;
+using BeBoosted.Tests.Support;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace BeBoosted.Tests.Projects;
+
+/// <summary>
+/// Every Project and File persisted before migration 0012 holds <c>folder_segment = ''</c>,
+/// and <see cref="ResourceLayout.FolderFor"/> returns those segments verbatim — so an
+/// un-backfilled database resolves every folder to the resources root. The backfill hands
+/// each such row the segment its bytes already occupy, which is the opposite of a naive
+/// reservation: the directory that is already there must read as this entity's own rather
+/// than as an obstacle.
+/// </summary>
+public sealed class FolderIdentityBackfillTests : IDisposable
+{
+    private sealed class FixedClock : IClock
+    {
+        public DateTimeOffset Now { get; } = new(2026, 8, 28, 9, 0, 0, TimeSpan.FromHours(-7));
+
+        public DateOnly Today => DateOnly.FromDateTime(Now.LocalDateTime);
+    }
+
+    private sealed class TestPaths : IAppDataPaths
+    {
+        public TestPaths()
+        {
+            DataDirectory = Path.Combine(Path.GetTempPath(), $"beboosted-backfilltest-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(DataDirectory);
+        }
+
+        public string DataDirectory { get; }
+
+        public string LogsDirectory => Path.Combine(DataDirectory, "logs");
+
+        public string ResourcesDirectory => Path.Combine(DataDirectory, "resources");
+    }
+
+    private readonly TempDatabase _database = new();
+    private readonly TestPaths _paths = new();
+    private readonly FixedClock _clock = new();
+    private readonly SqliteProjectRepository _projects;
+    private readonly SqliteProjectFileRepository _files;
+    private readonly SqliteResourceRepository _resources;
+    private readonly LocalResourceStorage _storage;
+
+    public FolderIdentityBackfillTests()
+    {
+        new MigrationRunner(_database.Factory, NullLogger<MigrationRunner>.Instance)
+            .Apply(EmbeddedMigrations.Load());
+        _projects = new SqliteProjectRepository(_database.Factory);
+        _files = new SqliteProjectFileRepository(_database.Factory);
+        _resources = new SqliteResourceRepository(_database.Factory);
+        _storage = new LocalResourceStorage(_paths);
+        Directory.CreateDirectory(_paths.ResourcesDirectory);
+    }
+
+    private FolderIdentityBackfill CreateBackfill()
+        => new(_projects, _files, _storage, _clock);
+
+    /// <summary>
+    /// A pre-0012 row: <see cref="Project.Create"/> leaves the segment empty, which is
+    /// exactly the sentinel the migration's <c>DEFAULT ''</c> left behind. Distinct
+    /// creation instants keep <c>GetAll</c>'s <c>ORDER BY created_at</c> deterministic,
+    /// so "first" and "second" mean something in the collision tests.
+    /// </summary>
+    private Project SeedLegacyProject(string name, int order = 0)
+    {
+        var project = Project.Create(name, "#ffffff", _clock.Now.AddMinutes(order));
+        _projects.Add(project);
+        return project;
+    }
+
+    private ProjectFile SeedLegacyFile(Project project, string title, int order = 0)
+    {
+        var file = ProjectFile.Create(project.Id, title, null, _clock.Now.AddMinutes(order));
+        _files.Add(file);
+        return file;
+    }
+
+    /// <summary>A document already recorded at, and physically sitting at, a legacy path.</summary>
+    private Resource SeedDocumentAt(ProjectFile file, string storedPath)
+    {
+        var fileName = Path.GetFileName(storedPath);
+        var resource = Resource.CreateStored(
+            file.Id, ResourceKind.Document, Path.GetFileNameWithoutExtension(fileName),
+            fileName, storedPath, _clock.Now);
+        var absolute = _storage.ResolvePath(storedPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(absolute)!);
+        File.WriteAllText(absolute, "payload");
+        _resources.Add(resource);
+        return resource;
+    }
+
+    private ResourceLayoutReconciler CreateReconciler()
+        => new(_projects, _files, _resources, _storage, _clock);
+
+    [Fact]
+    public void Backfill_ClaimsTheDirectoryALegacyProjectsBytesAlreadyOccupy()
+    {
+        var project = SeedLegacyProject("College Admissions");
+
+        // The bytes already live here, so the directory is already on disk — a
+        // reservation that reads it as occupied hands back "College Admissions (2)"
+        // and the reconciler then moves every document 0012 was meant to leave alone.
+        Directory.CreateDirectory(
+            Path.Combine(_paths.ResourcesDirectory, "College Admissions", "Metric Proof"));
+
+        CreateBackfill().Backfill();
+
+        Assert.Equal("College Admissions", _projects.GetById(project.Id)!.FolderSegment);
+    }
+
+    /// <summary>
+    /// Two Projects cannot both own one directory. Whichever the backfill reaches first
+    /// claims it for real; the second finds it in <c>claimed</c> and must advance even
+    /// though provisional ownership would otherwise hand it the same name.
+    /// </summary>
+    [Fact]
+    public void Backfill_GivesTwoLegacyProjectsThatSanitizeAlike_DifferentSegments()
+    {
+        var first = SeedLegacyProject("DECA", order: 0);
+        var second = SeedLegacyProject("DECA", order: 1);
+        Directory.CreateDirectory(Path.Combine(_paths.ResourcesDirectory, "DECA"));
+
+        CreateBackfill().Backfill();
+
+        Assert.Equal("DECA", _projects.GetById(first.Id)!.FolderSegment);
+        Assert.Equal("DECA (2)", _projects.GetById(second.Id)!.FolderSegment);
+    }
+
+    /// <summary>
+    /// The mixed database an upgrade actually produces: one Project created since 0012
+    /// already holds "DECA", one legacy row still derives it. Provisional ownership makes
+    /// the backfill treat an existing directory as its own, so without the live claim in
+    /// <c>claimed</c> the legacy row walks straight into a Project's live folder — and the
+    /// legacy row is reached first, so nothing else stands in its way.
+    /// </summary>
+    [Fact]
+    public void Backfill_NeverTakesASegmentAnotherProjectAlreadyHolds()
+    {
+        var legacy = SeedLegacyProject("DECA", order: 0);
+        var live = SeedLegacyProject("DECA", order: 1);
+        live.RelocateTo("DECA", _clock.Now);
+        _projects.Update(live);
+        Directory.CreateDirectory(Path.Combine(_paths.ResourcesDirectory, "DECA"));
+
+        CreateBackfill().Backfill();
+
+        Assert.Equal("DECA (2)", _projects.GetById(legacy.Id)!.FolderSegment);
+    }
+
+    /// <summary>
+    /// A Project whose claimed segment deliberately disagrees with what its current name
+    /// would derive — a rename since the claim, or a sibling that had to disambiguate.
+    /// Re-deriving it would walk a live Project out of the folder holding its documents,
+    /// so a non-empty segment is skipped outright rather than reconsidered. That skip is
+    /// also what makes a second run a no-op.
+    /// </summary>
+    [Fact]
+    public void Backfill_SkipsEntitiesThatAlreadyHoldASegment_AndIsIdempotent()
+    {
+        var live = SeedLegacyProject("Model UN", order: 0);
+        live.RelocateTo("Model UN (2)", _clock.Now);
+        _projects.Update(live);
+        Directory.CreateDirectory(Path.Combine(_paths.ResourcesDirectory, "Model UN (2)"));
+        var legacy = SeedLegacyProject("Robotics", order: 1);
+
+        Assert.Equal(1, CreateBackfill().Backfill());
+        Assert.Equal("Model UN (2)", _projects.GetById(live.Id)!.FolderSegment);
+        Assert.Equal("Robotics", _projects.GetById(legacy.Id)!.FolderSegment);
+
+        Assert.Equal(0, CreateBackfill().Backfill());
+        Assert.Equal("Model UN (2)", _projects.GetById(live.Id)!.FolderSegment);
+        Assert.Equal("Robotics", _projects.GetById(legacy.Id)!.FolderSegment);
+    }
+
+    /// <summary>
+    /// The ordering guard. A File's reservation happens inside its Project's claimed
+    /// segment, so every Project must be backfilled before any File is reached. Note the
+    /// derived segment string is identical either way — a File backfilled first derives
+    /// "Metric Proof" too, it just reserves it beneath the empty sentinel, which is the
+    /// resources root. Only where the directory was actually created can tell the two
+    /// apart, so that is what this test pins.
+    /// </summary>
+    [Fact]
+    public void Backfill_ReservesEachFileBeneathItsProjectsNewlyBackfilledSegment()
+    {
+        var project = SeedLegacyProject("College Admissions");
+        var file = SeedLegacyFile(project, "Metric Proof");
+
+        CreateBackfill().Backfill();
+
+        var reloadedProject = _projects.GetById(project.Id)!;
+        var reloadedFile = _files.GetById(file.Id)!;
+        Assert.Equal("College Admissions", reloadedProject.FolderSegment);
+        Assert.Equal("Metric Proof", reloadedFile.FolderSegment);
+        Assert.Equal(
+            Path.Combine("College Admissions", "Metric Proof"),
+            ResourceLayout.FolderFor(reloadedProject, reloadedFile));
+
+        Assert.True(Directory.Exists(
+            Path.Combine(_paths.ResourcesDirectory, "College Admissions", "Metric Proof")));
+        Assert.False(Directory.Exists(Path.Combine(_paths.ResourcesDirectory, "Metric Proof")));
+    }
+
+    /// <summary>
+    /// The end the whole task exists for: after the backfill, the reconciler agrees with
+    /// where the legacy bytes already are and moves nothing at all.
+    /// </summary>
+    [Fact]
+    public void Backfill_ThenReconcile_LeavesALegacyDocumentExactlyWhereItIs()
+    {
+        var project = SeedLegacyProject("College Admissions");
+        var file = SeedLegacyFile(project, "Metric Proof");
+        var legacyPath = Path.Combine("College Admissions", "Metric Proof", "Transcript.pdf");
+        var resource = SeedDocumentAt(file, legacyPath);
+
+        Assert.Equal(2, CreateBackfill().Backfill());
+
+        Assert.Equal(0, CreateReconciler().Reconcile());
+        Assert.Equal(legacyPath, _resources.GetById(resource.Id)!.StoredPath);
+        Assert.Equal("payload", File.ReadAllText(_storage.ResolvePath(legacyPath)));
+    }
+
+    /// <summary>
+    /// A File's segment only has to be unique inside its own Project's folder. Two Files
+    /// of different Projects live in different directories, so sharing a segment is not a
+    /// collision — one <c>claimed</c> set spanning every Project would invent a "(2)"
+    /// suffix for a name nothing is competing for, and move bytes to prove it.
+    /// </summary>
+    [Fact]
+    public void Backfill_ScopesFileSegmentsToTheirOwnProject()
+    {
+        var alpha = SeedLegacyProject("Alpha", order: 0);
+        var alphaNotes = SeedLegacyFile(alpha, "Notes");
+        var beta = SeedLegacyProject("Beta", order: 1);
+        var betaNotes = SeedLegacyFile(beta, "Notes");
+
+        CreateBackfill().Backfill();
+
+        Assert.Equal("Notes", _files.GetById(alphaNotes.Id)!.FolderSegment);
+        Assert.Equal("Notes", _files.GetById(betaNotes.Id)!.FolderSegment);
+        Assert.True(Directory.Exists(Path.Combine(_paths.ResourcesDirectory, "Alpha", "Notes")));
+        Assert.True(Directory.Exists(Path.Combine(_paths.ResourcesDirectory, "Beta", "Notes")));
+    }
+
+    public void Dispose()
+    {
+        _database.Dispose();
+        try
+        {
+            Directory.Delete(_paths.DataDirectory, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+}

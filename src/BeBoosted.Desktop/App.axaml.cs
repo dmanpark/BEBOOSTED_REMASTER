@@ -75,6 +75,20 @@ public partial class App : Avalonia.Application
 
             try
             {
+                // Order is load-bearing. Rows persisted before migration 0012 hold an
+                // empty folder segment, and ResourceLayout.FolderFor returns segments
+                // verbatim — so reconciling first would resolve every legacy document's
+                // folder to the resources root and flatten the whole library into it.
+                // Backfill claims each row's existing directory, and only then does the
+                // reconciler have a layout worth agreeing with. Sharing one try/catch is
+                // part of that: if the backfill fails, the reconcile it protects against
+                // is skipped too, and both are retried on the next start.
+                var claimed = _services.GetRequiredService<FolderIdentityBackfill>().Backfill();
+                if (claimed > 0)
+                {
+                    Log.Information("Backfilled folder segments for {Count} projects and Files", claimed);
+                }
+
                 var moved = _services.GetRequiredService<ResourceLayoutReconciler>().Reconcile();
                 if (moved > 0)
                 {
