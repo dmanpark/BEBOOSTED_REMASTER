@@ -362,10 +362,6 @@ public sealed class ShellProjectRefreshTests
     }
 
     /// <summary>
-    /// One central chain, each dependent exactly once: the open detail must not
-    /// refresh eagerly and then again through the shared event.
-    /// </summary>
-    /// <summary>
     /// The sibling of the completion case, for deletion. Closing the detail rebuilds the
     /// card list, and the announcement that has to follow it rebuilds the list again
     /// through RefreshActive's unconditional tail — two rebuilds for one user action.
@@ -398,6 +394,10 @@ public sealed class ShellProjectRefreshTests
         Assert.Null(shell.Projects.Detail);
     }
 
+    /// <summary>
+    /// One central chain, each dependent exactly once: the open detail must not
+    /// refresh eagerly and then again through the shared event.
+    /// </summary>
     [Fact]
     public void CompletingATask_FromProjectDetail_RefreshesEachDependentExactlyOnce()
     {

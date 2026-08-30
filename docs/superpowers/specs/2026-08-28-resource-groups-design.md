@@ -162,7 +162,7 @@ groups sharing a title could split or share one.
 4. **It reserves the segment by creating the directory** before returning it.
 5. The service persists the returned segment on the group row.
 
-### Reservation must claim, not merely check
+### Reservation must create the directory, not merely check the name
 
 A reservation that only *checks* is advisory, and it fails in both directions:
 
@@ -296,8 +296,8 @@ One new member:
 
 ```csharp
 /// <summary>
-/// Claims a folder for a group under <paramref name="relativeParent"/> and returns the
-/// segment taken. Skips names occupied on disk by a file OR a directory, and names held
+/// Reserves a folder name for a group under <paramref name="relativeParent"/> and
+/// returns the segment taken. Skips names occupied on disk by a file OR a directory, and names held
 /// by <paramref name="claimed"/> (the File's other groups). Creating the directory is
 /// what makes the reservation hold for the next sequential caller in this process — a
 /// checked-but-uncreated name can be taken by a later import. It is not a lock.
@@ -429,8 +429,10 @@ introducing it.
 - Groups do not nest, by design. A File that needs two levels of structure wants a
   second File.
 - Creating a group creates its (initially empty) folder on disk immediately. That is
-  the claim that makes the segment durable, and it keeps the directory browsable
-  outside the app the way the rest of the layout is.
+  what makes the reservation hold for the next sequential caller in this process, and
+  it keeps the directory browsable outside the app the way the rest of the layout is.
+  It is not a lock: `Directory.CreateDirectory` takes no cross-process lock and
+  succeeds silently on a directory that already exists.
 - Deleting or renaming a group leaves its now-empty folder on disk, matching the
   existing behaviour for a deleted or renamed File.
 - Phase 1 ships no reordering; groups appear in creation order.
