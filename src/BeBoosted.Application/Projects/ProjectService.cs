@@ -196,6 +196,14 @@ public sealed class ProjectService(
         var project = Require(file.ProjectId);
         var originalName = Path.GetFileName(sourcePath);
         var id = ResourceId.New();
+
+        // The last place an unclaimed parent still reaches FolderFor. If the startup
+        // backfill skipped this Project, its segment is empty and the document lands in
+        // the resources root instead of a named folder. That is untidy, not lossy: Store
+        // disambiguates on collision, the row records where the bytes actually went, and
+        // the reconcile that runs once the Project is claimed relocates it. Guarding here
+        // would mean refusing the import outright, which is a worse answer than storing it
+        // somewhere findable.
         var storedPath = storage.Store(
             ResourceLayout.FolderFor(project, file),
             ResourceLayout.FileNameFor(originalName, id.ToString()),
