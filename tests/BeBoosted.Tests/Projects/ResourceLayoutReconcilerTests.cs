@@ -290,11 +290,22 @@ public sealed class ResourceLayoutReconcilerTests : IDisposable
     [Fact]
     public void Reconcile_TwiceInARow_MovesNothingTheSecondTime_ForNameCollidingProjects()
     {
-        SeedLegacyDocument("DECA", "Notes", "Notes.pdf", content: "first");
-        SeedLegacyDocument("DECA", "Notes", "Notes.pdf", content: "second");
+        var first = SeedLegacyDocument("DECA", "Notes", "Notes.pdf", content: "first");
+        var second = SeedLegacyDocument("DECA", "Notes", "Notes.pdf", content: "second");
 
         var firstRun = CreateReconciler().Reconcile();
         Assert.Equal(2, firstRun);
+
+        // The three counts alone pass under the rejected derive-and-disambiguate design
+        // too: there both projects shared one folder and the *file names* disambiguated,
+        // which IsAlreadyPlaced then tolerated on the second pass. Pin where the bytes
+        // landed, so this test can only be green under the claimed-segment design.
+        Assert.Equal(
+            Path.Combine("DECA", "Notes", "Notes.pdf"),
+            _resources.GetById(first.Resource.Id)!.StoredPath);
+        Assert.Equal(
+            Path.Combine("DECA (2)", "Notes", "Notes.pdf"),
+            _resources.GetById(second.Resource.Id)!.StoredPath);
 
         Assert.Equal(0, CreateReconciler().Reconcile());
         Assert.Equal(0, CreateReconciler().Reconcile());
