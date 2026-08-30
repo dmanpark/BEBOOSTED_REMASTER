@@ -210,10 +210,28 @@ public sealed class LocalResourceStorageTests : IDisposable
     /// with UnauthorizedAccessException — which does NOT derive from IOException, so the
     /// existing clause never covered it. Delete is best-effort by contract, and its caller
     /// has already committed the row, so this has to be absorbed like any other failure.
+    ///
+    /// Windows-only, because the premise is. .NET maps FileAttributes.ReadOnly onto the
+    /// file's own write bits, but POSIX takes unlink permission from the *directory*, so
+    /// on Linux and macOS this delete simply succeeds and there is no absorption to
+    /// observe. Making the parent directory unwritable instead would reach the same
+    /// UnauthorizedAccessException, but it is silently bypassed by root — which is how
+    /// containerised CI usually runs — so it would trade a skip for a test that passes
+    /// without exercising anything.
+    ///
+    /// The isolation this protects is NOT Windows-only and is not skipped with it:
+    /// ProjectServiceTests drives the same paths through a sabotaged IResourceStorage
+    /// that throws an ordinary exception, so the call-site guarding runs everywhere.
+    /// What is pinned only here is LocalResourceStorage's own UnauthorizedAccessException
+    /// clause.
     /// </summary>
     [Fact]
     public void Delete_AbsorbsAReadOnlyFile_RatherThanThrowing()
     {
+        Assert.SkipWhen(
+            !OperatingSystem.IsWindows(),
+            "A read-only file is deletable on POSIX; unlink permission comes from the directory.");
+
         var stored = _storage.Store("Notes", "Locked.pdf", CreateSource("Locked.pdf"));
         var absolute = _storage.ResolvePath(stored);
         File.SetAttributes(absolute, FileAttributes.ReadOnly);
