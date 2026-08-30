@@ -81,6 +81,47 @@ public sealed class ProjectServiceTests : IDisposable
             reconciler: new ResourceLayoutReconciler(_projects, _files, _resources, _storage, _clock));
     }
 
+    /// <summary>
+    /// The flattening the startup gate prevents, reached without going near startup. When
+    /// the backfill skipped a Project, its rows still hold the empty sentinel. Renaming
+    /// one File relocates that File — and then reconciles the whole Project, walking its
+    /// OTHER Files, which are still both-empty. The reconciler's guard deliberately lets
+    /// both-empty through (it is the pure pre-0012 state), so FolderFor is "" and their
+    /// documents are moved into the resources root.
+    ///
+    /// RenameProject is not exposed to this: it relocates the Project before reconciling,
+    /// so the segment is non-empty by the time the sweep runs.
+    ///
+    /// Deferring converges. The sibling's documents stay put, and once the backfill claims
+    /// the Project a later reconcile moves them to their real folder in one step.
+    /// </summary>
+    [Fact]
+    public void RenamingAFile_InAProjectTheBackfillSkipped_LeavesItsSiblingsDocumentsAlone()
+    {
+        // A pre-0012 project: no claimed segment on the project or either File.
+        var project = Project.Create("Boom", "#ffffff", _clock.Now);
+        _projects.Add(project);
+        var renamed = ProjectFile.Create(project.Id, "Metric Proof", null, _clock.Now);
+        _files.Add(renamed);
+        var sibling = ProjectFile.Create(project.Id, "Notes", null, _clock.Now);
+        _files.Add(sibling);
+
+        // The sibling's document sits where the old derive-from-name layout put it.
+        var stored = Path.Combine("Boom", "Notes", "Agenda.pdf");
+        var resource = Resource.CreateStored(
+            sibling.Id, ResourceKind.Document, "Agenda", "Agenda.pdf", stored, _clock.Now);
+        var absolute = _storage.ResolvePath(stored);
+        Directory.CreateDirectory(Path.GetDirectoryName(absolute)!);
+        File.WriteAllText(absolute, "agenda");
+        _resources.Add(resource);
+
+        _service.RenameFile(renamed.Id, "Metrics");
+
+        Assert.Equal(stored, _resources.GetById(resource.Id)!.StoredPath);
+        Assert.Equal("agenda", File.ReadAllText(_storage.ResolvePath(stored)));
+        Assert.False(_storage.Exists("Agenda.pdf"));
+    }
+
     /// <summary>The same service, with the mutations seam swapped for a failing double.</summary>
     private ProjectService CreateServiceWith(
         IProjectMutations mutations, IProvenanceInvalidator? invalidator = null)

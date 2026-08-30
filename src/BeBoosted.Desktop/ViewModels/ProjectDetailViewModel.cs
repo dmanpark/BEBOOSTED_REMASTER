@@ -86,14 +86,9 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
         Project = _service.RenameProject(Project.Id, RenameName);
         OnPropertyChanged(nameof(Name));
 
-        // The card behind this detail holds its own Project snapshot, and the mutation
-        // chain below routes to the Calendar rather than back to this list, so nothing
-        // else rebuilds it. Without this the list keeps the old name until some later
-        // reload — invisible only because closing the detail happens to reload it.
-        _owner.ReloadList();
-
         // Project labels are cached in Inbox, Daily, and Calendar snapshots; the one
-        // central chain refreshes every dependent surface.
+        // central chain refreshes every dependent surface — and comes back through
+        // RefreshActive, which rebuilds the cards holding the old name. One rebuild.
         _owner.NotifyTasksMutated();
         return true;
     }

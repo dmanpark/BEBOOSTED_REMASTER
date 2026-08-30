@@ -174,12 +174,13 @@ public sealed partial class ProjectsViewModel : ViewModelBase
         else if (Detail is not null)
         {
             Detail.Refresh();
-            ReloadList(); // keep the card counts behind the detail current too
         }
-        else
-        {
-            ReloadList();
-        }
+
+        // The cards hold their own Project snapshots and their own counts, so they go
+        // stale behind whichever surface is open — including a File detail, which is two
+        // levels down and used to leave them untouched. Reloading here rather than at each
+        // mutation site keeps it to exactly one rebuild per announcement.
+        ReloadList();
     }
 
     public static IBrush BrushFor(string hexColor) => new SolidColorBrush(Color.Parse(hexColor));

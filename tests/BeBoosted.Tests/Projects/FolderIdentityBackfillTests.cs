@@ -100,21 +100,14 @@ public sealed class FolderIdentityBackfillTests : IDisposable
         => new(_projects, _files, _resources, _storage, _clock);
 
     /// <summary>
-    /// The startup layout pass from <c>App.axaml.cs</c>, in the same order and under the
-    /// same conditions. Deliberately a mirror of that call site rather than a convenience:
-    /// the backfill's contract with the reconciler lives at this seam and nowhere else, so
-    /// when the call site changes, this changes with it.
+    /// The real startup layout pass — the same object <c>App.axaml.cs</c> resolves and
+    /// calls, not a copy of its branch. A reimplementation here would pin only itself:
+    /// the gate could be deleted from the shipping path and every test would stay green.
     /// </summary>
-    private void RunStartupLayoutPass(IResourceStorage storage)
-    {
-        var backfill = new FolderIdentityBackfill(_projects, _files, storage, _clock).Backfill();
-        if (backfill.Skipped > 0)
-        {
-            return;
-        }
-
-        new ResourceLayoutReconciler(_projects, _files, _resources, storage, _clock).Reconcile();
-    }
+    private ResourceLayoutStartupResult RunStartupLayoutPass(IResourceStorage storage)
+        => new ResourceLayoutStartup(
+            new FolderIdentityBackfill(_projects, _files, storage, _clock),
+            new ResourceLayoutReconciler(_projects, _files, _resources, storage, _clock)).Run();
 
     [Fact]
     public void Backfill_ClaimsTheDirectoryALegacyProjectsBytesAlreadyOccupy()
@@ -401,6 +394,26 @@ public sealed class FolderIdentityBackfillTests : IDisposable
         Assert.Equal(
             Path.Combine("College Admissions", "Metric Proof", "Transcript.pdf"),
             _resources.GetById(resource.Id)!.StoredPath);
+    }
+
+    /// <summary>
+    /// A deferral the operator cannot act on is barely better than a silent one. The
+    /// outcome has to name which entity could not be claimed and carry the exception that
+    /// stopped it, because the class takes no logger and the call site can only report
+    /// what it is handed.
+    /// </summary>
+    [Fact]
+    public void Backfill_NamesTheEntityAndTheCause_ForEveryRowItCouldNotClaim()
+    {
+        SeedLegacyProject("Boom");
+
+        var storage = new SabotagedStorage(_storage, failOnSegment: "Boom");
+        var outcome = new FolderIdentityBackfill(_projects, _files, storage, _clock).Backfill();
+
+        var failure = Assert.Single(outcome.Failures);
+        Assert.Contains("Boom", failure.Entity, StringComparison.Ordinal);
+        Assert.IsType<IOException>(failure.Error);
+        Assert.Equal("the filesystem refused this name", failure.Error.Message);
     }
 
     public void Dispose()

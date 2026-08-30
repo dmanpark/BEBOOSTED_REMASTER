@@ -75,43 +75,39 @@ public partial class App : Avalonia.Application
 
             try
             {
-                // Order is load-bearing, and so is the gate below. Rows persisted before
-                // migration 0012 hold an empty folder segment, and ResourceLayout.FolderFor
-                // returns segments verbatim — so reconciling against one resolves its
-                // folder to the resources root and physically moves its documents there.
-                // Backfill claims each row's existing directory first; the sweep runs only
-                // if it left nothing behind, because the backfill recovers per entity
-                // rather than throwing and can now return having skipped a row.
-                //
-                // Deferring is the cheap side of the trade: the documents simply stay where
-                // they are and a later launch picks them up, whereas sweeping unclaimed
-                // rows destroys the layout. One bad row still costs only itself — every
-                // other project is backfilled, and the sweep resumes once it succeeds.
-                //
-                // This governs the startup sweep only. ProjectService reconciles a single
-                // Project on rename, outside this block entirely, so the reconciler also
-                // refuses the half-backfilled shape itself rather than trusting call order.
-                var backfill = _services.GetRequiredService<FolderIdentityBackfill>().Backfill();
-                if (backfill.Claimed > 0)
+                // Ordering, the gate between the two steps, and the reason for both live
+                // in ResourceLayoutStartup, where a test can reach them. What stays here
+                // is reporting: the pass is cosmetic bookkeeping and must never keep the
+                // app from starting, so a failure is caught and logged, not surfaced.
+                var layout = _services.GetRequiredService<ResourceLayoutStartup>().Run();
+                if (layout.Backfill.Claimed > 0)
                 {
                     Log.Information(
-                        "Backfilled folder segments for {Count} projects and Files", backfill.Claimed);
+                        "Backfilled folder segments for {Count} projects and Files",
+                        layout.Backfill.Claimed);
                 }
 
-                if (backfill.Skipped > 0)
+                foreach (var failure in layout.Backfill.Failures)
                 {
-                    Log.Warning(
-                        "{Count} projects or Files could not claim a folder segment; "
-                        + "deferring the resource layout reconcile until they can",
-                        backfill.Skipped);
+                    Log.Warning(failure.Error, "Could not claim a folder segment for {Entity}", failure.Entity);
                 }
-                else
+
+                if (layout.ReconcileDeferred)
                 {
-                    var moved = _services.GetRequiredService<ResourceLayoutReconciler>().Reconcile();
-                    if (moved > 0)
-                    {
-                        Log.Information("Moved {Count} stored resources into named folders", moved);
-                    }
+                    // Deliberately global and, against a deterministic fault, indefinite:
+                    // the sweep stays held back on every launch until every row is claimed.
+                    // Its work is postponed rather than lost, and a rename still reconciles
+                    // the project it touches, so this trades a cosmetic delay for the
+                    // irreversible relocation a sweep over unclaimed rows would perform.
+                    Log.Warning(
+                        "{Count} projects or Files still hold no folder segment; deferring the "
+                        + "resource layout reconcile, which would otherwise move their documents "
+                        + "into the resources root",
+                        layout.Backfill.Skipped);
+                }
+                else if (layout.Moved > 0)
+                {
+                    Log.Information("Moved {Count} stored resources into named folders", layout.Moved);
                 }
             }
             catch (Exception exception)

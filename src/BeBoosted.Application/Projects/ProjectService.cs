@@ -132,9 +132,24 @@ public sealed class ProjectService(
 
         files.Update(file);
 
-        // Same contract as RenameProject: the rename has already succeeded, and
-        // moving the folder to match is best-effort that never undoes it.
-        reconciler?.ReconcileProject(file.ProjectId);
+        // Same contract as RenameProject: the rename has already succeeded, and moving
+        // the folder to match is best-effort that never undoes it.
+        //
+        // Except when the Project itself was never claimed — a row the backfill skipped.
+        // Reconciling walks this Project's OTHER Files, which are still both-empty, and
+        // the reconciler's guard lets that shape through by design because it is the pure
+        // pre-0012 state. Their folder would resolve to "" and their documents would be
+        // moved into the resources root. Unlike RenameProject, which claims a segment
+        // before it reconciles, nothing here has made the Project safe to sweep.
+        //
+        // Deferring converges: this File's documents stay where they are, and once the
+        // backfill claims the Project a later reconcile moves them to their real folder in
+        // one step.
+        if (project.FolderSegment.Length > 0)
+        {
+            reconciler?.ReconcileProject(file.ProjectId);
+        }
+
         return file;
     }
 

@@ -261,9 +261,19 @@ public sealed class InMemoryProjectFileRepository : IProjectFileRepository
     /// <summary>Mirrors resources.file_id ON DELETE CASCADE.</summary>
     public InMemoryResourceRepository? Resources { get; set; }
 
-    public void Add(ProjectFile file) => _files[file.Id] = file;
+    public void Add(ProjectFile file) => _files[file.Id] = Clone(file);
 
-    public void Update(ProjectFile file) => _files[file.Id] = file;
+    public void Update(ProjectFile file) => _files[file.Id] = Clone(file);
+
+    /// <summary>
+    /// A detached copy, for the same reason <see cref="InMemoryProjectRepository"/> makes
+    /// one: handing back the caller's own instance turns every read into a live view of
+    /// it, and an assertion about a refresh then passes whether or not the refresh ran.
+    /// </summary>
+    private static ProjectFile Clone(ProjectFile file)
+        => ProjectFile.Rehydrate(
+            file.Id, file.ProjectId, file.Title, file.Description,
+            file.CreatedAt, file.ModifiedAt, file.FolderSegment);
 
     public void Delete(ProjectFileId id)
     {
@@ -278,10 +288,11 @@ public sealed class InMemoryProjectFileRepository : IProjectFileRepository
         _files.Remove(id);
     }
 
-    public ProjectFile? GetById(ProjectFileId id) => _files.GetValueOrDefault(id);
+    public ProjectFile? GetById(ProjectFileId id)
+        => _files.GetValueOrDefault(id) is { } file ? Clone(file) : null;
 
     public IReadOnlyList<ProjectFile> GetForProject(ProjectId projectId)
-        => _files.Values.Where(f => f.ProjectId == projectId).OrderBy(f => f.CreatedAt).ToList();
+        => _files.Values.Where(f => f.ProjectId == projectId).OrderBy(f => f.CreatedAt).Select(Clone).ToList();
 }
 
 public sealed class InMemoryResourceRepository : IResourceRepository

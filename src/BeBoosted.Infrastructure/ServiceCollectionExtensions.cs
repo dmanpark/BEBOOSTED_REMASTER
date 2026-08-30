@@ -46,6 +46,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectMutations, SqliteProjectMutations>();
         services.AddSingleton<FolderIdentityBackfill>();
         services.AddSingleton<ResourceLayoutReconciler>();
+        services.AddSingleton<ResourceLayoutStartup>();
         services.AddSingleton<IResourceIndexer, SimpleLocalIndexer>();
         services.AddSingleton<ProjectService>();
         services.AddSingleton<IAiProvider, LocalHeuristicAiProvider>();

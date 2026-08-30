@@ -3,12 +3,21 @@ using BeBoosted.Application.Abstractions;
 namespace BeBoosted.Application.Projects;
 
 /// <summary>
+/// One row the backfill could not claim a segment for, and the exception that stopped it.
+/// Carried out rather than logged in place: this layer takes no logger, and a warning that
+/// names neither the entity nor the cause tells an operator nothing they can act on.
+/// </summary>
+public sealed record FolderBackfillFailure(string Entity, Exception Error);
+
+/// <summary>
 /// What one backfill run achieved and what it left behind. <paramref name="Skipped"/> is
 /// the load-bearing half: a caller must not reconcile while any row still holds the empty
 /// sentinel, because <see cref="ResourceLayout.FolderFor"/> resolves such a row to the
-/// resources root and the reconciler would move its documents there.
+/// resources root and the reconciler would move its documents there. It counts the rows in
+/// <paramref name="Failures"/> plus the Files deferred because their Project is unclaimed.
 /// </summary>
-public readonly record struct FolderBackfillOutcome(int Claimed, int Skipped);
+public sealed record FolderBackfillOutcome(
+    int Claimed, int Skipped, IReadOnlyList<FolderBackfillFailure> Failures);
 
 /// <summary>
 /// Gives every Project and File persisted before migration 0012 the folder segment its
@@ -60,7 +69,8 @@ public sealed class FolderIdentityBackfill(
         var filePass = BackfillFiles();
         return new FolderBackfillOutcome(
             projectPass.Claimed + filePass.Claimed,
-            projectPass.Skipped + filePass.Skipped);
+            projectPass.Skipped + filePass.Skipped,
+            [.. projectPass.Failures, .. filePass.Failures]);
     }
 
     private FolderBackfillOutcome BackfillProjects()
@@ -72,7 +82,7 @@ public sealed class FolderIdentityBackfill(
         var claimed = ClaimedSegments(all.Select(project => project.FolderSegment));
 
         var filled = 0;
-        var skipped = 0;
+        var failures = new List<FolderBackfillFailure>();
         foreach (var project in all.Where(project => project.FolderSegment.Length == 0))
         {
             try
@@ -85,18 +95,18 @@ public sealed class FolderIdentityBackfill(
                 projects.Update(project);
                 filled++;
             }
-            catch (Exception)
+            catch (Exception error)
             {
                 // A deterministic wall on one folder name — a path-length limit, an ACL,
                 // a rejected update — would otherwise strand every later row against the
                 // same obstacle on every launch. This Project keeps the sentinel and is
-                // retried on the next run. Counted, not logged: this class takes no
-                // logger, and the count reaches the caller that can report it.
-                skipped++;
+                // retried on the next run. Recorded rather than logged: this class takes
+                // no logger, so the detail travels out to the caller that can report it.
+                failures.Add(new FolderBackfillFailure($"project '{project.Name}'", error));
             }
         }
 
-        return new FolderBackfillOutcome(filled, skipped);
+        return new FolderBackfillOutcome(filled, failures.Count, failures);
     }
 
     /// <summary>
@@ -106,7 +116,8 @@ public sealed class FolderIdentityBackfill(
     private FolderBackfillOutcome BackfillFiles()
     {
         var filled = 0;
-        var skipped = 0;
+        var deferred = 0;
+        var failures = new List<FolderBackfillFailure>();
         foreach (var project in projects.GetAll())
         {
             if (project.FolderSegment.Length == 0)
@@ -115,7 +126,7 @@ public sealed class FolderIdentityBackfill(
                 // File's folder in the resources root, so the whole Project waits for the
                 // next run. Running the passes in order is what makes this the only way a
                 // Project can still be unclaimed by the time its Files are reached.
-                skipped += files.GetForProject(project.Id).Count(file => file.FolderSegment.Length == 0);
+                deferred += files.GetForProject(project.Id).Count(file => file.FolderSegment.Length == 0);
                 continue;
             }
 
@@ -137,16 +148,17 @@ public sealed class FolderIdentityBackfill(
                     files.Update(file);
                     filled++;
                 }
-                catch (Exception)
+                catch (Exception error)
                 {
                     // Same bargain as a Project: one unclaimable File keeps the sentinel
                     // and is retried, rather than stranding its siblings behind it.
-                    skipped++;
+                    failures.Add(new FolderBackfillFailure(
+                        $"File '{file.Title}' in project '{project.Name}'", error));
                 }
             }
         }
 
-        return new FolderBackfillOutcome(filled, skipped);
+        return new FolderBackfillOutcome(filled, deferred + failures.Count, failures);
     }
 
     /// <summary>
