@@ -205,6 +205,33 @@ public sealed class LocalResourceStorageTests : IDisposable
         Assert.Equal("Ch. 5 Notes (2)", segment);
     }
 
+    /// <summary>
+    /// A read-only file is routine for user-managed documents, and File.Delete answers it
+    /// with UnauthorizedAccessException — which does NOT derive from IOException, so the
+    /// existing clause never covered it. Delete is best-effort by contract, and its caller
+    /// has already committed the row, so this has to be absorbed like any other failure.
+    /// </summary>
+    [Fact]
+    public void Delete_AbsorbsAReadOnlyFile_RatherThanThrowing()
+    {
+        var stored = _storage.Store("Notes", "Locked.pdf", CreateSource("Locked.pdf"));
+        var absolute = _storage.ResolvePath(stored);
+        File.SetAttributes(absolute, FileAttributes.ReadOnly);
+
+        try
+        {
+            _storage.Delete(stored);
+
+            // Absorbed, and honest about it: the bytes are still there, which is the
+            // tolerated orphan the reconciler already copes with.
+            Assert.True(_storage.Exists(stored));
+        }
+        finally
+        {
+            File.SetAttributes(absolute, FileAttributes.Normal);
+        }
+    }
+
     public void Dispose()
     {
         try

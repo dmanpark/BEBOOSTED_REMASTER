@@ -121,7 +121,9 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             // Tear the detail down before ringing the refresh chain: NotifyTasksMutated
             // reaches RefreshActive, which refreshes whichever surface is open — and while
             // this detail is still open, that means refreshing the project just deleted.
-            _owner.CloseDetail();
+            // ClearDetail rather than CloseDetail because that chain ends in ReloadList,
+            // so closing must not rebuild the card list a second time.
+            _owner.ClearDetail();
             _owner.NotifyTasksMutated();
         };
     }

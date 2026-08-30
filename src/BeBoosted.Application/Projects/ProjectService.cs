@@ -94,12 +94,12 @@ public sealed class ProjectService(
 
         foreach (var path in paths)
         {
-            storage.Delete(path);
+            AfterCommit(() => storage.Delete(path));
         }
 
         foreach (var resource in doomedResources)
         {
-            provenanceInvalidator?.InvalidateForResource(resource.Id);
+            AfterCommit(() => provenanceInvalidator?.InvalidateForResource(resource.Id));
         }
     }
 
@@ -153,6 +153,38 @@ public sealed class ProjectService(
         return file;
     }
 
+    /// <summary>
+    /// Runs one side effect that follows a committed transaction, and swallows anything it
+    /// throws. The rows are already gone and nothing here can undo that, so a failure can
+    /// only do two things, both worse than the failure itself: skip the side effects after
+    /// it — including the provenance invalidation that flags derived items as needing
+    /// review, leaving them citing sources that no longer exist — and escape to a caller
+    /// that will report a delete which fully succeeded as a failure. An orphaned file on
+    /// disk is the lesser outcome, and the reconciler already tolerates one.
+    ///
+    /// Per side effect, deliberately: one path that refuses must not cost the next one.
+    ///
+    /// This cannot be pushed down into <see cref="IResourceStorage.Delete"/> or
+    /// <see cref="IProvenanceInvalidator"/>. Both are interfaces, so any implementation may
+    /// throw; hardening the ones shipped today would leave the guarantee resting on every
+    /// future implementation remembering. The isolation belongs where the sequencing is.
+    ///
+    /// Nothing before the commit goes through here — <c>mutations.Execute</c> must still
+    /// throw and still roll back.
+    /// </summary>
+    private static void AfterCommit(Action sideEffect)
+    {
+        try
+        {
+            sideEffect();
+        }
+        catch (Exception)
+        {
+            // Deliberately unreported at this layer: the service takes no logger, and the
+            // delete it belongs to has already succeeded.
+        }
+    }
+
     /// <summary>Every other File's claimed segment within the same Project.</summary>
     private HashSet<string> SiblingFileSegments(ProjectId projectId, ProjectFileId? exclude)
         => files.GetForProject(projectId)
@@ -173,12 +205,12 @@ public sealed class ProjectService(
 
         foreach (var path in paths)
         {
-            storage.Delete(path);
+            AfterCommit(() => storage.Delete(path));
         }
 
         foreach (var resource in doomed)
         {
-            provenanceInvalidator?.InvalidateForResource(resource.Id);
+            AfterCommit(() => provenanceInvalidator?.InvalidateForResource(resource.Id));
         }
     }
 
@@ -245,11 +277,13 @@ public sealed class ProjectService(
 
         if (resource.StoredPath is { } storedPath)
         {
-            storage.Delete(storedPath);
+            AfterCommit(() => storage.Delete(storedPath));
         }
 
-        // A removed source flags everything derived from it as Needs review.
-        provenanceInvalidator?.InvalidateForResource(id);
+        // A removed source flags everything derived from it as Needs review. Isolated
+        // from the byte delete above so a file that refuses to go cannot leave derived
+        // items citing a source that is already gone.
+        AfterCommit(() => provenanceInvalidator?.InvalidateForResource(id));
     }
 
     /// <summary>Edits a note's content: re-indexes it and flags derived items for review.</summary>

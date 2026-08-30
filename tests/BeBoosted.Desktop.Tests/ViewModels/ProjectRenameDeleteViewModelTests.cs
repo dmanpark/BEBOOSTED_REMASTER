@@ -289,6 +289,30 @@ public sealed class ProjectRenameDeleteViewModelTests
         Assert.Equal("College Admissions", detail.Name);
     }
 
+    /// <summary>
+    /// The back button is the one path that closes a detail with nothing announcing behind
+    /// it, so it has to rebuild the card list itself. Creating a File announces nothing —
+    /// the card keeps its old "0 Files" until something reloads — which makes it the
+    /// honest way to catch a close that forgets.
+    /// </summary>
+    [Fact]
+    public void ClosingADetail_RebuildsTheCardsBehindIt()
+    {
+        var projects = TestShell.Create().Projects;
+        projects.NewProjectName = "College Admissions";
+        Assert.True(projects.TryCreateProject());
+        var detail = projects.Detail!;
+        Assert.Contains("0 Files", projects.Projects.Single().MetaText, StringComparison.Ordinal);
+
+        detail.NewFileTitle = "Metric Proof";
+        Assert.True(detail.TryCreateFile());
+
+        projects.CloseDetailCommand.Execute(null);
+
+        Assert.Null(projects.Detail);
+        Assert.Contains("1 File", projects.Projects.Single().MetaText, StringComparison.Ordinal);
+    }
+
     // ---- Project delete ----
 
     [Fact]

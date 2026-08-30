@@ -159,7 +159,7 @@ groups sharing a title could split or share one.
 3. `IResourceStorage.ReserveFolderSegment` returns a free segment, appending the same
    ` (2)`, ` (3)` suffixes `ResourceLayout.CandidateName` uses for files, skipping any
    name occupied on disk **as a file or a directory** or held by a sibling group.
-4. **It claims the segment by creating the directory** before returning it.
+4. **It reserves the segment by creating the directory** before returning it.
 5. The service persists the returned segment on the group row.
 
 ### Reservation must claim, not merely check
@@ -180,8 +180,21 @@ A reservation that only *checks* is advisory, and it fails in both directions:
 
 Both are fixed by two changes that belong together:
 
-- `ReserveFolderSegment` creates the directory it returns. The directory *is* the
-  claim, so nothing else can take the name afterwards.
+- `ReserveFolderSegment` creates the directory it returns, so the next reservation's
+  disk check sees it.
+
+  Precisely what that guarantees: **within one process, reserving sequentially, a later
+  reservation cannot be handed a name an earlier one already returned.** That is enough
+  for both failures above, which are about a *later* import taking a name a *previous*
+  reservation only checked.
+
+  What it does not guarantee: it is not a lock and not atomic.
+  `Directory.CreateDirectory` succeeds silently when the directory already exists and
+  takes nothing exclusively, so it excludes no other process, and two concurrent
+  reservations can still be handed the same name. Reservation runs on the UI thread for
+  create and rename, and the startup backfill completes before the window opens, so
+  sequential single-process use is the only case that arises today. A second writer —
+  another instance over a synced folder, say — would need real locking.
 - `ReserveFreePath` treats a path occupied by **either** a file or a directory as
   taken, so file placement can never target a group's folder.
 
@@ -285,8 +298,9 @@ One new member:
 /// <summary>
 /// Claims a folder for a group under <paramref name="relativeParent"/> and returns the
 /// segment taken. Skips names occupied on disk by a file OR a directory, and names held
-/// by <paramref name="claimed"/> (the File's other groups). Creating the directory IS
-/// the claim — a checked-but-uncreated name can be taken by a later import.
+/// by <paramref name="claimed"/> (the File's other groups). Creating the directory is
+/// what makes the reservation hold for the next sequential caller in this process — a
+/// checked-but-uncreated name can be taken by a later import. It is not a lock.
 /// <paramref name="ownedSegment"/> is the segment this group already holds, if any: it
 /// is returned unchanged when the preferred segment resolves to it, so a case-only
 /// rename does not advance to "(2)".

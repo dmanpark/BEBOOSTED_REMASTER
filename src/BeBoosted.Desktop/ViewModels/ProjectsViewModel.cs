@@ -156,11 +156,27 @@ public sealed partial class ProjectsViewModel : ViewModelBase
         Detail?.Refresh();
     }
 
-    [RelayCommand]
-    internal void CloseDetail()
+    /// <summary>
+    /// Closes whatever detail is open without touching the card list. Callers that go on
+    /// to announce a mutation want this one: the announcement comes back through
+    /// <see cref="RefreshActive"/>, which rebuilds the list itself, and closing first is
+    /// what keeps that refresh off a project that has just been deleted.
+    /// </summary>
+    internal void ClearDetail()
     {
         FileDetail = null;
         Detail = null;
+    }
+
+    /// <summary>
+    /// The back button. Nothing announces behind it, so this is the one path that has to
+    /// rebuild the list itself — the counts on the cards may have moved while the detail
+    /// was open.
+    /// </summary>
+    [RelayCommand]
+    internal void CloseDetail()
+    {
+        ClearDetail();
         ReloadList();
     }
 

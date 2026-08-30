@@ -93,12 +93,17 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
     /// <summary>
     /// Reserves a folder name inside <paramref name="relativeParent"/>, probing the
     /// "(2)", "(3)", … suffix shape on collision, and creates the directory before
-    /// returning — the directory IS the claim, closing the gap between checking a name
-    /// is free and using it. A candidate is occupied when it is in <paramref name="claimed"/>,
-    /// or already exists on disk as a file or a directory; the one exception is
+    /// returning. A candidate is occupied when it is in <paramref name="claimed"/>, or
+    /// already exists on disk as a file or a directory; the one exception is
     /// <paramref name="ownedSegment"/>, this entity's own directory, which is handed back
     /// unchanged rather than displaced — unless <paramref name="claimed"/> already holds it,
     /// which always wins.
+    ///
+    /// Creating the directory closes the gap between checking a name is free and using it,
+    /// but only for sequential callers in this process: the next reservation's disk check
+    /// sees the directory this one left. It is not a lock — <c>Directory.CreateDirectory</c>
+    /// succeeds silently on an existing directory and holds nothing — so it excludes no
+    /// other process and does not make concurrent reservations safe.
     /// </summary>
     public string ReserveFolderSegment(
         string relativeParent, string preferredSegment, IReadOnlySet<string> claimed, string? ownedSegment = null)
@@ -135,6 +140,14 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
         catch (IOException)
         {
             // Best effort: an orphaned byte file is preferable to a failed delete flow.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // A read-only attribute or a denied ACL — routine for user-managed files, and
+            // NOT an IOException, so the clause above never covered it. Expected rather
+            // than exceptional: Delete is best-effort by contract and its caller has
+            // already committed the row, leaving the same tolerated orphan as any other
+            // failed delete.
         }
         catch (DomainException)
         {

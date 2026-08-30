@@ -159,6 +159,87 @@ public sealed class ProjectServiceTests : IDisposable
         public void InvalidateForResource(ResourceId resourceId) => Invalidated.Add(resourceId);
     }
 
+    /// <summary>
+    /// Delegates everything, but the first <c>Delete</c> throws — a read-only file, an
+    /// ACL, an AV or sync client holding a handle. Deliberately an arbitrary
+    /// <see cref="IResourceStorage"/> rather than the hardened local one: the interface is
+    /// the seam, so any implementation may throw and the isolation cannot live inside one.
+    /// </summary>
+    private sealed class DeleteSabotagedStorage(IResourceStorage inner) : IResourceStorage
+    {
+        private int _deletes;
+
+        public string Store(string relativeFolder, string preferredFileName, string sourcePath)
+            => inner.Store(relativeFolder, preferredFileName, sourcePath);
+
+        public string? MoveInto(string currentStoredPath, string relativeFolder, string preferredFileName)
+            => inner.MoveInto(currentStoredPath, relativeFolder, preferredFileName);
+
+        public string ReserveFolderSegment(
+            string relativeParent, string preferredSegment, IReadOnlySet<string> claimed, string? ownedSegment = null)
+            => inner.ReserveFolderSegment(relativeParent, preferredSegment, claimed, ownedSegment);
+
+        public string ResolvePath(string storedPath) => inner.ResolvePath(storedPath);
+
+        public bool Exists(string storedPath) => inner.Exists(storedPath);
+
+        public void Delete(string storedPath)
+        {
+            if (++_deletes == 1)
+            {
+                throw new UnauthorizedAccessException("the file is read-only");
+            }
+
+            inner.Delete(storedPath);
+        }
+    }
+
+    /// <summary>Throws the first invalidation and records every one after it.</summary>
+    private sealed class ThrowOnFirstInvalidator : IProvenanceInvalidator
+    {
+        private bool _thrown;
+
+        public List<ResourceId> Invalidated { get; } = [];
+
+        public void InvalidateForResource(ResourceId resourceId)
+        {
+            if (!_thrown)
+            {
+                _thrown = true;
+                throw new InvalidOperationException("provenance store unavailable");
+            }
+
+            Invalidated.Add(resourceId);
+        }
+    }
+
+    /// <summary>The real service with the storage and provenance seams swapped.</summary>
+    private ProjectService CreateServiceWith(
+        IResourceStorage resourceStorage, IProvenanceInvalidator invalidator)
+        => new(
+            _projects, _files, _resources, resourceStorage, new SqliteProjectMutations(_database.Factory),
+            new SimpleLocalIndexer(_resources, _storage, _clock), _tasks,
+            new SqliteCalendarBlockRepository(_database.Factory), _completions, _clock,
+            invalidator);
+
+    /// <summary>A project holding one File with two imported documents.</summary>
+    private (Project Project, ProjectFile File, List<string> Paths) SeedTwoDocuments()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        foreach (var name in new[] { "Transcript.pdf", "Essay.pdf" })
+        {
+            var source = Path.Combine(_paths.DataDirectory, name);
+            File.WriteAllText(source, "bytes for " + name);
+            _service.ImportFile(file.Id, ResourceKind.Document, source);
+        }
+
+        // The exact order the service will walk, so "the one after the failure" is precise.
+        var paths = _resources.GetForFile(file.Id).Select(r => r.StoredPath!).ToList();
+        Assert.Equal(2, paths.Count);
+        return (project, file, paths);
+    }
+
     private CalendarService CreateCalendarService()
         => new(
             new SqliteCalendarBlockRepository(_database.Factory),
@@ -715,6 +796,105 @@ public sealed class ProjectServiceTests : IDisposable
         Assert.Null(_files.GetById(file.Id));
         Assert.Null(_resources.GetById(link.Id));
         Assert.Null(_resources.GetById(note.Id));
+    }
+
+    // ---- Post-commit side effects are isolated (integrity) ----
+
+    /// <summary>
+    /// The commit has already happened: the rows are gone and nothing after it can undo
+    /// that. A throw from the first byte delete used to abandon every remaining path AND
+    /// skip provenance invalidation entirely — leaving derived items citing sources that
+    /// no longer exist and never flagged for review — and then escape into the caller,
+    /// which reports a delete that fully succeeded as a failure. An orphaned file on disk
+    /// is strictly the lesser outcome.
+    /// </summary>
+    [Fact]
+    public void DeleteProject_WhenAStoredFileCannotBeDeleted_RemovesTheRest_AndInvalidatesEveryDoomedResource()
+    {
+        var seeded = SeedTwoDocuments();
+        var doomed = _resources.GetForFile(seeded.File.Id).Select(r => r.Id).ToList();
+        var invalidator = new RecordingInvalidator();
+
+        CreateServiceWith(new DeleteSabotagedStorage(_storage), invalidator)
+            .DeleteProject(seeded.Project.Id);
+
+        Assert.True(_storage.Exists(seeded.Paths[0]));   // the one that refused
+        Assert.False(_storage.Exists(seeded.Paths[1]));  // not abandoned behind it
+        Assert.Equal(doomed, invalidator.Invalidated);
+        Assert.Null(_projects.GetById(seeded.Project.Id));
+    }
+
+    [Fact]
+    public void DeleteFile_WhenAStoredFileCannotBeDeleted_RemovesTheRest_AndInvalidatesEveryDoomedResource()
+    {
+        var seeded = SeedTwoDocuments();
+        var doomed = _resources.GetForFile(seeded.File.Id).Select(r => r.Id).ToList();
+        var invalidator = new RecordingInvalidator();
+
+        CreateServiceWith(new DeleteSabotagedStorage(_storage), invalidator)
+            .DeleteFile(seeded.File.Id);
+
+        Assert.True(_storage.Exists(seeded.Paths[0]));
+        Assert.False(_storage.Exists(seeded.Paths[1]));
+        Assert.Equal(doomed, invalidator.Invalidated);
+        Assert.Null(_files.GetById(seeded.File.Id));
+    }
+
+    [Fact]
+    public void DeleteResource_WhenTheStoredFileCannotBeDeleted_StillInvalidatesProvenance()
+    {
+        var seeded = SeedTwoDocuments();
+        var target = _resources.GetForFile(seeded.File.Id)[0];
+        var invalidator = new RecordingInvalidator();
+
+        CreateServiceWith(new DeleteSabotagedStorage(_storage), invalidator)
+            .DeleteResource(target.Id);
+
+        Assert.True(_storage.Exists(seeded.Paths[0]));
+        Assert.Equal([target.Id], invalidator.Invalidated);
+        Assert.Null(_resources.GetById(target.Id));
+    }
+
+    /// <summary>
+    /// The mirror: provenance is the other interface, and it can fail on its own. One
+    /// resource whose invalidation throws must not cost its siblings theirs.
+    /// </summary>
+    [Fact]
+    public void DeleteProject_WhenAnInvalidationThrows_StillInvalidatesTheRest()
+    {
+        var seeded = SeedTwoDocuments();
+        var invalidator = new ThrowOnFirstInvalidator();
+
+        CreateServiceWith(_storage, invalidator).DeleteProject(seeded.Project.Id);
+
+        Assert.Single(invalidator.Invalidated);
+        Assert.False(_storage.Exists(seeded.Paths[0]));
+        Assert.False(_storage.Exists(seeded.Paths[1]));
+    }
+
+    [Fact]
+    public void DeleteFile_WhenAnInvalidationThrows_StillInvalidatesTheRest()
+    {
+        var seeded = SeedTwoDocuments();
+        var invalidator = new ThrowOnFirstInvalidator();
+
+        CreateServiceWith(_storage, invalidator).DeleteFile(seeded.File.Id);
+
+        Assert.Single(invalidator.Invalidated);
+        Assert.False(_storage.Exists(seeded.Paths[0]));
+        Assert.False(_storage.Exists(seeded.Paths[1]));
+    }
+
+    [Fact]
+    public void DeleteResource_WhenTheInvalidationThrows_DoesNotEscape_AndTheRowAndBytesAreStillGone()
+    {
+        var seeded = SeedTwoDocuments();
+        var target = _resources.GetForFile(seeded.File.Id)[0];
+
+        CreateServiceWith(_storage, new ThrowOnFirstInvalidator()).DeleteResource(target.Id);
+
+        Assert.Null(_resources.GetById(target.Id));
+        Assert.False(_storage.Exists(seeded.Paths[0]));
     }
 
     public void Dispose()

@@ -365,6 +365,39 @@ public sealed class ShellProjectRefreshTests
     /// One central chain, each dependent exactly once: the open detail must not
     /// refresh eagerly and then again through the shared event.
     /// </summary>
+    /// <summary>
+    /// The sibling of the completion case, for deletion. Closing the detail rebuilds the
+    /// card list, and the announcement that has to follow it rebuilds the list again
+    /// through RefreshActive's unconditional tail — two rebuilds for one user action.
+    /// Exactly one, and the close still has to happen before the announcement so nothing
+    /// refreshes the project that was just deleted.
+    /// </summary>
+    [Fact]
+    public void DeletingAProject_RebuildsTheCardListExactlyOnce()
+    {
+        var (shell, _, _) = CreateShell();
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        shell.Projects.NewProjectName = "Schoolwork";
+        Assert.True(shell.Projects.TryCreateProject());
+        var detail = shell.Projects.Detail!;
+        detail.RequestDeleteCommand.Execute(null);
+
+        var cardResets = 0;
+        shell.Projects.Projects.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == NotifyCollectionChangedAction.Reset)
+            {
+                cardResets++;
+            }
+        };
+
+        detail.ConfirmPromptCommand.Execute(null);
+
+        Assert.Equal(1, cardResets);
+        Assert.Empty(shell.Projects.Projects);
+        Assert.Null(shell.Projects.Detail);
+    }
+
     [Fact]
     public void CompletingATask_FromProjectDetail_RefreshesEachDependentExactlyOnce()
     {
