@@ -99,7 +99,7 @@ public sealed class ProjectsViewModelTests
     }
 
     [Fact]
-    public void InboxRows_ShowProjectNames_AndEditCanAssignProjects()
+    public void InboxRows_ShowProjectNames_AndEditAssignsThroughTheTaskEditor()
     {
         var clock = new FakeClock(TestShell.DesignDate);
         var projectRepo = new InMemoryProjectRepository();
@@ -110,13 +110,16 @@ public sealed class ProjectsViewModelTests
         shell.Inbox.CaptureText = "Practice role-play";
         shell.Inbox.CaptureCommand.Execute(null);
         var row = shell.Inbox.Tasks[0];
-        Assert.Equal(2, row.ProjectChoices.Count); // "No project" + DECA
 
-        row.EditProject = row.ProjectChoices[1];
-        row.CommitEditCommand.Execute(null);
+        // The row routes into the whole-task editor.
+        row.EditCommand.Execute(null);
+        var editor = Assert.IsType<WholeTaskEditorViewModel>(shell.Calendar.ActiveTaskEditor);
+        Assert.Equal("Practice role-play", editor.Title);
+        editor.SelectedProject = editor.ProjectOptions.Single(o => o.Name == "DECA");
+        editor.SaveCommand.Execute(null);
 
-        Assert.Equal(project.Id, row.Task.ProjectId);
-        shell.Inbox.Reload();
+        // Saving reloads the queue with the project shown on the row.
         Assert.StartsWith("DECA", shell.Inbox.Tasks[0].MetaText, StringComparison.Ordinal);
+        Assert.Equal(project.Id, shell.Inbox.Tasks[0].Task.ProjectId);
     }
 }

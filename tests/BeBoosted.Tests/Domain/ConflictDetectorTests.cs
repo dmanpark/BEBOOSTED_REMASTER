@@ -10,7 +10,7 @@ public sealed class ConflictDetectorTests
 
     private static BlockOccurrence At(int startHour, int startMinute, int endHour, int endMinute, DateOnly? date = null)
     {
-        var block = CalendarBlock.CreateForTask(
+        var block = CalendarBlock.CreateTaskSession(
             TaskId.New(),
             date ?? Date,
             new TimeOnly(startHour, startMinute),

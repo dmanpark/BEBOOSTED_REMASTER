@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using Avalonia.Media;
 using BeBoosted.Application.Projects;
-using BeBoosted.Application.Tasks;
 using BeBoosted.Desktop.Platform;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Projects;
@@ -20,7 +19,6 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     private readonly IProjectRepository _projects;
     private readonly IProjectFileRepository _files;
     private readonly IResourceRepository _resources;
-    private readonly TaskService _taskService;
     private readonly Application.Calendar.CalendarService _calendar;
     private readonly IFileRevealService _opener;
     private readonly Application.Ai.AiService _ai;
@@ -30,7 +28,6 @@ public sealed partial class ProjectsViewModel : ViewModelBase
         IProjectRepository projects,
         IProjectFileRepository files,
         IResourceRepository resources,
-        TaskService taskService,
         Application.Calendar.CalendarService calendar,
         IFileRevealService opener,
         Application.Ai.AiService ai)
@@ -39,7 +36,6 @@ public sealed partial class ProjectsViewModel : ViewModelBase
         _projects = projects;
         _files = files;
         _resources = resources;
-        _taskService = taskService;
         _calendar = calendar;
         _opener = opener;
         _ai = ai;
@@ -49,13 +45,24 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     /// <summary>Wired by the shell: "Ask BeBoosted about this project" expands the composer.</summary>
     public Action? AskRequested { get; set; }
 
-    /// <summary>
-    /// Raised after this surface mutates calendar data (commitment completion),
-    /// so the shell can refresh the calendar exactly once.
-    /// </summary>
-    public event Action? CalendarDataChanged;
+    /// <summary>Raised when a project row asks for the one canonical Task editor.</summary>
+    public event Action<Domain.TaskId>? TaskEditRequested;
 
-    internal void NotifyCalendarChanged() => CalendarDataChanged?.Invoke();
+    /// <summary>Raised for a scheduled-session row, carrying its concrete occurrence date.</summary>
+    public event Action<Domain.CalendarBlockId, DateOnly>? SessionEditRequested;
+
+    /// <summary>
+    /// Raised after any project-originated mutation (whole-task completion or an
+    /// occurrence toggle) — the shell's one central post-mutation chain.
+    /// </summary>
+    public event Action? TasksMutated;
+
+    internal void RequestTaskEdit(Domain.TaskId taskId) => TaskEditRequested?.Invoke(taskId);
+
+    internal void RequestSessionEdit(Domain.CalendarBlockId blockId, DateOnly occurrenceDate)
+        => SessionEditRequested?.Invoke(blockId, occurrenceDate);
+
+    internal void NotifyTasksMutated() => TasksMutated?.Invoke();
 
     public string? GetProjectName(Domain.ProjectId? id)
         => id is { } projectId ? _projects.GetById(projectId)?.Name : null;
@@ -130,7 +137,7 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     {
         if (_projects.GetById(id) is { } project)
         {
-            Detail = new ProjectDetailViewModel(this, project, _service, _files, _taskService, _calendar);
+            Detail = new ProjectDetailViewModel(this, project, _service, _files, _calendar);
         }
     }
 
@@ -143,17 +150,33 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void CloseFile()
+    internal void CloseFile()
     {
         FileDetail = null;
         Detail?.Refresh();
     }
 
-    [RelayCommand]
-    private void CloseDetail()
+    /// <summary>
+    /// Closes whatever detail is open without touching the card list. Callers that go on
+    /// to announce a mutation want this one: the announcement comes back through
+    /// <see cref="RefreshActive"/>, which rebuilds the list itself, and closing first is
+    /// what keeps that refresh off a project that has just been deleted.
+    /// </summary>
+    internal void ClearDetail()
     {
         FileDetail = null;
         Detail = null;
+    }
+
+    /// <summary>
+    /// The back button. Nothing announces behind it, so this is the one path that has to
+    /// rebuild the list itself — the counts on the cards may have moved while the detail
+    /// was open.
+    /// </summary>
+    [RelayCommand]
+    internal void CloseDetail()
+    {
+        ClearDetail();
         ReloadList();
     }
 
@@ -168,10 +191,12 @@ public sealed partial class ProjectsViewModel : ViewModelBase
         {
             Detail.Refresh();
         }
-        else
-        {
-            ReloadList();
-        }
+
+        // The cards hold their own Project snapshots and their own counts, so they go
+        // stale behind whichever surface is open — including a File detail, which is two
+        // levels down and used to leave them untouched. Reloading here rather than at each
+        // mutation site keeps it to exactly one rebuild per announcement.
+        ReloadList();
     }
 
     public static IBrush BrushFor(string hexColor) => new SolidColorBrush(Color.Parse(hexColor));

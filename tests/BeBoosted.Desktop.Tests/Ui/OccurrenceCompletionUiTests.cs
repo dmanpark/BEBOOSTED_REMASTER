@@ -11,45 +11,57 @@ using BeBoosted.Desktop.Views;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Calendar;
 using BeBoosted.Domain.Projects;
+using BeBoosted.Domain.Scheduling;
+using BeBoosted.Domain.Tasks;
 
 namespace BeBoosted.Desktop.Tests.Ui;
 
 /// <summary>
-/// Real click paths for commitment completion: the calendar circle marks an occurrence
-/// done without opening the editor, the Project page circle shares the same path,
-/// accessible names flip between mark/reopen, and locked externals get no control.
+/// Real click paths for per-occurrence completion of repeating tasks: the calendar
+/// circle marks only the clicked day's occurrence done without opening the editor, the
+/// Project page circle shares the same path, accessible names flip between mark/reopen,
+/// and one-off sessions and locked externals get no occurrence circle.
 /// </summary>
-public sealed class CommitmentCompletionUiTests
+public sealed class OccurrenceCompletionUiTests
 {
     private sealed record Fixture(
         MainWindow Window,
         ShellViewModel Shell,
         InMemoryCalendarBlockRepository Blocks,
-        CalendarBlockId StatsId);
+        InMemoryOccurrenceCompletionRepository Completions,
+        CalendarBlockId StatsSessionId,
+        ProjectId ProjectId);
 
-    private static Fixture CreateShellWithLinkedStatsHw()
+    /// <summary>"Stats HW": a Schoolwork task repeating every Tuesday, anchored today.</summary>
+    private static Fixture CreateShellWithRepeatingStatsHw()
     {
         var clock = new FakeClock(TestShell.DesignDate);
         var tasks = new InMemoryTaskRepository();
         var blocks = new InMemoryCalendarBlockRepository();
+        var completions = new InMemoryOccurrenceCompletionRepository();
         TestShell.SeedDesignCalendar(tasks, blocks, clock);
         var projects = new InMemoryProjectRepository();
         var schoolwork = Project.Create("Schoolwork", "#5B8DEF", clock.Now);
         projects.Add(schoolwork);
-        var stats = CalendarBlock.CreateFixedCommitment(
-            "Stats HW", TestShell.DesignDate, new TimeOnly(16, 0), new TimeOnly(17, 0),
-            clock.Now, projectId: schoolwork.Id);
-        blocks.Add(stats);
+        var statsTask = TaskItem.Create("Stats HW", clock.Now, projectId: schoolwork.Id);
+        tasks.Add(statsTask);
+        var statsSession = CalendarBlock.CreateTaskSession(
+            statsTask.Id, TestShell.DesignDate, new TimeOnly(16, 0), new TimeOnly(17, 0),
+            clock.Now, RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
+        blocks.Add(statsSession);
         blocks.Add(CalendarBlock.Rehydrate(
-            CalendarBlockId.New(), null, null, "Imported standup", TestShell.DesignDate,
-            new TimeOnly(13, 30), new TimeOnly(14, 0), BlockKind.FixedCommitment, null,
+            CalendarBlockId.New(), null, "Imported standup", TestShell.DesignDate,
+            new TimeOnly(13, 30), new TimeOnly(14, 0), BlockKind.ExternalEvent, null,
             "google", "evt-1", 0, BlockOutcome.None, null, clock.Now, clock.Now));
 
-        var shell = TestShell.Create(tasks: tasks, blocks: blocks, projects: projects);
+        var shell = TestShell.Create(
+            tasks: tasks, blocks: blocks, projects: projects, completions: completions);
         var window = new MainWindow { DataContext = shell, Width = 1440, Height = 960 };
         window.Show();
+        // Timeline blocks live on the Week surface; Today shows the Daily list.
+        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
         window.CaptureRenderedFrame();
-        return new Fixture(window, shell, blocks, stats.Id);
+        return new Fixture(window, shell, blocks, completions, statsSession.Id, schoolwork.Id);
     }
 
     private static CalendarBlockView FindBlockView(MainWindow window, string title)
@@ -73,28 +85,32 @@ public sealed class CommitmentCompletionUiTests
         window.CaptureRenderedFrame();
     }
 
+    /// <summary>TDD phases 11 and 13: the circle completes only the clicked day.</summary>
     [AvaloniaFact]
-    public void CalendarCircleClick_MarksDoneThenReopens_WithoutOpeningTheEditor()
+    public void CalendarCircleClick_MarksOnlyThisOccurrenceDone_WithoutOpeningTheEditor()
     {
-        var fixture = CreateShellWithLinkedStatsHw();
+        var fixture = CreateShellWithRepeatingStatsHw();
         var window = fixture.Window;
         ScrollCalendarTo(window, 780); // bring the 16:00 Stats HW block into view
 
         var view = FindBlockView(window, "Stats HW");
-        var circle = view.FindControl<Button>("CommitmentDoneButton")!;
+        var circle = view.FindControl<Button>("OccurrenceDoneButton")!;
         Assert.True(circle.IsVisible);
         Assert.Equal("Mark Stats HW done", AutomationProperties.GetName(circle));
 
         Click(window, circle);
 
-        Assert.Null(fixture.Shell.Calendar.CommitmentEditor); // never the editor
+        Assert.Null(fixture.Shell.Calendar.ActiveTaskEditor); // never the editor
         var doneView = FindBlockView(window, "Stats HW");
         var doneVm = (CalendarBlockViewModel)doneView.DataContext!;
         Assert.True(doneVm.IsDone);
+        // Only the clicked day's occurrence completed — future ones stay active.
+        Assert.NotNull(fixture.Completions.Get(fixture.StatsSessionId, TestShell.DesignDate));
+        Assert.Null(fixture.Completions.Get(fixture.StatsSessionId, TestShell.DesignDate.AddDays(7)));
         // Restrained completed treatment: the block's done class drives subdued
         // opacity and the strike-through title.
         Assert.Contains("done", doneView.FindControl<Border>("BlockBorder")!.Classes);
-        var doneCircle = doneView.FindControl<Button>("CommitmentDoneButton")!;
+        var doneCircle = doneView.FindControl<Button>("OccurrenceDoneButton")!;
         Assert.Equal("Reopen Stats HW", AutomationProperties.GetName(doneCircle));
 
         Click(window, doneCircle);
@@ -107,11 +123,10 @@ public sealed class CommitmentCompletionUiTests
     [AvaloniaFact]
     public void ProjectPageCircleClick_TogglesTheSameCompletion_AndCalendarFollows()
     {
-        var fixture = CreateShellWithLinkedStatsHw();
+        var fixture = CreateShellWithRepeatingStatsHw();
         var window = fixture.Window;
         fixture.Shell.NavigateCommand.Execute(AppSection.Projects);
-        fixture.Shell.Projects.OpenProject(
-            fixture.Blocks.GetById(fixture.StatsId)!.ProjectId!.Value);
+        fixture.Shell.Projects.OpenProject(fixture.ProjectId);
         window.CaptureRenderedFrame();
 
         var circle = window.GetVisualDescendants()
@@ -121,9 +136,8 @@ public sealed class CommitmentCompletionUiTests
         Click(window, circle);
 
         var detail = fixture.Shell.Projects.Detail!;
-        Assert.Empty(detail.ScheduledBlocks);
-        var done = Assert.Single(detail.CompletedScheduledBlocks);
-        Assert.True(done.IsDone);
+        var rows = detail.ScheduledBlocks.Concat(detail.CompletedScheduledBlocks).ToList();
+        Assert.Contains(rows, r => r.IsDone && r.Date == TestShell.DesignDate);
 
         // The calendar surface reflects it immediately.
         fixture.Shell.NavigateCommand.Execute(AppSection.Calendar);
@@ -140,42 +154,47 @@ public sealed class CommitmentCompletionUiTests
             .First(b => b.IsEffectivelyVisible
                 && AutomationProperties.GetName(b) == "Reopen Stats HW");
         Click(window, reopen);
-        Assert.Single(fixture.Shell.Projects.Detail!.ScheduledBlocks);
+        Assert.Contains(
+            fixture.Shell.Projects.Detail!.ScheduledBlocks,
+            r => !r.IsDone && r.Date == TestShell.DesignDate);
         window.Close();
     }
 
     [AvaloniaFact]
-    public void ExternalCommitmentAndTaskBlocks_GetNoCompletionCircle()
+    public void ExternalEventsAndOneOffSessions_GetNoOccurrenceCircle()
     {
-        var fixture = CreateShellWithLinkedStatsHw();
+        var fixture = CreateShellWithRepeatingStatsHw();
         var window = fixture.Window;
         ScrollCalendarTo(window, 700);
 
         var external = FindBlockView(window, "Imported standup");
-        Assert.False(external.FindControl<Button>("CommitmentDoneButton")!.IsVisible);
+        Assert.False(external.FindControl<Button>("OccurrenceDoneButton")!.IsVisible);
 
-        var taskBlock = FindBlockView(window, "Practice DECA role-play");
-        Assert.False(taskBlock.FindControl<Button>("CommitmentDoneButton")!.IsVisible);
-        // Task blocks keep their multi-outcome flyout control instead.
-        Assert.True(taskBlock.FindControl<Button>("CompleteButton")!.IsVisible);
+        var oneOff = FindBlockView(window, "Practice DECA role-play");
+        Assert.False(oneOff.FindControl<Button>("OccurrenceDoneButton")!.IsVisible);
+        // One-off sessions keep their multi-outcome flyout control instead.
+        Assert.True(oneOff.FindControl<Button>("CompleteButton")!.IsVisible);
         window.Close();
     }
 
     [AvaloniaFact]
-    public void EditorOpenedFromABlockClick_ShowsTheCompletionCheckbox()
+    public void EditorOpenedFromABlockClick_ScopesCompletionToTheOccurrence()
     {
-        var fixture = CreateShellWithLinkedStatsHw();
+        var fixture = CreateShellWithRepeatingStatsHw();
         var window = fixture.Window;
         ScrollCalendarTo(window, 780);
 
-        Click(window, FindBlockView(window, "Stats HW")); // block body → editor
-        var editor = fixture.Shell.Calendar.CommitmentEditor;
-        Assert.NotNull(editor);
+        Click(window, FindBlockView(window, "Stats HW")); // block body → session editor
+        var editor = Assert.IsType<SessionEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
+        Assert.Equal(SessionEditorMode.Repeating, editor.Mode);
+        Assert.Equal(TestShell.DesignDate, editor.OccurrenceDate);
         var checkbox = window.GetVisualDescendants()
             .OfType<CheckBox>()
-            .First(c => c.Name == "CommitmentCompletedBox");
+            .First(c => Equals(c.Content, editor.OccurrenceCheckboxText));
         Assert.True(checkbox.IsEffectivelyVisible);
         Assert.False(checkbox.IsChecked ?? false);
+        // The occurrence section names the concrete date the checkbox applies to.
+        Assert.StartsWith("THIS OCCURRENCE", editor.OccurrenceSectionLabel);
         window.Close();
     }
 }

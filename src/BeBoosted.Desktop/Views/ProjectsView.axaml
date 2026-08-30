@@ -102,19 +102,63 @@
                   VerticalAlignment="Center" />
             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" />
           </StackPanel>
-          <Button DockPanel.Dock="Right" Height="30" Padding="14,0" HorizontalAlignment="Right"
-                  Command="{Binding AskBeBoostedCommand}"
-                  AutomationProperties.Name="Ask BeBoosted about this project">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Border Width="14" Height="14" Background="{StaticResource BrushHighlighterLime}"
-                      CornerRadius="3">
-                <Path Classes="icon" Data="{StaticResource IconSpark}" Width="8" Height="8"
-                      StrokeThickness="1.6" />
-              </Border>
-              <TextBlock Text="Ask BeBoosted about this project" />
-            </StackPanel>
-          </Button>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8"
+                      HorizontalAlignment="Right">
+            <Button Height="30" Padding="12,0" Content="Rename" Click="OnBeginProjectRenameClick"
+                    AutomationProperties.Name="Rename this project">
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+                  <StackPanel Width="264" Spacing="10" Margin="4">
+                    <TextBlock Text="Rename project" FontWeight="SemiBold" />
+                    <TextBox Text="{Binding RenameName}" PlaceholderText="Project name"
+                             AutomationProperties.Name="Project name" />
+                    <Button Classes="primary" Content="Save" HorizontalAlignment="Right"
+                            Click="OnRenameProjectClick" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+            <Button Height="30" Padding="12,0" Content="Delete"
+                    Command="{Binding RequestDeleteCommand}"
+                    AutomationProperties.Name="{Binding Name, StringFormat='Delete project {0}'}" />
+            <Button Height="30" Padding="14,0"
+                    Command="{Binding AskBeBoostedCommand}"
+                    AutomationProperties.Name="Ask BeBoosted about this project">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Border Width="14" Height="14" Background="{StaticResource BrushHighlighterLime}"
+                        CornerRadius="3">
+                  <Path Classes="icon" Data="{StaticResource IconSpark}" Width="8" Height="8"
+                        StrokeThickness="1.6" />
+                </Border>
+                <TextBlock Text="Ask BeBoosted about this project" />
+              </StackPanel>
+            </Button>
+          </StackPanel>
         </DockPanel>
+      </Border>
+
+      <Border DockPanel.Dock="Top" Name="ProjectConfirmationCard" Margin="48,14,48,0" Padding="16,14"
+              Background="{StaticResource BrushFolioUnderlay}"
+              BorderBrush="{StaticResource BrushGraphite}" BorderThickness="1.5"
+              CornerRadius="{StaticResource RadiusPanel}"
+              IsVisible="{Binding Confirmation, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding Confirmation.Message, FallbackValue=''}"
+                     FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+            <Border Classes="focusRing">
+              <Button Name="ProjectPromptKeepButton" Content="Keep"
+                      Command="{Binding KeepPromptCommand}" />
+            </Border>
+            <Border Classes="focusRing">
+              <Button Name="ProjectPromptConfirmButton" FontWeight="SemiBold"
+                      BorderBrush="{StaticResource BrushAccentUmber}"
+                      Content="{Binding Confirmation.ConfirmLabel, FallbackValue=''}"
+                      Command="{Binding ConfirmPromptCommand}"
+                      AutomationProperties.Name="{Binding Confirmation.ConfirmLabel, FallbackValue='', StringFormat='Confirm: {0}'}" />
+            </Border>
+          </StackPanel>
+        </StackPanel>
       </Border>
 
       <ScrollViewer>
@@ -141,12 +185,25 @@
                     <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
                             Padding="4,11">
                       <DockPanel>
-                        <Button DockPanel.Dock="Left" Classes="icon" Width="18" Height="18"
-                                CornerRadius="9" BorderThickness="1.5"
-                                BorderBrush="{StaticResource BrushBorderStrong}"
-                                Command="{Binding CompleteCommand}"
-                                AutomationProperties.Name="{Binding Title, StringFormat='Mark {0} done'}"
-                                ToolTip.Tip="Mark done" VerticalAlignment="Center" />
+                        <Panel DockPanel.Dock="Left" Width="18" VerticalAlignment="Center">
+                          <Button Classes="icon" Width="18" Height="18"
+                                  CornerRadius="9" BorderThickness="1.5"
+                                  BorderBrush="{StaticResource BrushBorderStrong}"
+                                  IsVisible="{Binding CanComplete}"
+                                  Command="{Binding CompleteCommand}"
+                                  AutomationProperties.Name="{Binding Title, StringFormat='Complete task {0}'}"
+                                  ToolTip.Tip="Mark done" VerticalAlignment="Center" />
+                        </Panel>
+                        <!-- Every task row edits through the one canonical Task editor. -->
+                        <Button DockPanel.Dock="Right" Classes="icon" Width="26" Height="26"
+                                VerticalAlignment="Center"
+                                IsVisible="{Binding CanEdit}"
+                                Command="{Binding EditCommand}"
+                                AutomationProperties.Name="{Binding EditControlName}"
+                                ToolTip.Tip="Edit task">
+                          <Path Classes="icon" Data="{StaticResource IconEdit}" Width="12" Height="12"
+                                StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+                        </Button>
                         <TextBlock DockPanel.Dock="Right" Classes="meta" Text="{Binding MetaText}"
                                    VerticalAlignment="Center" />
                         <TextBlock Text="{Binding Title}" FontWeight="Medium" Margin="11,0"
@@ -170,6 +227,16 @@
                           <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
                                 StrokeThickness="1.8" />
                         </Border>
+                        <!-- A completed task can still be reopened or retitled in the editor. -->
+                        <Button DockPanel.Dock="Right" Classes="icon" Width="26" Height="26"
+                                VerticalAlignment="Center"
+                                IsVisible="{Binding CanEdit}"
+                                Command="{Binding EditCommand}"
+                                AutomationProperties.Name="{Binding EditControlName}"
+                                ToolTip.Tip="Edit task">
+                          <Path Classes="icon" Data="{StaticResource IconEdit}" Width="12" Height="12"
+                                StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+                        </Button>
                         <TextBlock DockPanel.Dock="Right" Classes="meta" Text="{Binding MetaText}"
                                    VerticalAlignment="Center" />
                         <TextBlock Text="{Binding Title}" Margin="11,0"
@@ -196,7 +263,7 @@
                     <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
                             Padding="4,11">
                       <DockPanel>
-                        <!-- completion circle: local commitments only -->
+                        <!-- occurrence circle: repeating sessions only -->
                         <Panel DockPanel.Dock="Left" Width="29" VerticalAlignment="Center">
                           <Button Classes="icon" Width="18" Height="18" CornerRadius="9"
                                   BorderThickness="1.5" HorizontalAlignment="Left"
@@ -211,6 +278,16 @@
                                    VerticalAlignment="Center" />
                         <Border DockPanel.Dock="Left" Width="3" Height="16" CornerRadius="2"
                                 Background="{Binding AccentBrush}" VerticalAlignment="Center" />
+                        <!-- Sessions edit through the same canonical Task editor, on this occurrence. -->
+                        <Button DockPanel.Dock="Right" Classes="icon" Width="26" Height="26"
+                                VerticalAlignment="Center"
+                                IsVisible="{Binding CanEdit}"
+                                Command="{Binding EditCommand}"
+                                AutomationProperties.Name="{Binding EditControlName}"
+                                ToolTip.Tip="Edit session">
+                          <Path Classes="icon" Data="{StaticResource IconEdit}" Width="12" Height="12"
+                                StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+                        </Button>
                         <TextBlock DockPanel.Dock="Right" Classes="meta" Text="{Binding DurationText}"
                                    VerticalAlignment="Center" />
                         <Border DockPanel.Dock="Right" Background="{StaticResource BrushWorkbenchCream}"
@@ -255,6 +332,16 @@
                                    VerticalAlignment="Center" />
                         <Border DockPanel.Dock="Left" Width="3" Height="16" CornerRadius="2"
                                 Background="{Binding AccentBrush}" VerticalAlignment="Center" />
+                        <!-- Completed sessions stay editable (reopen, retitle) via the editor. -->
+                        <Button DockPanel.Dock="Right" Classes="icon" Width="26" Height="26"
+                                VerticalAlignment="Center"
+                                IsVisible="{Binding CanEdit}"
+                                Command="{Binding EditCommand}"
+                                AutomationProperties.Name="{Binding EditControlName}"
+                                ToolTip.Tip="Edit session">
+                          <Path Classes="icon" Data="{StaticResource IconEdit}" Width="12" Height="12"
+                                StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+                        </Button>
                         <TextBlock DockPanel.Dock="Right" Classes="meta" Text="{Binding DurationText}"
                                    VerticalAlignment="Center" />
                         <TextBlock Text="{Binding Title}" Margin="11,0"
@@ -421,8 +508,50 @@
             </Button>
             <Button Height="30" Padding="12,0" Content="Image" Click="OnAddImageClick"
                     AutomationProperties.Name="Add an image" />
+            <Border Width="1" Margin="4,6" Background="{StaticResource BrushRuleDefault}" />
+            <Button Height="30" Padding="12,0" Content="Rename" Click="OnBeginFileRenameClick"
+                    AutomationProperties.Name="Rename this File">
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+                  <StackPanel Width="264" Spacing="10" Margin="4">
+                    <TextBlock Text="Rename File" FontWeight="SemiBold" />
+                    <TextBox Text="{Binding RenameTitle}" PlaceholderText="File title"
+                             AutomationProperties.Name="File title" />
+                    <Button Classes="primary" Content="Save" HorizontalAlignment="Right"
+                            Click="OnRenameFileClick" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+            <Button Height="30" Padding="12,0" Content="Delete"
+                    Command="{Binding RequestDeleteCommand}"
+                    AutomationProperties.Name="{Binding Title, StringFormat='Delete File {0}'}" />
           </StackPanel>
         </DockPanel>
+      </Border>
+
+      <Border DockPanel.Dock="Top" Name="FileConfirmationCard" Margin="48,14,48,0" Padding="16,14"
+              Background="{StaticResource BrushFolioUnderlay}"
+              BorderBrush="{StaticResource BrushGraphite}" BorderThickness="1.5"
+              CornerRadius="{StaticResource RadiusPanel}"
+              IsVisible="{Binding Confirmation, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding Confirmation.Message, FallbackValue=''}"
+                     FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+            <Border Classes="focusRing">
+              <Button Name="FilePromptKeepButton" Content="Keep"
+                      Command="{Binding KeepPromptCommand}" />
+            </Border>
+            <Border Classes="focusRing">
+              <Button Name="FilePromptConfirmButton" FontWeight="SemiBold"
+                      BorderBrush="{StaticResource BrushAccentUmber}"
+                      Content="{Binding Confirmation.ConfirmLabel, FallbackValue=''}"
+                      Command="{Binding ConfirmPromptCommand}"
+                      AutomationProperties.Name="{Binding Confirmation.ConfirmLabel, FallbackValue='', StringFormat='Confirm: {0}'}" />
+            </Border>
+          </StackPanel>
+        </StackPanel>
       </Border>
 
       <Grid Margin="48,30,48,20" RowDefinitions="Auto,*">
@@ -459,6 +588,10 @@
                     </StackPanel>
                   </StackPanel>
                 </Border>
+                <TextBlock DockPanel.Dock="Top" Foreground="{StaticResource BrushInkHover}"
+                           FontSize="{StaticResource TextSizeSmall}" Margin="26,8,26,0"
+                           Text="{Binding ImportNotice}" TextWrapping="Wrap"
+                           IsVisible="{Binding ImportNotice, Converter={x:Static ObjectConverters.IsNotNull}}" />
                 <StackPanel IsVisible="{Binding !HasResources}" Margin="26,20" Spacing="6">
                   <TextBlock Text="Nothing collected yet." FontWeight="Medium" />
                   <TextBlock Classes="secondary" TextWrapping="Wrap"
@@ -558,6 +691,11 @@
                   </StackPanel>
                 </StackPanel>
 
+                <TextBlock Foreground="{StaticResource BrushInkHover}"
+                           FontSize="{StaticResource TextSizeSmall}"
+                           Text="{Binding OpenNotice}" TextWrapping="Wrap"
+                           IsVisible="{Binding OpenNotice, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
                 <!-- provenance -->
                 <StackPanel Spacing="8" Margin="0,8,0,0">
                   <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="0,0,0,1"
@@ -594,9 +732,26 @@
                   </ItemsControl>
                 </StackPanel>
 
-                <Button Content="Remove from File" HorizontalAlignment="Left" Margin="0,6,0,0"
-                        Command="{Binding DeleteCommand}"
-                        AutomationProperties.Name="{Binding Title, StringFormat='Remove {0}'}" />
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0"
+                            HorizontalAlignment="Left">
+                  <Button Content="Rename" Click="OnBeginResourceRenameClick"
+                          AutomationProperties.Name="{Binding Title, StringFormat='Rename {0}'}">
+                    <Button.Flyout>
+                      <Flyout Placement="BottomEdgeAlignedLeft" ShowMode="Standard">
+                        <StackPanel Width="264" Spacing="10" Margin="4">
+                          <TextBlock Text="Rename resource" FontWeight="SemiBold" />
+                          <TextBox Text="{Binding RenameTitle}" PlaceholderText="Title"
+                                   AutomationProperties.Name="Resource title" />
+                          <Button Classes="primary" Content="Save" HorizontalAlignment="Right"
+                                  Click="OnRenameResourceClick" />
+                        </StackPanel>
+                      </Flyout>
+                    </Button.Flyout>
+                  </Button>
+                  <Button Content="Remove from File"
+                          Command="{Binding DeleteCommand}"
+                          AutomationProperties.Name="{Binding Title, StringFormat='Remove {0}'}" />
+                </StackPanel>
               </StackPanel>
             </ScrollViewer>
           </Grid>

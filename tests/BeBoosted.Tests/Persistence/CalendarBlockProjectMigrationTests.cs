@@ -46,16 +46,17 @@ public sealed class CalendarBlockProjectMigrationTests : IDisposable
     {
         BuildPre0008DatabaseWithOneBlock();
 
+        // Through the full ladder the legacy commitment survives with its times and,
+        // after 0010, is task-backed with its title owned by the migrated Task.
         _runner.Apply(EmbeddedMigrations.Load());
 
         var repository = new SqliteCalendarBlockRepository(_database.Factory);
         var block = repository.GetById(CalendarBlockId.Parse(LegacyBlockId));
         Assert.NotNull(block);
-        Assert.Equal("AP Economics", block.Title);
         Assert.Equal(new DateOnly(2026, 8, 11), block.Date);
         Assert.Equal(new TimeOnly(8, 30), block.StartTime);
         Assert.Equal(new TimeOnly(9, 45), block.EndTime);
-        Assert.Null(block.ProjectId);
+        Assert.NotNull(block.TaskId);
     }
 
     [Fact]

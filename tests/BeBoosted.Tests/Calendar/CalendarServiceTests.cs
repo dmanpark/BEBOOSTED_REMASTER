@@ -29,7 +29,7 @@ public sealed class CalendarServiceTests : IDisposable
     private readonly FixedClock _clock = new();
     private readonly SqliteTaskRepository _tasks;
     private readonly SqliteCalendarBlockRepository _blocks;
-    private readonly SqliteCommitmentCompletionRepository _completions;
+    private readonly SqliteOccurrenceCompletionRepository _completions;
     private readonly CalendarService _service;
     private readonly InboxQueryService _inbox;
 
@@ -39,7 +39,7 @@ public sealed class CalendarServiceTests : IDisposable
             .Apply(EmbeddedMigrations.Load());
         _tasks = new SqliteTaskRepository(_database.Factory);
         _blocks = new SqliteCalendarBlockRepository(_database.Factory);
-        _completions = new SqliteCommitmentCompletionRepository(_database.Factory);
+        _completions = new SqliteOccurrenceCompletionRepository(_database.Factory);
         _service = new CalendarService(_blocks, _completions, new SqliteCalendarMutations(_database.Factory), _tasks, _clock);
         _inbox = new InboxQueryService(_tasks, _blocks);
     }
@@ -51,6 +51,25 @@ public sealed class CalendarServiceTests : IDisposable
         return task;
     }
 
+    private static TaskDetailsRequest Details(
+        string title, ProjectId? projectId = null, DateOnly? deadline = null, TimeSpan? duration = null)
+        => new(title, projectId, deadline, duration);
+
+    /// <summary>Creates a scheduled task through the unified editor path.</summary>
+    private (TaskItem Task, CalendarBlock Session) AddScheduledTask(
+        string title,
+        DateOnly date,
+        TimeOnly start,
+        TimeOnly end,
+        RecurrenceRule? recurrence = null,
+        ProjectId? projectId = null)
+    {
+        var task = _service.CreateTask(
+            Details(title, projectId), new TaskScheduleRequest(date, start, end, recurrence));
+        var session = Assert.Single(_blocks.GetForTask(task.Id));
+        return (task, session);
+    }
+
     [Fact]
     public void ScheduleTask_UsesEstimate_AndRemovesTaskFromInbox()
     {
@@ -59,7 +78,7 @@ public sealed class CalendarServiceTests : IDisposable
         var block = _service.ScheduleTask(task.Id, Date, new TimeOnly(15, 30));
 
         Assert.Equal(new TimeOnly(17, 0), block.EndTime);
-        Assert.Equal(BlockKind.TaskBlock, block.Kind);
+        Assert.Equal(BlockKind.TaskSession, block.Kind);
         Assert.DoesNotContain(_inbox.GetInboxTasks(), t => t.Id == task.Id);
     }
 
@@ -69,6 +88,33 @@ public sealed class CalendarServiceTests : IDisposable
         var task = AddTask("Email recommendation request");
         var block = _service.ScheduleTask(task.Id, Date, new TimeOnly(15, 0));
         Assert.Equal(TimeSpan.FromMinutes(30), block.Duration);
+    }
+
+    [Fact]
+    public void ScheduleTask_WithExplicitDuration_UsesItInsteadOfTheEstimate()
+    {
+        var task = AddTask("Practice DECA role-play", TimeSpan.FromMinutes(90));
+
+        var block = _service.ScheduleTask(task.Id, Date, new TimeOnly(15, 30), TimeSpan.FromMinutes(45));
+
+        Assert.Equal(new TimeOnly(16, 15), block.EndTime);
+        Assert.DoesNotContain(_inbox.GetInboxTasks(), t => t.Id == task.Id);
+    }
+
+    [Fact]
+    public void ScheduleTask_WithExplicitDuration_ClampsAtMidnight()
+    {
+        var task = AddTask("Late work");
+        var block = _service.ScheduleTask(task.Id, Date, new TimeOnly(23, 50), TimeSpan.FromMinutes(30));
+        Assert.Equal(new TimeOnly(23, 59), block.EndTime);
+    }
+
+    [Fact]
+    public void ScheduleTask_WithNonPositiveDuration_Throws()
+    {
+        var task = AddTask("Zero work");
+        Assert.Throws<DomainException>(
+            () => _service.ScheduleTask(task.Id, Date, new TimeOnly(15, 0), TimeSpan.Zero));
     }
 
     [Fact]
@@ -87,14 +133,14 @@ public sealed class CalendarServiceTests : IDisposable
     }
 
     [Fact]
-    public void RecordOutcome_Done_CompletesTheTask()
+    public void RecordOutcome_Done_ResolvesTheSessionWithoutCompletingTheTask()
     {
         var task = AddTask("Review economics chapter", TimeSpan.FromMinutes(45));
         var block = _service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));
 
         _service.RecordOutcome(block.Id, BlockOutcome.Done);
 
-        Assert.True(_tasks.GetById(task.Id)!.IsCompleted);
+        Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
         Assert.Equal(BlockOutcome.Done, _blocks.GetById(block.Id)!.Outcome);
     }
 
@@ -128,11 +174,12 @@ public sealed class CalendarServiceTests : IDisposable
     [Fact]
     public void GetOccurrences_ExpandsWeeklyRecurrenceAcrossTheWeek()
     {
-        _service.CreateFixedCommitment(
+        AddScheduledTask(
             "AP Economics", Date.AddDays(-7), new TimeOnly(8, 30), new TimeOnly(9, 45),
             RecurrenceRule.Weekly(1, DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday,
                 DayOfWeek.Thursday, DayOfWeek.Friday));
-        _service.CreateFixedCommitment("Family dinner", new DateOnly(2026, 8, 16), new TimeOnly(18, 0), new TimeOnly(19, 30));
+        AddScheduledTask(
+            "Family dinner", new DateOnly(2026, 8, 16), new TimeOnly(18, 0), new TimeOnly(19, 30));
 
         var occurrences = _service.GetOccurrences(new DateOnly(2026, 8, 10), new DateOnly(2026, 8, 16));
 
@@ -142,12 +189,19 @@ public sealed class CalendarServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetBlocksNeedingOutcome_ReturnsOnlyElapsedTaskBlocks()
+    public void GetBlocksNeedingOutcome_ReturnsOnlyElapsedOneOffSessionsOfOpenTasks()
     {
         var task = AddTask("Elapsed work", TimeSpan.FromMinutes(60));
         var elapsed = _service.ScheduleTask(task.Id, Date, new TimeOnly(9, 0));    // ended 10:00 < now 14:10
         _service.ScheduleTask(AddTask("Future work", TimeSpan.FromMinutes(60)).Id, Date, new TimeOnly(18, 0));
-        _service.CreateFixedCommitment("Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45));
+        // A repeating session completes per occurrence — it never needs an outcome.
+        AddScheduledTask(
+            "AP Economics", Date.AddDays(-7), new TimeOnly(8, 30), new TimeOnly(9, 45),
+            RecurrenceRule.Weekly(1, DayOfWeek.Monday, DayOfWeek.Tuesday));
+        // A session whose task was completed in the editor no longer nags either.
+        var (doneTask, _) = AddScheduledTask("Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45));
+        _service.UpdateTaskDetails(
+            doneTask.Id, Details("Lunch"), new TaskCompletionRequest(Date, Completed: true));
 
         var needing = _service.GetBlocksNeedingOutcome();
 
@@ -158,79 +212,93 @@ public sealed class CalendarServiceTests : IDisposable
         Assert.Empty(_service.GetBlocksNeedingOutcome());
     }
 
+    // ---- The unified Task editor's persistence path ----
+
     [Fact]
-    public void CreateFixedCommitment_PersistsAnOptionalProjectLink()
+    public void CreateTask_PersistsProjectDeadlineAndEstimate_OnTheTask()
     {
         var projectId = AddProject("Schoolwork");
 
-        var block = _service.CreateFixedCommitment(
-            "AP Economics", Date, new TimeOnly(8, 30), new TimeOnly(9, 45), projectId: projectId);
+        var task = _service.CreateTask(
+            Details("AP Economics", projectId, Date.AddDays(3), TimeSpan.FromMinutes(75)),
+            new TaskScheduleRequest(Date, new TimeOnly(8, 30), new TimeOnly(9, 45), null));
 
-        Assert.Equal(projectId, _blocks.GetById(block.Id)!.ProjectId);
+        var loaded = _tasks.GetById(task.Id)!;
+        Assert.Equal(projectId, loaded.ProjectId);
+        Assert.Equal(Date.AddDays(3), loaded.Deadline);
+        Assert.Equal(TimeSpan.FromMinutes(75), loaded.EstimatedDuration);
+        var session = Assert.Single(_blocks.GetForTask(task.Id));
+        Assert.Null(session.Title); // the Task owns the title
+        Assert.Equal(BlockKind.TaskSession, session.Kind);
     }
 
     [Fact]
-    public void UpdateFixedCommitment_PersistsEveryField()
+    public void CreateTask_WithoutSchedule_LeavesTheTaskUnscheduled()
     {
-        var block = _service.CreateFixedCommitment(
-            "Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45));
+        var task = _service.CreateTask(Details("Email recommendation request"));
+        Assert.Empty(_blocks.GetForTask(task.Id));
+        Assert.Contains(_inbox.GetInboxTasks(), t => t.Id == task.Id);
+    }
+
+    [Fact]
+    public void ScopedUpdates_TogetherPersistEveryField()
+    {
+        var (task, session) = AddScheduledTask("Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45));
         var projectId = AddProject("Math");
         var recurrence = RecurrenceRule.Weekly(1, DayOfWeek.Wednesday);
 
-        _service.UpdateFixedCommitment(
-            block.Id, "Study hall", Date.AddDays(1), new TimeOnly(13, 0), new TimeOnly(14, 30),
-            recurrence, projectId);
+        _service.UpdateTaskDetails(task.Id, Details("Study hall", projectId));
+        _service.UpdateSessionSchedule(
+            task.Id, session.Id,
+            new TaskScheduleRequest(Date.AddDays(1), new TimeOnly(13, 0), new TimeOnly(14, 30), recurrence));
 
-        var loaded = _blocks.GetById(block.Id);
-        Assert.Equal("Study hall", loaded!.Title);
+        var loadedTask = _tasks.GetById(task.Id)!;
+        Assert.Equal("Study hall", loadedTask.Title);
+        Assert.Equal(projectId, loadedTask.ProjectId);
+        var loaded = _blocks.GetById(session.Id)!;
         Assert.Equal(Date.AddDays(1), loaded.Date);
         Assert.Equal(new TimeOnly(13, 0), loaded.StartTime);
         Assert.Equal(new TimeOnly(14, 30), loaded.EndTime);
         Assert.Equal([DayOfWeek.Wednesday], loaded.Recurrence!.DaysOfWeek);
-        Assert.Equal(projectId, loaded.ProjectId);
+        Assert.Null(loaded.Title);
     }
 
     [Fact]
-    public void UpdateFixedCommitment_RejectsExternalCommitments()
+    public void AddSession_OnAnUnscheduledTask_CreatesTheSession()
     {
-        var external = AddExternalCommitment();
+        var task = _service.CreateTask(Details("Lunch"));
 
-        Assert.Throws<DomainException>(() => _service.UpdateFixedCommitment(
-            external.Id, "Hijacked", Date, new TimeOnly(9, 0), new TimeOnly(10, 0), null, null));
-        Assert.Equal("External", _blocks.GetById(external.Id)!.Title);
+        _service.AddSession(
+            task.Id, new TaskScheduleRequest(Date, new TimeOnly(12, 0), new TimeOnly(12, 45), null));
+
+        var session = Assert.Single(_blocks.GetForTask(task.Id));
+        Assert.Equal(new TimeOnly(12, 0), session.StartTime);
     }
 
     [Fact]
-    public void DeleteLocalCommitment_DeletesOnlyLocalFixedCommitments()
+    public void DeleteTask_RemovesTheTaskItsSessionsAndTheirCompletions()
     {
-        var local = _service.CreateFixedCommitment(
-            "Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45));
-        _service.DeleteLocalCommitment(local.Id);
-        Assert.Null(_blocks.GetById(local.Id));
+        var (task, session) = AddScheduledTask(
+            "AP Economics", Date.AddDays(-7), new TimeOnly(8, 30), new TimeOnly(9, 45),
+            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
+        _service.CompleteOccurrence(session.Id, Date);
 
-        var external = AddExternalCommitment();
-        Assert.Throws<DomainException>(() => _service.DeleteLocalCommitment(external.Id));
-        Assert.NotNull(_blocks.GetById(external.Id));
+        _service.DeleteTask(task.Id);
 
+        Assert.Null(_tasks.GetById(task.Id));
+        Assert.Null(_blocks.GetById(session.Id));
+        Assert.Empty(_completions.GetForBlock(session.Id));
+    }
+
+    [Fact]
+    public void UnscheduleSession_DeletesOnlyLocalSessions()
+    {
         var taskBlock = _service.ScheduleTask(AddTask("Work").Id, Date, new TimeOnly(9, 0));
-        Assert.Throws<DomainException>(() => _service.DeleteLocalCommitment(taskBlock.Id));
-        Assert.NotNull(_blocks.GetById(taskBlock.Id));
-    }
-
-    [Fact]
-    public void UnscheduleTaskBlock_DeletesOnlyLocalTaskBlocks()
-    {
-        var taskBlock = _service.ScheduleTask(AddTask("Work").Id, Date, new TimeOnly(9, 0));
-        _service.UnscheduleTaskBlock(taskBlock.Id);
+        _service.UnscheduleSession(taskBlock.Id);
         Assert.Null(_blocks.GetById(taskBlock.Id));
 
-        var commitment = _service.CreateFixedCommitment(
-            "Lunch", Date, new TimeOnly(12, 0), new TimeOnly(12, 45));
-        Assert.Throws<DomainException>(() => _service.UnscheduleTaskBlock(commitment.Id));
-        Assert.NotNull(_blocks.GetById(commitment.Id));
-
-        var external = AddExternalCommitment();
-        Assert.Throws<DomainException>(() => _service.UnscheduleTaskBlock(external.Id));
+        var external = AddExternalEvent();
+        Assert.Throws<DomainException>(() => _service.UnscheduleSession(external.Id));
         Assert.NotNull(_blocks.GetById(external.Id));
     }
 
@@ -243,82 +311,103 @@ public sealed class CalendarServiceTests : IDisposable
         Assert.Null(typeof(CalendarService).GetMethod("DeleteLocalBlock"));
     }
 
+    // ---- Completion: one-off completes the Task; repeating per occurrence ----
+
     [Fact]
-    public void CompleteAndReopen_CommitmentOccurrence_PersistAndReportRealChanges()
+    public void UpdateTaskDetails_CompletingAOneOff_CompletesTheTask_AndReopeningReverts()
     {
-        var block = _service.CreateFixedCommitment(
-            "Stats HW", Date, new TimeOnly(16, 0), new TimeOnly(17, 0));
+        var (task, session) = AddScheduledTask("Stats HW", Date, new TimeOnly(16, 0), new TimeOnly(17, 0));
 
-        Assert.True(_service.CompleteCommitmentOccurrence(block.Id, Date));
-        Assert.True(_service.IsCommitmentOccurrenceCompleted(block.Id, Date));
-        var occurrence = Assert.Single(_service.GetOccurrences(Date, Date), o => o.Block.Id == block.Id);
-        Assert.True(occurrence.IsCompleted);
+        _service.UpdateTaskDetails(
+            task.Id, Details("Stats HW"), new TaskCompletionRequest(Date, true));
+        Assert.True(_tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.Done, _blocks.GetById(session.Id)!.Outcome);
 
-        // Completing an already-complete occurrence is a quiet no-op.
-        Assert.False(_service.CompleteCommitmentOccurrence(block.Id, Date));
-
-        Assert.True(_service.ReopenCommitmentOccurrence(block.Id, Date));
-        Assert.False(_service.IsCommitmentOccurrenceCompleted(block.Id, Date));
-        Assert.False(_service.ReopenCommitmentOccurrence(block.Id, Date));
+        _service.UpdateTaskDetails(
+            task.Id, Details("Stats HW"), new TaskCompletionRequest(Date, false));
+        Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.None, _blocks.GetById(session.Id)!.Outcome);
     }
 
     [Fact]
-    public void CommitmentCompletion_SurvivesApplicationRestart()
+    public void CompleteAndReopen_RepeatingOccurrence_PersistAndReportRealChanges()
     {
-        var block = _service.CreateFixedCommitment(
-            "Stats HW", Date, new TimeOnly(16, 0), new TimeOnly(17, 0));
-        _service.CompleteCommitmentOccurrence(block.Id, Date);
+        var (_, session) = AddScheduledTask(
+            "Stats HW", Date.AddDays(-7), new TimeOnly(16, 0), new TimeOnly(17, 0),
+            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
+
+        Assert.True(_service.CompleteOccurrence(session.Id, Date));
+        Assert.True(_service.IsOccurrenceCompleted(session.Id, Date));
+        var occurrence = Assert.Single(
+            _service.GetOccurrences(Date, Date), o => o.Block.Id == session.Id);
+        Assert.True(occurrence.IsCompleted);
+
+        // Completing an already-complete occurrence is a quiet no-op.
+        Assert.False(_service.CompleteOccurrence(session.Id, Date));
+
+        Assert.True(_service.ReopenOccurrence(session.Id, Date));
+        Assert.False(_service.IsOccurrenceCompleted(session.Id, Date));
+        Assert.False(_service.ReopenOccurrence(session.Id, Date));
+    }
+
+    [Fact]
+    public void OccurrenceCompletion_SurvivesApplicationRestart()
+    {
+        var (_, session) = AddScheduledTask(
+            "Stats HW", Date.AddDays(-7), new TimeOnly(16, 0), new TimeOnly(17, 0),
+            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
+        _service.CompleteOccurrence(session.Id, Date);
 
         // A brand-new service graph over the same database file.
         var restarted = new CalendarService(
             new SqliteCalendarBlockRepository(_database.Factory),
-            new SqliteCommitmentCompletionRepository(_database.Factory),
+            new SqliteOccurrenceCompletionRepository(_database.Factory),
             new SqliteCalendarMutations(_database.Factory),
             new SqliteTaskRepository(_database.Factory),
             _clock);
-        Assert.True(restarted.IsCommitmentOccurrenceCompleted(block.Id, Date));
-        Assert.True(restarted.GetOccurrences(Date, Date).Single(o => o.Block.Id == block.Id).IsCompleted);
+        Assert.True(restarted.IsOccurrenceCompleted(session.Id, Date));
+        Assert.True(restarted.GetOccurrences(Date, Date).Single(o => o.Block.Id == session.Id).IsCompleted);
     }
 
     [Fact]
-    public void CompletingACommitment_NeverTouchesTaskItems()
+    public void CompletingARepeatingOccurrence_NeverCompletesTheTask()
     {
-        var task = AddTask("Stats HW", TimeSpan.FromMinutes(60));
-        var taskBlock = _service.ScheduleTask(task.Id, Date, new TimeOnly(18, 0));
-        var commitment = _service.CreateFixedCommitment(
-            "Stats HW", Date, new TimeOnly(16, 0), new TimeOnly(17, 0));
+        var (task, session) = AddScheduledTask(
+            "AP Economics", Date.AddDays(-7), new TimeOnly(8, 30), new TimeOnly(9, 45),
+            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
 
-        _service.CompleteCommitmentOccurrence(commitment.Id, Date);
+        _service.CompleteOccurrence(session.Id, Date);
 
         Assert.False(_tasks.GetById(task.Id)!.IsCompleted);
-        Assert.Equal(BlockOutcome.None, _blocks.GetById(taskBlock.Id)!.Outcome);
-        Assert.Equal(BlockOutcome.None, _blocks.GetById(commitment.Id)!.Outcome);
+        Assert.Equal(BlockOutcome.None, _blocks.GetById(session.Id)!.Outcome);
     }
 
     [Fact]
-    public void CompletionAndReopen_RejectExternalAndTaskBlocks_WithoutMutation()
+    public void OccurrenceCompletion_RejectsExternalAndOneOffSessions_WithoutMutation()
     {
-        var external = AddExternalCommitment();
-        Assert.Throws<DomainException>(() => _service.CompleteCommitmentOccurrence(external.Id, Date));
-        Assert.Throws<DomainException>(() => _service.ReopenCommitmentOccurrence(external.Id, Date));
-        Assert.False(_service.IsCommitmentOccurrenceCompleted(external.Id, Date));
+        var external = AddExternalEvent();
+        Assert.Throws<DomainException>(() => _service.CompleteOccurrence(external.Id, Date));
+        Assert.Throws<DomainException>(() => _service.ReopenOccurrence(external.Id, Date));
+        Assert.False(_service.IsOccurrenceCompleted(external.Id, Date));
 
-        var taskBlock = _service.ScheduleTask(AddTask("Work").Id, Date, new TimeOnly(9, 0));
-        Assert.Throws<DomainException>(() => _service.CompleteCommitmentOccurrence(taskBlock.Id, Date));
+        // A one-off session completes its Task, never an occurrence.
+        var oneOff = _service.ScheduleTask(AddTask("Work").Id, Date, new TimeOnly(9, 0));
+        Assert.Throws<DomainException>(() => _service.CompleteOccurrence(oneOff.Id, Date));
     }
 
+    /// <summary>TDD phase 13: repeating completion affects only the selected day.</summary>
     [Fact]
-    public void RecurringCompletion_AffectsOnlyTheSelectedOccurrence()
+    public void RepeatingCompletion_AffectsOnlyTheSelectedOccurrence()
     {
-        var block = _service.CreateFixedCommitment(
+        var (_, session) = AddScheduledTask(
             "AP Economics", Date.AddDays(-14), new TimeOnly(8, 30), new TimeOnly(9, 45),
             RecurrenceRule.Weekly(1, DayOfWeek.Tuesday, DayOfWeek.Wednesday));
 
         // Complete only today's (Tuesday's) occurrence.
-        Assert.True(_service.CompleteCommitmentOccurrence(block.Id, Date));
+        Assert.True(_service.CompleteOccurrence(session.Id, Date));
 
         var week = _service.GetOccurrences(Date, Date.AddDays(8))
-            .Where(o => o.Block.Id == block.Id)
+            .Where(o => o.Block.Id == session.Id)
             .ToList();
         Assert.True(week.Single(o => o.Date == Date).IsCompleted);            // this Tuesday
         Assert.False(week.Single(o => o.Date == Date.AddDays(1)).IsCompleted); // Wednesday
@@ -326,41 +415,48 @@ public sealed class CalendarServiceTests : IDisposable
 
         // Completing on a non-occurrence date is rejected.
         Assert.Throws<DomainException>(
-            () => _service.CompleteCommitmentOccurrence(block.Id, Date.AddDays(2)));
+            () => _service.CompleteOccurrence(session.Id, Date.AddDays(2)));
     }
 
     [Fact]
-    public void UpdateFixedCommitment_RemovingAWeekday_PurgesItsObsoleteCompletion()
+    public void MovingACompletedOneOffSession_KeepsTheTaskCompleted()
     {
-        var series = _service.CreateFixedCommitment(
-            "AP Economics", Date.AddDays(-7), new TimeOnly(8, 30), new TimeOnly(9, 45),
-            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday, DayOfWeek.Wednesday));
-        _service.CompleteCommitmentOccurrence(series.Id, Date); // this Tuesday
+        var (task, session) = AddScheduledTask("Stats HW", Date, new TimeOnly(16, 0), new TimeOnly(17, 0));
+        _service.UpdateTaskDetails(
+            task.Id, Details("Stats HW"), new TaskCompletionRequest(Date, true));
 
-        _service.UpdateFixedCommitment(
-            series.Id, "AP Economics", Date.AddDays(-7), new TimeOnly(8, 30), new TimeOnly(9, 45),
-            RecurrenceRule.Weekly(1, DayOfWeek.Wednesday), null);
+        _service.MoveBlock(session.Id, Date.AddDays(2), new TimeOnly(16, 0));
 
-        // No completion row may survive for a date that no longer occurs.
-        Assert.Null(_completions.Get(series.Id, Date));
+        Assert.True(_tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(Date.AddDays(2), _blocks.GetById(session.Id)!.Date);
     }
 
+    /// <summary>
+    /// External synced events reject every mutation at the service layer without
+    /// changing state, and keep their provider identifiers through persistence.
+    /// </summary>
     [Fact]
-    public void MovingACompletedOneOffCommitment_CarriesItsCompletionToTheNewDate()
+    public void ExternalEvent_RejectsEveryMutation_WithoutChangingState()
     {
-        var block = _service.CreateFixedCommitment(
-            "Stats HW", Date, new TimeOnly(16, 0), new TimeOnly(17, 0));
-        _service.CompleteCommitmentOccurrence(block.Id, Date);
+        var external = AddExternalEvent();
 
-        _service.MoveBlock(block.Id, Date.AddDays(2), new TimeOnly(16, 0));
-        Assert.True(_service.IsCommitmentOccurrenceCompleted(block.Id, Date.AddDays(2)));
-        Assert.Null(_completions.Get(block.Id, Date));
+        Assert.Throws<DomainException>(() => _service.MoveBlock(
+            external.Id, Date.AddDays(1), new TimeOnly(10, 0)));
+        Assert.Throws<DomainException>(() => _service.ResizeBlock(external.Id, new TimeOnly(11, 0)));
+        Assert.Throws<DomainException>(() => _service.UnscheduleSession(external.Id));
+        Assert.Throws<DomainException>(() => _service.RecordOutcome(external.Id, BlockOutcome.Done));
+        Assert.Throws<DomainException>(() => _service.CompleteOccurrence(external.Id, Date));
+        Assert.Throws<DomainException>(() => _service.ReopenOccurrence(external.Id, Date));
 
-        // The editor's date change does the same.
-        _service.UpdateFixedCommitment(
-            block.Id, "Stats HW", Date.AddDays(3), new TimeOnly(16, 0), new TimeOnly(17, 0), null, null);
-        Assert.True(_service.IsCommitmentOccurrenceCompleted(block.Id, Date.AddDays(3)));
-        Assert.Null(_completions.Get(block.Id, Date.AddDays(2)));
+        var persisted = _blocks.GetById(external.Id)!;
+        Assert.Equal("External", persisted.Title);
+        Assert.Equal(Date, persisted.Date);
+        Assert.Equal(new TimeOnly(9, 0), persisted.StartTime);
+        Assert.Equal(new TimeOnly(10, 0), persisted.EndTime);
+        Assert.Equal(BlockOutcome.None, persisted.Outcome);
+        Assert.Equal("google", persisted.Provider);
+        Assert.Equal("evt-1", persisted.ExternalId);
+        Assert.Null(persisted.TaskId); // never assigned to a task or project
     }
 
     private ProjectId AddProject(string name)
@@ -370,11 +466,11 @@ public sealed class CalendarServiceTests : IDisposable
         return project.Id;
     }
 
-    private CalendarBlock AddExternalCommitment()
+    private CalendarBlock AddExternalEvent()
     {
         var external = CalendarBlock.Rehydrate(
-            CalendarBlockId.New(), null, null, "External", Date, new TimeOnly(9, 0),
-            new TimeOnly(10, 0), BlockKind.FixedCommitment, null, "google", "evt-1", 0,
+            CalendarBlockId.New(), null, "External", Date, new TimeOnly(9, 0),
+            new TimeOnly(10, 0), BlockKind.ExternalEvent, null, "google", "evt-1", 0,
             BlockOutcome.None, null, _clock.Now, _clock.Now);
         _blocks.Add(external);
         return external;

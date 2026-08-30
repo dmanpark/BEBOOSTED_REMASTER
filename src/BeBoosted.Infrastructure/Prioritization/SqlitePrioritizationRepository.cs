@@ -9,6 +9,18 @@ namespace BeBoosted.Infrastructure.Prioritization;
 public sealed class SqlitePrioritizationRepository(SqliteConnectionFactory connectionFactory)
     : IPrioritizationRepository
 {
+    public void SaveSessionResult(
+        string periodKey,
+        IReadOnlyList<ComparisonDecision> decisions,
+        IReadOnlyList<PriorityRank> ranks)
+    {
+        using var connection = connectionFactory.Open();
+        using var transaction = connection.BeginTransaction();
+        InsertDecisions(connection, transaction, decisions);
+        ReplaceRanksCore(connection, transaction, periodKey, ranks);
+        transaction.Commit();
+    }
+
     public void SaveDecisions(IReadOnlyList<ComparisonDecision> decisions)
     {
         if (decisions.Count == 0)
@@ -18,6 +30,15 @@ public sealed class SqlitePrioritizationRepository(SqliteConnectionFactory conne
 
         using var connection = connectionFactory.Open();
         using var transaction = connection.BeginTransaction();
+        InsertDecisions(connection, transaction, decisions);
+        transaction.Commit();
+    }
+
+    private static void InsertDecisions(
+        Microsoft.Data.Sqlite.SqliteConnection connection,
+        Microsoft.Data.Sqlite.SqliteTransaction transaction,
+        IReadOnlyList<ComparisonDecision> decisions)
+    {
         foreach (var decision in decisions)
         {
             using var command = connection.CreateCommand();
@@ -36,8 +57,6 @@ public sealed class SqlitePrioritizationRepository(SqliteConnectionFactory conne
                 "$decidedAt", decision.DecidedAt.ToString("O", CultureInfo.InvariantCulture));
             command.ExecuteNonQuery();
         }
-
-        transaction.Commit();
     }
 
     public IReadOnlyList<ComparisonDecision> GetDecisions(string periodKey)
@@ -70,6 +89,16 @@ public sealed class SqlitePrioritizationRepository(SqliteConnectionFactory conne
     {
         using var connection = connectionFactory.Open();
         using var transaction = connection.BeginTransaction();
+        ReplaceRanksCore(connection, transaction, periodKey, ranks);
+        transaction.Commit();
+    }
+
+    private static void ReplaceRanksCore(
+        Microsoft.Data.Sqlite.SqliteConnection connection,
+        Microsoft.Data.Sqlite.SqliteTransaction transaction,
+        string periodKey,
+        IReadOnlyList<PriorityRank> ranks)
+    {
         using (var delete = connection.CreateCommand())
         {
             delete.Transaction = transaction;
@@ -93,8 +122,6 @@ public sealed class SqlitePrioritizationRepository(SqliteConnectionFactory conne
             insert.Parameters.AddWithValue("$tier", (long)rank.Tier);
             insert.ExecuteNonQuery();
         }
-
-        transaction.Commit();
     }
 
     public IReadOnlyList<PriorityRank> GetRanks(string periodKey)

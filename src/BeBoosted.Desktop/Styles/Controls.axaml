@@ -222,8 +222,8 @@
     <Setter Property="ClipToBounds" Value="True" />
   </Style>
 
-  <Style Selector="Border.calendarBlock.fixed">
-    <Setter Property="Background" Value="{DynamicResource BrushFixedCreamGray}" />
+  <Style Selector="Border.calendarBlock.external">
+    <Setter Property="Background" Value="{DynamicResource BrushSyncedCream}" />
     <Setter Property="BorderBrush" Value="{DynamicResource BrushRuleMedium}" />
     <Setter Property="BoxShadow" Value="0 0 0 0 #00000000" />
   </Style>

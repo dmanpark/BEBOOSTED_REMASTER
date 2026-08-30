@@ -16,17 +16,17 @@ public sealed class CalendarViewModelTests
         var tasks = new InMemoryTaskRepository();
         var blocks = new InMemoryCalendarBlockRepository();
         var calendarService = TestShell.CreateCalendarService(blocks, tasks, clock);
+        var proposals = new InMemoryPlanningProposalRepository();
         var planning = new PlanningService(
-            new InMemoryPlanningProposalRepository(), blocks,
+            proposals,
             new InboxQueryService(tasks, blocks), new InMemoryPrioritizationRepository(),
-            calendarService, clock);
-        return new CalendarViewModel(
-            new AppSettings(store ?? new InMemorySettingsStore()),
-            clock,
             calendarService,
-            tasks,
-            planning,
-            new InMemoryProjectRepository());
+            new InMemoryCalendarMutations(
+                blocks, new InMemoryOccurrenceCompletionRepository(), tasks, proposals),
+            clock);
+        return TestShell.CreateCalendarViewModel(
+            store ?? new InMemorySettingsStore(), clock, tasks, blocks,
+            new InMemoryProjectRepository(), calendarService, planning);
     }
 
     [Fact]

@@ -35,21 +35,9 @@ public sealed class TaskService(ITaskRepository repository, IClock clock)
         return task;
     }
 
-    public TaskItem Complete(TaskId id)
-    {
-        var task = Require(id);
-        task.Complete(clock.Now);
-        repository.Update(task);
-        return task;
-    }
-
-    public TaskItem Reopen(TaskId id)
-    {
-        var task = Require(id);
-        task.Reopen(clock.Now);
-        repository.Update(task);
-        return task;
-    }
+    // Task completion and reopening live exclusively on CalendarService
+    // (CompleteTask/ReopenTask): they must reconcile calendar sessions in the same
+    // transaction, which this repository-only service cannot do.
 
     public TaskItem RecordNeedsMoreTime(TaskId id, TimeSpan remaining)
     {
@@ -59,7 +47,9 @@ public sealed class TaskService(ITaskRepository repository, IClock clock)
         return task;
     }
 
-    public void Delete(TaskId id) => repository.Delete(id);
+    // Task deletion lives exclusively on CalendarService.DeleteTask: it removes the
+    // Task, every session, and their occurrence rows in one transaction — a
+    // repository-only delete here would leave orphaned calendar sessions.
 
     private TaskItem Require(TaskId id)
         => repository.GetById(id) ?? throw new DomainException($"Task {id} no longer exists.");

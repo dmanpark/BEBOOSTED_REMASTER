@@ -21,3 +21,6 @@ TestResults/
 *.db-shm
 *.db-wal
 logs/
+
+# Subagent-driven development scratch (ledger, briefs, review packages)
+.superpowers/

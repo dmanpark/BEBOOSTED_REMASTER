@@ -10,6 +10,7 @@ public sealed class ProjectFile
         ProjectId projectId,
         string title,
         string? description,
+        string folderSegment,
         DateTimeOffset createdAt,
         DateTimeOffset modifiedAt)
     {
@@ -17,6 +18,7 @@ public sealed class ProjectFile
         ProjectId = projectId;
         Title = title;
         Description = description;
+        FolderSegment = folderSegment;
         CreatedAt = createdAt;
         ModifiedAt = modifiedAt;
     }
@@ -29,12 +31,21 @@ public sealed class ProjectFile
 
     public string? Description { get; private set; }
 
+    /// <summary>
+    /// The claimed, disambiguated directory name under which this File's resources are
+    /// stored. The empty string means "not yet claimed" — the state a freshly created
+    /// File holds in memory until a segment is reserved and <see cref="RelocateTo"/>
+    /// records it, and the state Task 7's backfill looks for on rows persisted before
+    /// this column existed.
+    /// </summary>
+    public string FolderSegment { get; private set; }
+
     public DateTimeOffset CreatedAt { get; }
 
     public DateTimeOffset ModifiedAt { get; private set; }
 
     public static ProjectFile Create(ProjectId projectId, string title, string? description, DateTimeOffset now)
-        => new(ProjectFileId.New(), projectId, ValidateTitle(title), Normalize(description), now, now);
+        => new(ProjectFileId.New(), projectId, ValidateTitle(title), Normalize(description), string.Empty, now, now);
 
     public static ProjectFile Rehydrate(
         ProjectFileId id,
@@ -42,8 +53,9 @@ public sealed class ProjectFile
         string title,
         string? description,
         DateTimeOffset createdAt,
-        DateTimeOffset modifiedAt)
-        => new(id, projectId, title, description, createdAt, modifiedAt);
+        DateTimeOffset modifiedAt,
+        string folderSegment)
+        => new(id, projectId, title, description, folderSegment, createdAt, modifiedAt);
 
     public void Rename(string title, DateTimeOffset now)
     {
@@ -54,6 +66,22 @@ public sealed class ProjectFile
     public void SetDescription(string? description, DateTimeOffset now)
     {
         Description = Normalize(description);
+        ModifiedAt = now;
+    }
+
+    /// <summary>
+    /// Records a claimed folder segment. Called only after a reservation for it has
+    /// succeeded, so the row never names a directory that was never claimed.
+    /// </summary>
+    public void RelocateTo(string folderSegment, DateTimeOffset now)
+    {
+        var trimmed = folderSegment?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+        {
+            throw new DomainException("A File needs a claimed folder segment.");
+        }
+
+        FolderSegment = trimmed;
         ModifiedAt = now;
     }
 

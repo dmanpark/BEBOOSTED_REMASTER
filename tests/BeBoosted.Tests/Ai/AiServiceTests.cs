@@ -65,9 +65,10 @@ public sealed class AiServiceTests : IDisposable
         var storage = new LocalResourceStorage(new TestPaths());
         _projectService = new ProjectService(
             projects, files, _resources, storage,
+            new SqliteProjectMutations(_database.Factory),
             new SimpleLocalIndexer(_resources, storage, _clock),
             _tasks, new SqliteCalendarBlockRepository(_database.Factory),
-            new SqliteCommitmentCompletionRepository(_database.Factory), _clock, _service);
+            new SqliteOccurrenceCompletionRepository(_database.Factory), _clock, _service);
 
         _project = _projectService.CreateProject("College Admissions");
         _file = _projectService.CreateFile(_project.Id, "Metric Proof", null);
@@ -154,6 +155,49 @@ public sealed class AiServiceTests : IDisposable
 
         var record = _provenance.GetById(outcome.Answer.ProvenanceId)!;
         Assert.True(record.NeedsReview);
+    }
+
+    /// <summary>
+    /// A File takes every resource it held with it, so every answer derived from any of
+    /// them must be flagged. Two separately cited notes catch a loop that invalidates
+    /// only the first.
+    /// </summary>
+    [Fact]
+    public async Task DeletingAFile_FlagsDerivedItemsOfEveryResourceItHeld()
+    {
+        _projectService.AddNote(_file.Id, "Leadership metrics", "Led three DECA teams.");
+        _projectService.AddNote(_file.Id, "Robotics awards", "Won regional robotics championship.");
+        var leadership = await _service.AskProjectAsync(
+            _project.Id, "What leadership metrics do I have?", TestContext.Current.CancellationToken);
+        var robotics = await _service.AskProjectAsync(
+            _project.Id, "What robotics championship results do I have?", TestContext.Current.CancellationToken);
+        Assert.Single(leadership.Citations);
+        Assert.Single(robotics.Citations);
+
+        _projectService.DeleteFile(_file.Id);
+
+        Assert.True(_provenance.GetById(leadership.Answer.ProvenanceId)!.NeedsReview);
+        Assert.True(_provenance.GetById(robotics.Answer.ProvenanceId)!.NeedsReview);
+    }
+
+    /// <summary>The same, one level up: a deleted project flags derivations across its Files.</summary>
+    [Fact]
+    public async Task DeletingAProject_FlagsDerivedItemsAcrossItsFiles()
+    {
+        var awards = _projectService.CreateFile(_project.Id, "Awards", null);
+        _projectService.AddNote(_file.Id, "Leadership metrics", "Led three DECA teams.");
+        _projectService.AddNote(awards.Id, "Robotics awards", "Won regional robotics championship.");
+        var leadership = await _service.AskProjectAsync(
+            _project.Id, "What leadership metrics do I have?", TestContext.Current.CancellationToken);
+        var robotics = await _service.AskProjectAsync(
+            _project.Id, "What robotics championship results do I have?", TestContext.Current.CancellationToken);
+        Assert.Single(leadership.Citations);
+        Assert.Single(robotics.Citations);
+
+        _projectService.DeleteProject(_project.Id);
+
+        Assert.True(_provenance.GetById(leadership.Answer.ProvenanceId)!.NeedsReview);
+        Assert.True(_provenance.GetById(robotics.Answer.ProvenanceId)!.NeedsReview);
     }
 
     [Fact]

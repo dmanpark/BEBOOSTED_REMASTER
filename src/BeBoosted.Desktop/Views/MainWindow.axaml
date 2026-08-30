@@ -339,6 +339,28 @@
     </Grid>
   </Grid>
 
+  <!-- Task editing, centered over every surface; the scrim blocks background
+       interaction. The scope-led editors (whole task / session) are the only
+       editing surfaces. -->
+  <Border Name="TaskModalScrim"
+          Background="{StaticResource BrushGraphite40}"
+          IsVisible="{Binding Calendar.IsTaskEditorOpen}"
+          KeyDown="OnTaskModalKeyDown">
+    <Panel HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="24">
+      <ContentControl Content="{Binding Calendar.ActiveTaskEditor}"
+                      HorizontalAlignment="Center" VerticalAlignment="Center">
+        <ContentControl.DataTemplates>
+          <DataTemplate DataType="vm:WholeTaskEditorViewModel">
+            <views:WholeTaskEditorView />
+          </DataTemplate>
+          <DataTemplate DataType="vm:SessionEditorViewModel">
+            <views:SessionEditorView />
+          </DataTemplate>
+        </ContentControl.DataTemplates>
+      </ContentControl>
+    </Panel>
+  </Border>
+
   <!-- Priority Sort: focused, full-screen comparison flow over everything -->
   <Panel IsVisible="{Binding IsSortActive}">
     <views:PrioritySortView DataContext="{Binding ActiveSort}" />

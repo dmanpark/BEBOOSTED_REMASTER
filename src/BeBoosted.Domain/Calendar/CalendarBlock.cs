@@ -4,11 +4,11 @@ namespace BeBoosted.Domain.Calendar;
 
 public enum BlockKind
 {
-    /// <summary>A commitment (class, lunch, meeting): visually locked on the calendar.</summary>
-    FixedCommitment = 0,
+    /// <summary>A read-only event imported or synced from an external calendar provider.</summary>
+    ExternalEvent = 0,
 
-    /// <summary>An approved BeBoosted work block backed by a task.</summary>
-    TaskBlock = 1,
+    /// <summary>A schedule session of a local Task — the only user-created block shape.</summary>
+    TaskSession = 1,
 }
 
 public enum BlockOutcome
@@ -20,9 +20,11 @@ public enum BlockOutcome
 }
 
 /// <summary>
-/// An approved item on the local calendar. Proposals never live here — they stay in a
-/// PlanningProposal until approved. Blocks are wall-clock local and never cross midnight.
-/// Provider fields are reserved so external calendars can attach later without remodeling.
+/// One item on the calendar: a Task's schedule session (always task-backed; the Task
+/// owns title, project, deadline, and completion) or a read-only external event (which
+/// keeps its provider identifiers and its own title). Proposals never live here — they
+/// stay in a PlanningProposal until approved. Blocks are wall-clock local and never
+/// cross midnight; recurring sessions expand into occurrences at query time.
 /// </summary>
 public sealed class CalendarBlock
 {
@@ -31,7 +33,6 @@ public sealed class CalendarBlock
     private CalendarBlock(
         CalendarBlockId id,
         TaskId? taskId,
-        ProjectId? projectId,
         string? title,
         DateOnly date,
         TimeOnly startTime,
@@ -48,7 +49,6 @@ public sealed class CalendarBlock
     {
         Id = id;
         TaskId = taskId;
-        ProjectId = projectId;
         Title = title;
         Date = date;
         StartTime = startTime;
@@ -66,15 +66,13 @@ public sealed class CalendarBlock
 
     public CalendarBlockId Id { get; }
 
+    /// <summary>The owning Task for sessions; always null for external events.</summary>
     public TaskId? TaskId { get; }
 
     /// <summary>
-    /// Direct project link for fixed commitments. Task blocks derive their project from
-    /// the backing task instead — never duplicate that ownership here.
+    /// External events carry their own title. A session may carry an optional one of
+    /// its own; when null it displays its Task's title.
     /// </summary>
-    public ProjectId? ProjectId { get; private set; }
-
-    /// <summary>Fixed commitments carry their own title; task blocks display the task's.</summary>
     public string? Title { get; private set; }
 
     public DateOnly Date { get; private set; }
@@ -85,7 +83,7 @@ public sealed class CalendarBlock
 
     public BlockKind Kind { get; }
 
-    /// <summary>Recurring fixed commitments expand into occurrences at query time.</summary>
+    /// <summary>A repeating session expands into occurrences at query time.</summary>
     public RecurrenceRule? Recurrence { get; private set; }
 
     public string Provider { get; }
@@ -107,41 +105,26 @@ public sealed class CalendarBlock
 
     public bool IsExternal => Provider != LocalProvider;
 
-    public static CalendarBlock CreateFixedCommitment(
-        string title,
+    /// <summary>Creates a Task's schedule session — the only creatable local block.</summary>
+    public static CalendarBlock CreateTaskSession(
+        TaskId taskId,
         DateOnly date,
         TimeOnly startTime,
         TimeOnly endTime,
         DateTimeOffset now,
         RecurrenceRule? recurrence = null,
-        ProjectId? projectId = null)
-    {
-        ValidateTimes(startTime, endTime);
-        var trimmed = ValidateTitle(title);
-        return new CalendarBlock(
-            CalendarBlockId.New(), null, projectId, trimmed, date, startTime, endTime,
-            BlockKind.FixedCommitment, recurrence, LocalProvider, null, 0,
-            BlockOutcome.None, null, now, now);
-    }
-
-    public static CalendarBlock CreateForTask(
-        TaskId taskId,
-        DateOnly date,
-        TimeOnly startTime,
-        TimeOnly endTime,
-        DateTimeOffset now)
+        string? title = null)
     {
         ValidateTimes(startTime, endTime);
         return new CalendarBlock(
-            CalendarBlockId.New(), taskId, null, null, date, startTime, endTime,
-            BlockKind.TaskBlock, null, LocalProvider, null, 0,
+            CalendarBlockId.New(), taskId, NormalizeTitle(title), date, startTime, endTime,
+            BlockKind.TaskSession, recurrence, LocalProvider, null, 0,
             BlockOutcome.None, null, now, now);
     }
 
     public static CalendarBlock Rehydrate(
         CalendarBlockId id,
         TaskId? taskId,
-        ProjectId? projectId,
         string? title,
         DateOnly date,
         TimeOnly startTime,
@@ -156,16 +139,12 @@ public sealed class CalendarBlock
         DateTimeOffset createdAt,
         DateTimeOffset modifiedAt)
         => new(
-            id, taskId, projectId, title, date, startTime, endTime, kind, recurrence, provider,
+            id, taskId, title, date, startTime, endTime, kind, recurrence, provider,
             externalId, syncState, outcome, outcomeRecordedAt, createdAt, modifiedAt);
 
     public void Reschedule(DateOnly date, TimeOnly startTime, TimeOnly endTime, DateTimeOffset now)
     {
-        if (IsExternal)
-        {
-            throw new DomainException("External events are never edited by BeBoosted.");
-        }
-
+        EnsureLocalSession();
         ValidateTimes(startTime, endTime);
         Date = date;
         StartTime = startTime;
@@ -173,60 +152,24 @@ public sealed class CalendarBlock
         Touch(now);
     }
 
-    public void Rename(string title, DateTimeOffset now)
+    /// <summary>Sets or clears the session's repeating schedule (whole series).</summary>
+    public void SetRecurrence(RecurrenceRule? recurrence, DateTimeOffset now)
     {
-        EnsureLocalFixedCommitment();
-        Title = ValidateTitle(title);
-        Touch(now);
-    }
-
-    /// <summary>Links a local fixed commitment to a project (or clears the link).</summary>
-    public void AssignToProject(ProjectId? projectId, DateTimeOffset now)
-    {
-        EnsureLocalFixedCommitment();
-        ProjectId = projectId;
+        EnsureLocalSession();
+        Recurrence = recurrence;
         Touch(now);
     }
 
     /// <summary>
-    /// Edits a local fixed commitment in one step. Validates everything before
-    /// mutating anything, so a rejected edit leaves the block untouched.
+    /// Records what actually happened in a one-off session. Repeating sessions complete
+    /// per occurrence instead, and blocks are never auto-completed by elapsing.
     /// </summary>
-    public void UpdateCommitment(
-        string title,
-        DateOnly date,
-        TimeOnly startTime,
-        TimeOnly endTime,
-        RecurrenceRule? recurrence,
-        ProjectId? projectId,
-        DateTimeOffset now)
-    {
-        EnsureLocalFixedCommitment();
-        ValidateTimes(startTime, endTime);
-        var trimmed = ValidateTitle(title);
-
-        Title = trimmed;
-        Date = date;
-        StartTime = startTime;
-        EndTime = endTime;
-        Recurrence = recurrence;
-        ProjectId = projectId;
-        Touch(now);
-    }
-
-    public void SetRecurrence(RecurrenceRule? recurrence, DateTimeOffset now)
-    {
-        EnsureLocalFixedCommitment();
-        Recurrence = recurrence;
-        Touch(now);
-    }
-
-    /// <summary>Records what actually happened. Blocks are never auto-completed by elapsing.</summary>
     public void RecordOutcome(BlockOutcome outcome, DateTimeOffset now)
     {
-        if (Kind != BlockKind.TaskBlock)
+        EnsureLocalSession();
+        if (Recurrence is not null)
         {
-            throw new DomainException("Only task blocks take completion outcomes.");
+            throw new DomainException("A repeating session completes per occurrence, not by outcome.");
         }
 
         if (outcome == BlockOutcome.None)
@@ -239,20 +182,49 @@ public sealed class CalendarBlock
         Touch(now);
     }
 
+    /// <summary>Clears a one-off session's outcome when its Task is reopened.</summary>
+    public void ClearOutcome(DateTimeOffset now)
+    {
+        EnsureLocalSession();
+        Outcome = BlockOutcome.None;
+        OutcomeRecordedAt = null;
+        Touch(now);
+    }
+
+    /// <summary>
+    /// Names this session for the day it covers ("Jane Eyre 1-10"). Blank clears the
+    /// name, and the row falls back to the Task's title.
+    /// </summary>
+    public void Retitle(string? title, DateTimeOffset now)
+    {
+        EnsureLocalSession();
+        Title = NormalizeTitle(title);
+        Touch(now);
+    }
+
+    private static string? NormalizeTitle(string? title)
+        => string.IsNullOrWhiteSpace(title) ? null : title.Trim();
+
     /// <summary>Whether an occurrence of this block lands on the given date.</summary>
     public bool OccursOn(DateOnly date)
         => Recurrence is { } recurrence ? recurrence.OccursOn(date, Date) : Date == date;
 
     /// <summary>
     /// Validates that the occurrence on the given date can be completed or reopened:
-    /// local fixed commitments only, and only on dates the block actually occurs.
+    /// repeating local sessions only, and only on dates the session actually occurs.
     /// </summary>
     public void EnsureOccurrenceCompletable(DateOnly occurrenceDate)
     {
-        EnsureLocalFixedCommitment();
+        EnsureLocalSession();
+        if (Recurrence is null)
+        {
+            throw new DomainException(
+                "A one-off session records an outcome, not an occurrence completion.");
+        }
+
         if (!OccursOn(occurrenceDate))
         {
-            throw new DomainException("That commitment has no occurrence on that date.");
+            throw new DomainException("That repeating task has no occurrence on that date.");
         }
     }
 
@@ -264,22 +236,9 @@ public sealed class CalendarBlock
         }
     }
 
-    private static string ValidateTitle(string title)
+    private void EnsureLocalSession()
     {
-        var trimmed = title?.Trim() ?? string.Empty;
-        return trimmed.Length == 0
-            ? throw new DomainException("A commitment needs a title.")
-            : trimmed;
-    }
-
-    private void EnsureLocalFixedCommitment()
-    {
-        if (Kind != BlockKind.FixedCommitment)
-        {
-            throw new DomainException("Only fixed commitments can be edited this way.");
-        }
-
-        if (IsExternal)
+        if (IsExternal || Kind != BlockKind.TaskSession)
         {
             throw new DomainException("External events are never edited by BeBoosted.");
         }

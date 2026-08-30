@@ -67,5 +67,45 @@ public sealed class SqlitePrioritizationRepositoryTests : IDisposable
         Assert.Equal(b, _repository.GetRanks(Week.Key).Single().TaskId);
     }
 
+    [Fact]
+    public void SaveSessionResult_WritesDecisionsAndRanksTogether()
+    {
+        var a = TaskId.New();
+        var b = TaskId.New();
+
+        _repository.SaveSessionResult(
+            Today.Key,
+            [new ComparisonDecision(ComparisonId.New(), Today, a, b, ComparisonResult.LeftWins, Now)],
+            [new PriorityRank(a, 1, PlanningTier.ProtectNow), new PriorityRank(b, 2, PlanningTier.CanWait)]);
+
+        Assert.Single(_repository.GetDecisions(Today.Key));
+        Assert.Equal(2, _repository.GetRanks(Today.Key).Count);
+    }
+
+    /// <summary>
+    /// One atomic write: if the ranks half fails, the comparison history must not
+    /// keep rows for a ranking that was never saved, and the old ranking survives.
+    /// </summary>
+    [Fact]
+    public void SaveSessionResult_IsAllOrNothing()
+    {
+        var a = TaskId.New();
+        var b = TaskId.New();
+        _repository.ReplaceRanks(Today.Key, [new PriorityRank(a, 1, PlanningTier.ProtectNow)]);
+
+        // The duplicate task violates the ranks primary key after the decisions inserted.
+        Assert.ThrowsAny<Exception>(() => _repository.SaveSessionResult(
+            Today.Key,
+            [new ComparisonDecision(ComparisonId.New(), Today, a, b, ComparisonResult.LeftWins, Now)],
+            [
+                new PriorityRank(a, 1, PlanningTier.ProtectNow),
+                new PriorityRank(a, 2, PlanningTier.CanWait),
+            ]));
+
+        Assert.Empty(_repository.GetDecisions(Today.Key));
+        var kept = Assert.Single(_repository.GetRanks(Today.Key));
+        Assert.Equal(1, kept.Rank);
+    }
+
     public void Dispose() => _database.Dispose();
 }

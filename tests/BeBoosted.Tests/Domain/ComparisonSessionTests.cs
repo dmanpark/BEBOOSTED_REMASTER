@@ -212,4 +212,92 @@ public sealed class ComparisonSessionTests
             PlanningPeriod.ForToday(new DateOnly(2026, 8, 11)).Key,
             PlanningPeriod.ForWeek(new DateOnly(2026, 8, 11)).Key);
     }
+
+    // ---- Seeded sessions: insert into an existing order ----
+
+    private static IReadOnlyList<IReadOnlyList<TaskId>> Seed(params TaskId[] ids)
+        => ids.Select(id => (IReadOnlyList<TaskId>)new[] { id }).ToList();
+
+    [Fact]
+    public void SeededSession_WithNothingToInsert_AsksNothing_AndRanksTheSeed()
+    {
+        var ids = Ids(3);
+        var session = new ComparisonSession(Period, Seed(ids[0], ids[1], ids[2]), []);
+
+        Assert.True(session.IsComplete);
+        var byTask = session.BuildRanking().ToDictionary(r => r.TaskId, r => r.Rank);
+        Assert.Equal(1, byTask[ids[0]]);
+        Assert.Equal(2, byTask[ids[1]]);
+        Assert.Equal(3, byTask[ids[2]]);
+    }
+
+    [Fact]
+    public void SeededSession_InsertingOneTask_PreservesTheExistingOrder()
+    {
+        var ids = Ids(4); // A, B, C already ranked in that order; D is new
+        var session = new ComparisonSession(Period, Seed(ids[0], ids[1], ids[2]), [ids[3]]);
+
+        // Bisect: D vs B (mid of [0,3)). D loses, so it sits below B.
+        Assert.Equal(ids[3], session.CurrentComparison!.Value.Left);
+        Assert.Equal(ids[1], session.CurrentComparison.Value.Right);
+        while (!session.IsComplete)
+        {
+            session.Record(ComparisonResult.RightWins); // D keeps losing -> lands last
+        }
+
+        var byTask = session.BuildRanking().ToDictionary(r => r.TaskId, r => r.Rank);
+        Assert.Equal(1, byTask[ids[0]]);
+        Assert.Equal(2, byTask[ids[1]]);
+        Assert.Equal(3, byTask[ids[2]]);
+        Assert.Equal(4, byTask[ids[3]]);
+    }
+
+    [Fact]
+    public void SeededSession_KeepsTiedGroupsSharingAnOrdinal()
+    {
+        var ids = Ids(3);
+        IReadOnlyList<IReadOnlyList<TaskId>> seed = [new[] { ids[0], ids[1] }]; // tied at #1
+        var session = new ComparisonSession(Period, seed, [ids[2]]);
+
+        session.Record(ComparisonResult.RightWins); // C loses to the tied group
+
+        var byTask = session.BuildRanking().ToDictionary(r => r.TaskId, r => r.Rank);
+        Assert.Equal(1, byTask[ids[0]]);
+        Assert.Equal(1, byTask[ids[1]]);
+        Assert.Equal(2, byTask[ids[2]]);
+    }
+
+    [Fact]
+    public void SeededSession_IgnoresACandidateAlreadyInTheSeed()
+    {
+        var ids = Ids(2);
+        var session = new ComparisonSession(Period, Seed(ids[0], ids[1]), [ids[0]]);
+
+        Assert.True(session.IsComplete); // the seed already places it
+        Assert.Equal(2, session.BuildRanking().Count);
+    }
+
+    [Fact]
+    public void SeededSession_RejectsOnlyWhenSeedAndCandidatesAreBothEmpty()
+    {
+        Assert.Throws<DomainException>(() => new ComparisonSession(Period, [], []));
+
+        var ids = Ids(1);
+        var seeded = new ComparisonSession(Period, Seed(ids[0]), []); // legal
+        Assert.True(seeded.IsComplete);
+    }
+
+    [Fact]
+    public void SeededSession_SupportsUndo()
+    {
+        var ids = Ids(4);
+        var session = new ComparisonSession(Period, Seed(ids[0], ids[1], ids[2]), [ids[3]]);
+        var first = session.CurrentComparison;
+
+        session.Record(ComparisonResult.LeftWins);
+        Assert.True(session.Undo());
+
+        Assert.Equal(first, session.CurrentComparison);
+        Assert.Equal(0, session.AnsweredCount);
+    }
 }

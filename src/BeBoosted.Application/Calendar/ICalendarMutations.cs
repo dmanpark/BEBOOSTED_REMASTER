@@ -1,20 +1,22 @@
-using BeBoosted.Domain.Calendar;
+using BeBoosted.Application.Planning;
+using BeBoosted.Application.Tasks;
 
 namespace BeBoosted.Application.Calendar;
 
 /// <summary>
-/// Runs a calendar block mutation together with its completion reconciliation as one
-/// atomic unit: everything commits, or an exception rolls the whole mutation back and
-/// rethrows. Implementations provide repositories bound to that single unit of work.
+/// Runs a task-and-schedule mutation as one atomic unit: everything commits, or an
+/// exception rolls the whole mutation back and rethrows. Implementations provide
+/// repositories bound to that single unit of work — including planning proposals,
+/// so deleting a Task can withdraw its proposal blocks in the same transaction.
 /// </summary>
 public interface ICalendarMutations
 {
-    void Execute(Action<ICalendarBlockRepository, ICommitmentCompletionRepository> mutation);
-}
+    void Execute(
+        Action<ICalendarBlockRepository, IOccurrenceCompletionRepository, ITaskRepository,
+            IPlanningProposalRepository> mutation);
 
-/// <summary>
-/// The editor's requested completion state, applied inside the same atomic save as the
-/// other commitment fields. <paramref name="OpenedOccurrence"/> is the occurrence the
-/// editor was opened for (a series completes per occurrence; a one-off follows its date).
-/// </summary>
-public sealed record CommitmentCompletionRequest(DateOnly OpenedOccurrence, bool Completed);
+    /// <summary>Convenience overload for mutations that never touch planning proposals.</summary>
+    void Execute(
+        Action<ICalendarBlockRepository, IOccurrenceCompletionRepository, ITaskRepository> mutation)
+        => Execute((blocks, completions, tasks, _) => mutation(blocks, completions, tasks));
+}

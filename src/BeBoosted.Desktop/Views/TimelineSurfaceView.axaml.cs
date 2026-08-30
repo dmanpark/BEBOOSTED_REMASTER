@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using BeBoosted.Desktop.Controls;
@@ -37,7 +38,67 @@ public partial class TimelineSurfaceView : UserControl
         AddHandler(DragDrop.DropEvent, OnDrop);
         AddHandler(DragDrop.DragLeaveEvent, (_, _) => ClearPreviews());
 
+        // Empty-slot clicks create a scheduled task. Bubble handlers on the days area
+        // fire only for presses no block handled, and never for the header, gutter,
+        // or scrollbar (they live outside the days area).
+        DaysArea.AddHandler(PointerPressedEvent, OnSlotPointerPressed, RoutingStrategies.Bubble);
+        DaysArea.AddHandler(PointerMovedEvent, OnSlotPointerMoved, RoutingStrategies.Bubble);
+        DaysArea.AddHandler(PointerReleasedEvent, OnSlotPointerReleased, RoutingStrategies.Bubble);
+
         DaysArea.LayoutUpdated += OnDaysAreaLayoutUpdated;
+    }
+
+    // ---- New task from an empty Week slot ----
+
+    private Point? _slotPressPoint;
+
+    private void OnSlotPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _slotPressPoint = null;
+        if (!e.GetCurrentPoint(DaysArea).Properties.IsLeftButtonPressed
+            || e.Source is not Visual source
+            || source.FindAncestorOfType<CalendarBlockView>(includeSelf: true) is not null)
+        {
+            return; // blocks (and their controls) keep their own click semantics
+        }
+
+        _slotPressPoint = e.GetPosition(DaysArea);
+    }
+
+    private void OnSlotPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_slotPressPoint is { } press)
+        {
+            var delta = e.GetPosition(DaysArea) - press;
+            if (Math.Abs(delta.X) >= 4 || Math.Abs(delta.Y) >= 4)
+            {
+                _slotPressPoint = null; // past the click threshold — a drag, not a click
+            }
+        }
+    }
+
+    private void OnSlotPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_slotPressPoint is not { } press || Vm is not { } vm)
+        {
+            _slotPressPoint = null;
+            return;
+        }
+
+        _slotPressPoint = null;
+        var date = DateForColumn(ColumnFromX(press.X));
+        var geometry = new CalendarEngine.TimelineGeometry(
+            VisibleStartHour * 60, VisibleEndHour * 60, DefaultHourHeight);
+        var snapped = geometry
+            .TimeFromY(press.Y, CalendarViewModel.SnapMinutes)
+            .ToTimeSpan().TotalMinutes;
+        // One hour from the snapped slot, kept inside 00:00–23:59 near midnight.
+        var startMinutes = Math.Min(snapped, (24 * 60.0) - CalendarViewModel.SnapMinutes);
+        var endMinutes = Math.Min(startMinutes + 60, (24 * 60.0) - 1);
+        vm.OpenNewTaskEditorAt(
+            date,
+            TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(startMinutes)),
+            TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(endMinutes)));
     }
 
     public double HourHeight => DefaultHourHeight;

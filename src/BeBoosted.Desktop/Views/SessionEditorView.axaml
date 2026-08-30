@@ -1,0 +1,306 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             x:Class="BeBoosted.Desktop.Views.SessionEditorView"
+             x:DataType="vm:SessionEditorViewModel">
+
+  <UserControl.Styles>
+    <!-- Editor-local focus ring: 2px graphite + lime halo (frame 4p). The halo
+         literal equals ColorLimeHalo — BoxShadows cannot compose a resource color. -->
+    <Style Selector="Border.focusRing">
+      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="CornerRadius" Value="{StaticResource RadiusControl}" />
+    </Style>
+    <Style Selector="Border.focusRing:focus-within">
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+      <Setter Property="BoxShadow" Value="0 0 0 5 #8CC8F24A" />
+    </Style>
+    <Style Selector="Border#SessionBodyHost:disabled">
+      <Setter Property="Opacity" Value="0.45" />
+    </Style>
+    <!-- Frame 4n: the invalid END field is marked in umber with its own message. -->
+    <Style Selector="TimePicker.invalid /template/ Border">
+      <Setter Property="BorderBrush" Value="{StaticResource BrushAccentUmber}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+    <Style Selector="TextBlock.fieldError">
+      <Setter Property="Foreground" Value="{StaticResource BrushAccentUmber}" />
+      <Setter Property="FontSize" Value="{StaticResource TextSizeMeta}" />
+    </Style>
+    <!-- A held primary action must read as held: muted cream, quiet text. -->
+    <Style Selector="Button.primary:disabled">
+      <Setter Property="Background" Value="{StaticResource BrushSyncedCream}" />
+      <Setter Property="Foreground" Value="{StaticResource BrushPencilGray}" />
+      <Setter Property="BorderBrush" Value="{StaticResource BrushBorderDefault}" />
+    </Style>
+  </UserControl.Styles>
+
+  <!-- Session editor: 408px, one block only — no task fields, no task deletion
+       (frames 3b / 4g / 4h / 4i / 4m / 4n). -->
+  <Border Name="SessionEditorCard" Width="408"
+          MaxHeight="{Binding $parent[Panel].Bounds.Height}"
+          Background="{StaticResource BrushPaperWhite}"
+          BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
+          CornerRadius="{StaticResource RadiusDrawer}"
+          BoxShadow="{StaticResource ShadowDrawer}"
+          ClipToBounds="True"
+          AutomationProperties.Name="{Binding AccessibleName}">
+    <DockPanel>
+
+      <!-- Fixed scope header -->
+      <Border DockPanel.Dock="Top" Padding="20,14,14,11"
+              BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,0,0,1">
+        <DockPanel>
+          <Border DockPanel.Dock="Left" Width="12" Height="12"
+                  Background="{StaticResource BrushHighlighterLime}"
+                  BorderBrush="{StaticResource BrushGraphite}" BorderThickness="1.5"
+                  VerticalAlignment="Center" Margin="0,0,9,0" />
+          <Border DockPanel.Dock="Right" Classes="focusRing">
+            <Button Name="SessionCloseButton" Classes="icon" Width="32" Height="32"
+                    Command="{Binding CancelCommand}"
+                    AutomationProperties.Name="Close">
+              <Path Classes="icon" Data="{StaticResource IconClose}" Width="12" Height="12" />
+            </Button>
+          </Border>
+          <TextBlock Classes="mono" Text="{Binding ScopeLabel}"
+                     FontWeight="SemiBold" LetterSpacing="1.2"
+                     VerticalAlignment="Center" />
+        </DockPanel>
+      </Border>
+
+      <!-- Fixed action area -->
+      <StackPanel DockPanel.Dock="Bottom">
+        <TextBlock Foreground="{StaticResource BrushInkHover}"
+                   FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap"
+                   Margin="20,8,20,0" HorizontalAlignment="Right"
+                   Text="{Binding Error}"
+                   IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        <Border Name="SessionFooter" Padding="20,11,20,13"
+                BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,1,0,0"
+                IsVisible="{Binding !HasActivePrompt}">
+          <DockPanel>
+            <Border DockPanel.Dock="Left" Classes="focusRing"
+                    IsVisible="{Binding RemoveButtonText, Converter={x:Static ObjectConverters.IsNotNull}}">
+              <Button Name="SessionRemoveButton"
+                      Content="{Binding RemoveButtonText}"
+                      IsEnabled="{Binding !IsStale}"
+                      Command="{Binding RequestRemoveCommand}"
+                      AutomationProperties.Name="{Binding RemoveButtonText}" />
+            </Border>
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+              <Border Classes="focusRing">
+                <Button Name="SessionCancelButton" Content="Cancel"
+                        Command="{Binding CancelCommand}" />
+              </Border>
+              <Border Classes="focusRing">
+                <Button Name="SessionSaveButton" Classes="primary"
+                        Content="{Binding SaveButtonText}" IsEnabled="{Binding CanSave}"
+                        Command="{Binding SaveCommand}" />
+              </Border>
+            </StackPanel>
+          </DockPanel>
+        </Border>
+
+        <!-- Two-step inline confirmation (frame 4i) -->
+        <Border Name="SessionConfirmationCard" Margin="14,8,14,14" Padding="16,14"
+                Background="{StaticResource BrushFolioUnderlay}"
+                BorderBrush="{StaticResource BrushGraphite}" BorderThickness="1.5"
+                CornerRadius="{StaticResource RadiusPanel}"
+                IsVisible="{Binding Confirmation, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <StackPanel Spacing="12">
+            <TextBlock Text="{Binding Confirmation.Message, FallbackValue=''}"
+                       FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+              <Border Classes="focusRing">
+                <Button Name="SessionPromptKeepButton" Content="Keep"
+                        Command="{Binding KeepPromptCommand}" />
+              </Border>
+              <Border Classes="focusRing">
+                <Button Name="SessionPromptConfirmButton" FontWeight="SemiBold"
+                        BorderBrush="{StaticResource BrushAccentUmber}"
+                        Content="{Binding Confirmation.ConfirmLabel, FallbackValue=''}"
+                        Command="{Binding ConfirmPromptCommand}"
+                        AutomationProperties.Name="{Binding Confirmation.ConfirmLabel, FallbackValue='', StringFormat='Confirm: {0}'}" />
+              </Border>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- The save-or-discard gate (frame 4o) -->
+        <Border Name="SessionGateCard" Margin="14,8,14,14" Padding="18,14"
+                Background="{StaticResource BrushPaperWhite}"
+                BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
+                CornerRadius="{StaticResource RadiusDrawer}"
+                BoxShadow="{StaticResource ShadowDrawer}"
+                IsVisible="{Binding Gate, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <StackPanel Spacing="8">
+            <TextBlock FontWeight="SemiBold" Text="{Binding Gate.Title, FallbackValue=''}" />
+            <TextBlock Classes="meta" Text="Save or discard before continuing." />
+            <Border Classes="focusRing">
+              <Button Name="SessionGateSaveButton" Classes="primary"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                      IsEnabled="{Binding CanSave}"
+                      Content="{Binding Gate.SaveLabel, FallbackValue=''}"
+                      Command="{Binding GateSaveAndContinueCommand}" />
+            </Border>
+            <Border Classes="focusRing">
+              <Button Name="SessionGateDiscardButton"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                      Content="Discard changes and continue"
+                      Command="{Binding GateDiscardAndContinueCommand}" />
+            </Border>
+            <Border Classes="focusRing" HorizontalAlignment="Center">
+              <Button Name="SessionGateKeepButton" Classes="link"
+                      Content="Keep editing"
+                      Command="{Binding GateKeepEditingCommand}" />
+            </Border>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <!-- Scrolling body — inert while stale or while a prompt is open -->
+      <Border Name="SessionBodyHost" IsEnabled="{Binding BodyEnabled}">
+        <ScrollViewer Name="SessionBody" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel Margin="20,14,20,4" Spacing="14">
+
+            <!-- Stale notice (frame 4m left) -->
+            <Border Background="{StaticResource BrushFolioUnderlay}"
+                    BorderBrush="{StaticResource BrushAccentUmber}" BorderThickness="1.5"
+                    CornerRadius="{StaticResource RadiusPanel}" Padding="14,12"
+                    IsVisible="{Binding IsStale}">
+              <TextBlock FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap"
+                         Text="{Binding StaleNotice}" />
+            </Border>
+
+            <!-- Read-only task context + the one path up a scope level -->
+            <DockPanel>
+              <Border DockPanel.Dock="Right" Classes="focusRing" VerticalAlignment="Center"
+                      IsVisible="{Binding ShowEditWholeTask}">
+                <Button Classes="link"
+                        Name="EditWholeTaskLink" Content="Edit whole task"
+                        Command="{Binding EditWholeTaskCommand}"
+                        AutomationProperties.Name="Edit whole task" />
+              </Border>
+              <StackPanel Spacing="2">
+                <TextBlock FontWeight="SemiBold" Text="{Binding TaskTitle}"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip.Tip="{Binding TaskTitle}" />
+                <TextBlock Classes="meta" Text="{Binding TaskContext}"
+                           IsVisible="{Binding TaskContext, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+              </StackPanel>
+            </DockPanel>
+
+            <TextBlock Classes="meta" TextWrapping="Wrap" Text="{Binding ResolvedNote}"
+                       IsVisible="{Binding ResolvedNote, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <TextBlock Classes="meta" TextWrapping="Wrap" Text="{Binding NumberingNote}"
+                       IsVisible="{Binding NumberingNote, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+            <!-- This sitting's own name — optional, falls back to the Task's title. -->
+            <StackPanel Spacing="6">
+              <TextBlock Classes="metaLabel" Text="TITLE" />
+              <Border Classes="focusRing">
+                <TextBox Name="SessionTitleBox" Text="{Binding SessionTitle}"
+                         PlaceholderText="{Binding TitlePlaceholder}"
+                         AutomationProperties.Name="Session title" />
+              </Border>
+            </StackPanel>
+
+            <!-- THIS OCCURRENCE — completion only, one day only (frame 4g) -->
+            <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="0,1,0,0"
+                    Padding="0,12,0,0" IsVisible="{Binding ShowOccurrenceSection}">
+              <StackPanel Spacing="6">
+                <TextBlock Classes="metaLabel" Text="{Binding OccurrenceSectionLabel}" />
+                <Border Classes="focusRing" HorizontalAlignment="Left">
+                  <CheckBox Name="SessionOccurrenceBox"
+                            IsChecked="{Binding IsOccurrenceCompleted}"
+                            Content="{Binding OccurrenceCheckboxText}"
+                            AutomationProperties.Name="{Binding OccurrenceCheckboxText}" />
+                </Border>
+                <TextBlock Classes="meta" Margin="28,0,0,0" TextWrapping="Wrap"
+                           Text="{Binding OccurrenceNote}" />
+              </StackPanel>
+            </Border>
+
+            <!-- REPEATING SCHEDULE section label (repeating mode) -->
+            <TextBlock Classes="metaLabel" Text="REPEATING SCHEDULE"
+                       IsVisible="{Binding ShowOccurrenceSection}" />
+
+            <StackPanel Spacing="6" IsVisible="{Binding ShowDateField}">
+              <TextBlock Classes="metaLabel" Text="DATE" />
+              <Border Classes="focusRing">
+                <DatePicker Name="SessionDatePicker" Focusable="True"
+                            SelectedDate="{Binding Schedule.Date}"
+                            HorizontalAlignment="Stretch"
+                            AutomationProperties.Name="Session date" />
+              </Border>
+            </StackPanel>
+
+            <Grid ColumnDefinitions="*,14,*">
+              <StackPanel Grid.Column="0" Spacing="6">
+                <TextBlock Classes="metaLabel" Text="START" />
+                <Border Classes="focusRing">
+                  <TimePicker Name="SessionStartPicker" Focusable="True"
+                              SelectedTime="{Binding Schedule.Start}" ClockIdentifier="12HourClock"
+                              HorizontalAlignment="Stretch" MinWidth="0"
+                              AutomationProperties.Name="Start time" />
+                </Border>
+              </StackPanel>
+              <StackPanel Grid.Column="2" Spacing="6">
+                <TextBlock Classes="metaLabel" Text="END" />
+                <Border Classes="focusRing">
+                  <TimePicker Name="SessionEndPicker" Focusable="True"
+                              Classes.invalid="{Binding Schedule.HasEndBeforeStart}"
+                              SelectedTime="{Binding Schedule.End}" ClockIdentifier="12HourClock"
+                              HorizontalAlignment="Stretch" MinWidth="0"
+                              AutomationProperties.Name="End time" />
+                </Border>
+                <!-- Frame 4n: the error pins to the END field it belongs to. -->
+                <TextBlock Name="SessionEndFieldError" Classes="fieldError"
+                           Text="{Binding Schedule.EndFieldError}"
+                           IsVisible="{Binding Schedule.HasEndBeforeStart}"
+                           TextWrapping="Wrap" />
+              </StackPanel>
+            </Grid>
+
+            <StackPanel Spacing="8">
+              <Border Classes="focusRing" HorizontalAlignment="Left">
+                <CheckBox Name="SessionRepeatsBox"
+                          IsChecked="{Binding Schedule.RepeatsWeekly}" Content="Repeats"
+                          AutomationProperties.Name="Repeats" />
+              </Border>
+              <ItemsControl Name="SessionDaysList"
+                            ItemsSource="{Binding Schedule.Days}"
+                            IsVisible="{Binding Schedule.RepeatsWeekly}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="4" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:DayToggleViewModel">
+                    <Border Classes="focusRing">
+                      <ToggleButton Classes="rail" Width="32" Height="32" CornerRadius="4"
+                                    IsChecked="{Binding IsSelected}"
+                                    AutomationProperties.Name="{Binding Day}">
+                        <TextBlock Classes="meta" Text="{Binding Label}"
+                                   Foreground="{StaticResource BrushGraphite}" />
+                      </ToggleButton>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+
+            <!-- Series scope sentence (frame 4g) -->
+            <TextBlock Classes="meta" TextWrapping="Wrap" Text="{Binding SeriesNote}"
+                       IsVisible="{Binding ShowOccurrenceSection}" />
+
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </DockPanel>
+  </Border>
+
+</UserControl>

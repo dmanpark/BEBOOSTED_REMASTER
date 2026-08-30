@@ -1,0 +1,485 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             x:Class="BeBoosted.Desktop.Views.WholeTaskEditorView"
+             x:DataType="vm:WholeTaskEditorViewModel">
+
+  <UserControl.Styles>
+    <!-- Editor-local focus ring: 2px graphite + lime halo (frame 4p). The halo
+         literal equals ColorLimeHalo — BoxShadows cannot compose a resource color.
+         Scoped here so no global control is restyled. -->
+    <Style Selector="Border.focusRing">
+      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="CornerRadius" Value="{StaticResource RadiusControl}" />
+    </Style>
+    <Style Selector="Border.focusRing:focus-within">
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+      <Setter Property="BoxShadow" Value="0 0 0 5 #8CC8F24A" />
+    </Style>
+    <Style Selector="Border#WholeTaskBodyHost:disabled">
+      <Setter Property="Opacity" Value="0.45" />
+    </Style>
+    <!-- Frame 4n: the invalid END field is marked in umber with its own message. -->
+    <Style Selector="TimePicker.invalid /template/ Border">
+      <Setter Property="BorderBrush" Value="{StaticResource BrushAccentUmber}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+    <Style Selector="TextBlock.fieldError">
+      <Setter Property="Foreground" Value="{StaticResource BrushAccentUmber}" />
+      <Setter Property="FontSize" Value="{StaticResource TextSizeMeta}" />
+    </Style>
+    <!-- A held primary action must read as held: muted cream, quiet text. -->
+    <Style Selector="Button.primary:disabled">
+      <Setter Property="Background" Value="{StaticResource BrushSyncedCream}" />
+      <Setter Property="Foreground" Value="{StaticResource BrushPencilGray}" />
+      <Setter Property="BorderBrush" Value="{StaticResource BrushBorderDefault}" />
+    </Style>
+    <Style Selector="Border.repeatingRow">
+      <Setter Property="Background" Value="{DynamicResource BrushLimeWash}" />
+    </Style>
+  </UserControl.Styles>
+
+  <!-- Whole-task editor: 480px, fixed scope header and action footer, the body
+       alone scrolls vertically (frames 3a / 4a–4f / 4j–4o). -->
+  <Border Name="WholeTaskEditorCard" Width="480"
+          MaxHeight="{Binding $parent[Panel].Bounds.Height}"
+          Background="{StaticResource BrushPaperWhite}"
+          BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
+          CornerRadius="{StaticResource RadiusDrawer}"
+          BoxShadow="{StaticResource ShadowDrawer}"
+          ClipToBounds="True"
+          AutomationProperties.Name="{Binding AccessibleName}">
+    <DockPanel>
+
+      <!-- Fixed scope header -->
+      <Border DockPanel.Dock="Top" Padding="20,14,14,11"
+              BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,0,0,1">
+        <DockPanel>
+          <Border DockPanel.Dock="Left" Width="12" Height="12"
+                  Background="{StaticResource BrushHighlighterLime}"
+                  BorderBrush="{StaticResource BrushGraphite}" BorderThickness="1.5"
+                  VerticalAlignment="Center" Margin="0,0,9,0" />
+          <Border DockPanel.Dock="Right" Classes="focusRing">
+            <Button Name="WholeTaskCloseButton" Classes="icon" Width="32" Height="32"
+                    Command="{Binding CancelCommand}"
+                    AutomationProperties.Name="Close">
+              <Path Classes="icon" Data="{StaticResource IconClose}" Width="12" Height="12" />
+            </Button>
+          </Border>
+          <TextBlock Classes="mono" Text="{Binding ScopeLabel}"
+                     FontWeight="SemiBold" LetterSpacing="1.2"
+                     VerticalAlignment="Center" />
+        </DockPanel>
+      </Border>
+
+      <!-- Fixed action area: footer, or the active prompt in its place -->
+      <StackPanel DockPanel.Dock="Bottom">
+        <TextBlock Foreground="{StaticResource BrushInkHover}"
+                   FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap"
+                   Margin="20,8,20,0" HorizontalAlignment="Right"
+                   Text="{Binding Error}"
+                   IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        <Border Name="WholeTaskFooter" Padding="20,11,20,13"
+                BorderBrush="{StaticResource BrushRuleDefault}" BorderThickness="0,1,0,0"
+                IsVisible="{Binding !HasActivePrompt}">
+          <DockPanel>
+            <Border DockPanel.Dock="Left" Classes="focusRing"
+                    IsVisible="{Binding IsEditMode}">
+              <Button Name="WholeTaskDeleteButton"
+                      Content="Delete task"
+                      Command="{Binding RequestDeleteCommand}"
+                      AutomationProperties.Name="Delete task" />
+            </Border>
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+              <Border Classes="focusRing">
+                <Button Name="WholeTaskCancelButton" Content="Cancel"
+                        Command="{Binding CancelCommand}" />
+              </Border>
+              <Border Classes="focusRing">
+                <Button Name="WholeTaskSaveButton" Classes="primary"
+                        Content="{Binding SaveButtonText}" IsEnabled="{Binding CanSaveTask}"
+                        Command="{Binding SaveCommand}" />
+              </Border>
+            </StackPanel>
+          </DockPanel>
+        </Border>
+
+        <!-- Two-step inline confirmation (frames 4i–4k); task deletion gets umber. -->
+        <Border Name="WholeTaskConfirmationCard" Margin="14,8,14,14" Padding="16,14"
+                Background="{StaticResource BrushFolioUnderlay}"
+                BorderBrush="{StaticResource BrushGraphite}" BorderThickness="1.5"
+                CornerRadius="{StaticResource RadiusPanel}"
+                Classes.danger="{Binding Confirmation.IsTaskDeletion, FallbackValue=False}"
+                IsVisible="{Binding Confirmation, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <Border.Styles>
+            <Style Selector="Border.danger">
+              <Setter Property="BorderBrush" Value="{DynamicResource BrushAccentUmber}" />
+            </Style>
+          </Border.Styles>
+          <StackPanel Spacing="12">
+            <TextBlock Text="{Binding Confirmation.Message, FallbackValue=''}"
+                       FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+              <Border Classes="focusRing">
+                <Button Name="WholeTaskPromptKeepButton" Content="Keep"
+                        Command="{Binding KeepPromptCommand}" />
+              </Border>
+              <Border Classes="focusRing">
+                <Button Name="WholeTaskPromptConfirmButton" FontWeight="SemiBold"
+                        BorderBrush="{StaticResource BrushAccentUmber}"
+                        Content="{Binding Confirmation.ConfirmLabel, FallbackValue=''}"
+                        Command="{Binding ConfirmPromptCommand}"
+                        AutomationProperties.Name="{Binding Confirmation.ConfirmLabel, FallbackValue='', StringFormat='Confirm: {0}'}" />
+              </Border>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- The save-or-discard gate (frame 4o) -->
+        <Border Name="WholeTaskGateCard" Margin="14,8,14,14" Padding="18,14"
+                Background="{StaticResource BrushPaperWhite}"
+                BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
+                CornerRadius="{StaticResource RadiusDrawer}"
+                BoxShadow="{StaticResource ShadowDrawer}"
+                IsVisible="{Binding Gate, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <StackPanel Spacing="8">
+            <TextBlock FontWeight="SemiBold" Text="{Binding Gate.Title, FallbackValue=''}" />
+            <TextBlock Classes="meta" Text="Save or discard before continuing." />
+            <Border Classes="focusRing">
+              <Button Name="WholeTaskGateSaveButton" Classes="primary"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                      Content="{Binding Gate.SaveLabel, FallbackValue=''}"
+                      Command="{Binding GateSaveAndContinueCommand}" />
+            </Border>
+            <Border Classes="focusRing">
+              <Button Name="WholeTaskGateDiscardButton"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                      Content="Discard changes and continue"
+                      Command="{Binding GateDiscardAndContinueCommand}" />
+            </Border>
+            <Border Classes="focusRing" HorizontalAlignment="Center">
+              <Button Name="WholeTaskGateKeepButton" Classes="link"
+                      Content="Keep editing"
+                      Command="{Binding GateKeepEditingCommand}" />
+            </Border>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <!-- Scrolling body — dimmed and inert while a prompt is open -->
+      <Border Name="WholeTaskBodyHost" IsEnabled="{Binding !HasActivePrompt}">
+        <ScrollViewer Name="WholeTaskBody" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel Margin="20,16,20,4" Spacing="14">
+
+            <StackPanel Spacing="6">
+              <TextBlock Classes="metaLabel" Text="TITLE" />
+              <Border Classes="focusRing">
+                <TextBox Name="TaskTitleBox" Text="{Binding Title}"
+                         PlaceholderText="What needs doing?"
+                         AutomationProperties.Name="Task title" />
+              </Border>
+            </StackPanel>
+
+            <StackPanel Spacing="6">
+              <TextBlock Classes="metaLabel" Text="PROJECT" />
+              <Border Classes="focusRing">
+                <ComboBox Name="TaskProjectSelector"
+                          ItemsSource="{Binding ProjectOptions}"
+                          SelectedItem="{Binding SelectedProject}"
+                          HorizontalAlignment="Stretch"
+                          AutomationProperties.Name="Project">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ProjectOptionViewModel">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <Border Width="10" Height="10" CornerRadius="3"
+                              Background="{Binding AccentBrush}"
+                              IsVisible="{Binding HasAccent}"
+                              VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+                </ComboBox>
+              </Border>
+              <TextBlock Classes="meta" Text="Create projects from Projects."
+                         IsVisible="{Binding !HasProjects}" />
+            </StackPanel>
+
+            <Grid ColumnDefinitions="*,14,*">
+              <StackPanel Grid.Column="0" Spacing="6">
+                <TextBlock Classes="metaLabel" Text="DEADLINE" />
+                <Border Classes="focusRing">
+                  <DatePicker Name="TaskDeadlinePicker" SelectedDate="{Binding Deadline}"
+                              HorizontalAlignment="Stretch" MinWidth="0"
+                              AutomationProperties.Name="Deadline" />
+                </Border>
+              </StackPanel>
+              <StackPanel Grid.Column="2" Spacing="6">
+                <TextBlock Classes="metaLabel" Text="ESTIMATE" />
+                <Border Classes="focusRing">
+                  <NumericUpDown Name="TaskEstimateBox" Value="{Binding DurationMinutes}"
+                                 Minimum="5" Maximum="720" Increment="5" FormatString="0"
+                                 PlaceholderText="minutes"
+                                 HorizontalAlignment="Stretch"
+                                 AutomationProperties.Name="Estimated minutes" />
+                </Border>
+              </StackPanel>
+            </Grid>
+
+            <!-- ============ SCHEDULE (live section) ============ -->
+            <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="0,1,0,0"
+                    Padding="0,12,0,0">
+              <StackPanel Spacing="10">
+                <DockPanel>
+                  <Border DockPanel.Dock="Right" Classes="focusRing"
+                          IsVisible="{Binding ShowUnscheduleAll}">
+                    <Button Classes="link"
+                            Name="UnscheduleAllButton" Content="Unschedule all"
+                            Command="{Binding RequestUnscheduleAllCommand}"
+                            AutomationProperties.Name="Unschedule all" />
+                  </Border>
+                  <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock Classes="metaLabel" Text="SCHEDULE" />
+                    <TextBlock Classes="meta" Text="{Binding ScheduleSummary}" />
+                  </StackPanel>
+                </DockPanel>
+
+                <!-- Quiet stale notice (frame 4m right) -->
+                <Border Background="{StaticResource BrushFolioUnderlay}"
+                        BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusPanel}" Padding="12,9"
+                        IsVisible="{Binding ScheduleNotice, Converter={x:Static ObjectConverters.IsNotNull}}">
+                  <TextBlock FontSize="{StaticResource TextSizeSmall}" TextWrapping="Wrap"
+                             Text="{Binding ScheduleNotice}" />
+                </Border>
+
+                <!-- Empty state (frames 4a/4c) -->
+                <Border BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusPanel}" Padding="14"
+                        IsVisible="{Binding ShowEmptyState}">
+                  <TextBlock FontSize="{StaticResource TextSizeSmall}"
+                             Foreground="{StaticResource BrushPencilGray}"
+                             TextWrapping="Wrap" Text="{Binding EmptyStateText}" />
+                </Border>
+
+                <!-- Session rows + the Add session row: edit mode only — create
+                     mode holds at most the one inline first session below. -->
+                <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusPanel}" ClipToBounds="True"
+                        IsVisible="{Binding ShowScheduleList}">
+                  <StackPanel>
+                    <ItemsControl Name="ScheduleRows" ItemsSource="{Binding Sessions}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:SessionRowViewModel">
+                          <Border Classes.repeatingRow="{Binding Data.IsRepeating}"
+                                  BorderBrush="{StaticResource BrushRuleLight}"
+                                  BorderThickness="0,0,0,1" Padding="12,7"
+                                  AutomationProperties.Name="{Binding Data.AccessibleName}">
+                            <DockPanel>
+                              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                                          Spacing="2" VerticalAlignment="Center">
+                                <Border Background="{StaticResource BrushHighlighterLime}"
+                                        BorderBrush="{StaticResource BrushGraphite}" BorderThickness="1"
+                                        CornerRadius="{StaticResource RadiusSmall}" Padding="6,1"
+                                        VerticalAlignment="Center" Margin="0,0,6,0"
+                                        IsVisible="{Binding Data.StatusChip, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                  <TextBlock Classes="mono" FontSize="{StaticResource TextSizeMeta}"
+                                             Text="{Binding Data.StatusChip}" />
+                                </Border>
+                                <Border Classes="focusRing">
+                                  <Button Name="RowEditButton" Classes="icon" Width="32" Height="32"
+                                          Command="{Binding EditCommand}"
+                                          AutomationProperties.Name="{Binding Data.EditControlName}">
+                                    <Path Classes="icon" Data="{StaticResource IconEdit}"
+                                          Width="12" Height="12" StrokeThickness="1.3" />
+                                  </Button>
+                                </Border>
+                                <Border Classes="focusRing">
+                                  <Button Name="RowRemoveButton" Classes="icon"
+                                          Width="32" Height="32"
+                                          Command="{Binding RemoveCommand}"
+                                          AutomationProperties.Name="{Binding Data.RemoveControlName}">
+                                    <Path Classes="icon" Data="{StaticResource IconClose}"
+                                          Width="12" Height="12" />
+                                  </Button>
+                                </Border>
+                              </StackPanel>
+                              <StackPanel Spacing="2" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                  <Path Name="RowRepeatGlyph" Classes="icon"
+                                        Data="{StaticResource IconRepeat}"
+                                        Width="10" Height="10" Stretch="Uniform"
+                                        StrokeThickness="1.4" VerticalAlignment="Center"
+                                        IsVisible="{Binding Data.IsRepeating}" />
+                                  <TextBlock Classes="mono" FontSize="{StaticResource TextSizeMeta}"
+                                             Text="{Binding Data.PositionText}"
+                                             IsVisible="{Binding Data.PositionText, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                  <TextBlock Classes="mono" FontSize="{StaticResource TextSizeMeta}"
+                                             FontWeight="SemiBold" Text="REPEATING SCHEDULE"
+                                             IsVisible="{Binding Data.IsRepeating}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                  <TextBlock FontSize="{StaticResource TextSizeSmall}" FontWeight="Medium"
+                                             Text="{Binding Data.PrimaryText}" TextWrapping="Wrap" />
+                                  <TextBlock Classes="mono" FontSize="{StaticResource TextSizeSmall}"
+                                             Foreground="{StaticResource BrushPencilGray}"
+                                             Text="{Binding Data.SecondaryText}" TextWrapping="Wrap" />
+                                </StackPanel>
+                              </StackPanel>
+                            </DockPanel>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Border Classes="focusRing">
+                      <Button Name="AddSessionButton" Classes="link" Height="40"
+                              HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                              Padding="12,0" IsEnabled="{Binding CanAddSession}"
+                              Command="{Binding AddSessionCommand}"
+                              AutomationProperties.Name="Add session">
+                        <StackPanel Orientation="Horizontal" Spacing="9">
+                          <Path Classes="icon" Data="{StaticResource IconPlus}"
+                                Width="12" Height="12" VerticalAlignment="Center" />
+                          <TextBlock Text="Add session" />
+                        </StackPanel>
+                      </Button>
+                    </Border>
+                  </StackPanel>
+                </Border>
+
+                <!-- The empty state still offers the primary Add session action -->
+                <Border Classes="focusRing" IsVisible="{Binding ShowEmptyState}">
+                  <Button Name="AddSessionEmptyButton" Classes="link" Height="40" Padding="2,0"
+                          HorizontalAlignment="Left" IsEnabled="{Binding CanAddSession}"
+                          Command="{Binding AddSessionCommand}"
+                          AutomationProperties.Name="Add session">
+                    <StackPanel Orientation="Horizontal" Spacing="9">
+                      <Path Classes="icon" Data="{StaticResource IconPlus}"
+                            Width="12" Height="12" VerticalAlignment="Center" />
+                      <TextBlock Text="Add session" />
+                    </StackPanel>
+                  </Button>
+                </Border>
+
+                <!-- Hit-testable note for the disabled Add session (frame 4l) -->
+                <TextBlock Classes="meta" TextWrapping="Wrap"
+                           Text="{Binding AddSessionBlockedNote}"
+                           IsVisible="{Binding AddSessionBlockedNote, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+                <!-- Repeating / mixed sentences + the numbering note (frames 4e/4f) -->
+                <ItemsControl ItemsSource="{Binding ScheduleNotes}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="x:String">
+                      <TextBlock Classes="meta" TextWrapping="Wrap" Text="{Binding}" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- Create-mode inline first session (frame 4b) -->
+                <Border BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusPanel}" Padding="14,12,14,4"
+                        IsVisible="{Binding ShowInlineSchedule}">
+                  <Border BorderBrush="{StaticResource BrushHighlighterLime}"
+                          BorderThickness="3,0,0,0" Padding="11,0,0,0">
+                    <StackPanel Spacing="12">
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Classes="metaLabel" Text="FIRST SESSION" />
+                        <TextBlock Classes="meta" Text="saved together with the task" />
+                      </StackPanel>
+                      <StackPanel Spacing="6">
+                        <TextBlock Classes="metaLabel" Text="DATE" />
+                        <Border Classes="focusRing">
+                          <DatePicker Name="InlineDatePicker"
+                                      SelectedDate="{Binding InlineSchedule.Date}"
+                                      HorizontalAlignment="Stretch"
+                                      AutomationProperties.Name="First session date" />
+                        </Border>
+                      </StackPanel>
+                      <Grid ColumnDefinitions="*,14,*">
+                        <StackPanel Grid.Column="0" Spacing="6">
+                          <TextBlock Classes="metaLabel" Text="START" />
+                          <Border Classes="focusRing">
+                            <TimePicker Name="InlineStartPicker"
+                                        SelectedTime="{Binding InlineSchedule.Start}"
+                                        ClockIdentifier="12HourClock"
+                                        HorizontalAlignment="Stretch" MinWidth="0"
+                                        AutomationProperties.Name="First session start" />
+                          </Border>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Spacing="6">
+                          <TextBlock Classes="metaLabel" Text="END" />
+                          <Border Classes="focusRing">
+                            <TimePicker Name="InlineEndPicker"
+                                        Classes.invalid="{Binding InlineSchedule.HasEndBeforeStart}"
+                                        SelectedTime="{Binding InlineSchedule.End}"
+                                        ClockIdentifier="12HourClock"
+                                        HorizontalAlignment="Stretch" MinWidth="0"
+                                        AutomationProperties.Name="First session end" />
+                          </Border>
+                          <!-- Frame 4n: the error pins to the END field it belongs to. -->
+                          <TextBlock Name="InlineEndFieldError" Classes="fieldError"
+                                     Text="{Binding InlineSchedule.EndFieldError}"
+                                     IsVisible="{Binding InlineSchedule.HasEndBeforeStart}"
+                                     TextWrapping="Wrap" />
+                        </StackPanel>
+                      </Grid>
+                      <StackPanel Spacing="8">
+                        <Border Classes="focusRing" HorizontalAlignment="Left">
+                          <CheckBox Name="InlineRepeatsBox"
+                                    IsChecked="{Binding InlineSchedule.RepeatsWeekly}"
+                                    Content="Repeats" AutomationProperties.Name="Repeats" />
+                        </Border>
+                        <ItemsControl Name="InlineDaysList"
+                                      ItemsSource="{Binding InlineSchedule.Days}"
+                                      IsVisible="{Binding InlineSchedule.RepeatsWeekly}">
+                          <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                              <StackPanel Orientation="Horizontal" Spacing="4" />
+                            </ItemsPanelTemplate>
+                          </ItemsControl.ItemsPanel>
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:DayToggleViewModel">
+                              <Border Classes="focusRing">
+                                <ToggleButton Classes="rail" Width="32" Height="32" CornerRadius="4"
+                                              IsChecked="{Binding IsSelected}"
+                                              AutomationProperties.Name="{Binding Day}">
+                                  <TextBlock Classes="meta" Text="{Binding Label}"
+                                             Foreground="{StaticResource BrushGraphite}" />
+                                </ToggleButton>
+                              </Border>
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </StackPanel>
+                      <Border Classes="focusRing" HorizontalAlignment="Left">
+                        <Button Name="InlineClearButton" Classes="link" Content="Remove"
+                                Command="{Binding ClearInlineScheduleCommand}"
+                                AutomationProperties.Name="Remove first session" />
+                      </Border>
+                    </StackPanel>
+                  </Border>
+                </Border>
+              </StackPanel>
+            </Border>
+
+            <!-- ============ COMPLETION — after SCHEDULE (locked decision 2) ============ -->
+            <StackPanel Spacing="4" IsVisible="{Binding ShowCompletion}">
+              <Border Classes="focusRing" HorizontalAlignment="Left">
+                <CheckBox Name="TaskCompletedBox" IsChecked="{Binding IsCompleted}"
+                          Content="{Binding CompletionCheckboxText}"
+                          AutomationProperties.Name="{Binding CompletionCheckboxText}" />
+              </Border>
+              <TextBlock Classes="meta" Margin="28,0,0,0" TextWrapping="Wrap"
+                         Text="{Binding AggregateNote}"
+                         IsVisible="{Binding AggregateNote, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            </StackPanel>
+
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </DockPanel>
+  </Border>
+
+</UserControl>

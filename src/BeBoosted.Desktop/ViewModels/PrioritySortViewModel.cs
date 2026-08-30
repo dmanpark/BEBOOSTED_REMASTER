@@ -48,14 +48,34 @@ public sealed partial class PrioritySortViewModel : ViewModelBase
         IClock clock,
         Action onClosed,
         Action<IReadOnlyList<PriorityRank>> onSaved)
+        : this(
+            period, candidates, service.StartSession(period, candidates.Select(t => t.Id)),
+            service, clock, onClosed, onSaved)
+    {
+    }
+
+    /// <summary>
+    /// Runs a prepared session. <paramref name="knownTasks"/> must cover every task the
+    /// session can name, seed anchors included, because they appear as comparison cards.
+    /// </summary>
+    public PrioritySortViewModel(
+        PlanningPeriod period,
+        IReadOnlyList<TaskItem> knownTasks,
+        ComparisonSession session,
+        PrioritySortService service,
+        IClock clock,
+        Action onClosed,
+        Action<IReadOnlyList<PriorityRank>> onSaved,
+        bool isRerank = false)
     {
         _service = service;
         _clock = clock;
         _onClosed = onClosed;
         _onSaved = onSaved;
-        _tasks = candidates.ToDictionary(t => t.Id);
+        _tasks = knownTasks.ToDictionary(t => t.Id);
         Period = period;
-        _session = service.StartSession(period, candidates.Select(t => t.Id));
+        _session = session;
+        IsRerank = isRerank;
         if (_session.IsComplete)
         {
             Finish();
@@ -68,11 +88,32 @@ public sealed partial class PrioritySortViewModel : ViewModelBase
 
     public PlanningPeriod Period { get; }
 
-    public string Prompt => Period.Kind == PlanningPeriodKind.Today
-        ? "If only one gets protected today,\nwhich should it be?"
-        : "If only one moves forward this week,\nwhich should it be?";
+    /// <summary>Re-placing one already-ranked task rather than sorting the queue.</summary>
+    public bool IsRerank { get; }
+
+    /// <summary>
+    /// A re-rank has no partial-save exit: an unfinished run must leave the saved
+    /// ranking exactly as it was, and closing already saves nothing.
+    /// </summary>
+    public bool ShowBuildPlanNow => !IsRerank;
+
+    public string Prompt => IsRerank
+        ? "Where does this belong now?"
+        : Period.Kind == PlanningPeriodKind.Today
+            ? "If only one gets protected today,\nwhich should it be?"
+            : "If only one moves forward this week,\nwhich should it be?";
 
     public string PeriodLabel => Period.Kind == PlanningPeriodKind.Today ? "Today" : "This week";
+
+    /// <summary>
+    /// Results-stage note for a re-rank that needed no questions: without it, the
+    /// instant jump to "done" reads like a glitch.
+    /// </summary>
+    public string ResultsNote => IsRerank && IsFinished && _session.AnsweredCount == 0
+        ? "No comparisons were needed — no other task holds a rank for this period yet, so this task is #1."
+        : string.Empty;
+
+    public bool HasResultsNote => ResultsNote.Length > 0;
 
     public ObservableCollection<TierGroupViewModel> ResultGroups { get; } = [];
 
@@ -115,9 +156,21 @@ public sealed partial class PrioritySortViewModel : ViewModelBase
         RefreshQuestion();
     }
 
-    /// <summary>Early exit: ranks what is known; unplaced tasks share the trailing ordinal.</summary>
+    /// <summary>
+    /// Early exit: ranks what is known; unplaced tasks share the trailing ordinal.
+    /// A re-rank has no partial-save exit, so the command refuses even if a view
+    /// regression were to render it again.
+    /// </summary>
     [RelayCommand]
-    private void BuildPlanNow() => Finish();
+    private void BuildPlanNow()
+    {
+        if (!ShowBuildPlanNow)
+        {
+            return;
+        }
+
+        Finish();
+    }
 
     [RelayCommand]
     private void Close() => _onClosed();
@@ -149,7 +202,9 @@ public sealed partial class PrioritySortViewModel : ViewModelBase
 
         LeftCard = BuildCard(comparison.Left);
         RightCard = BuildCard(comparison.Right);
-        StatusLabel = $"Priority Sort · {PeriodLabel} · Comparison {_session.ComparisonNumber}";
+        StatusLabel = IsRerank
+            ? $"Re-rank · {PeriodLabel} · Comparison {_session.ComparisonNumber}"
+            : $"Priority Sort · {PeriodLabel} · Comparison {_session.ComparisonNumber}";
         Progress = _session.Progress;
         CanUndo = _session.CanUndo;
     }
@@ -159,9 +214,13 @@ public sealed partial class PrioritySortViewModel : ViewModelBase
         var ranking = _service.Complete(_session);
         BuildResultGroups(ranking);
         Progress = 1;
-        StatusLabel = $"Priority Sort · {PeriodLabel} · {_session.AnsweredCount} comparisons";
+        StatusLabel = IsRerank
+            ? $"Re-rank · {PeriodLabel} · {_session.AnsweredCount} comparisons"
+            : $"Priority Sort · {PeriodLabel} · {_session.AnsweredCount} comparisons";
         IsFinished = true;
         CanUndo = false;
+        OnPropertyChanged(nameof(ResultsNote));
+        OnPropertyChanged(nameof(HasResultsNote));
         _onSaved(ranking);
     }
 

@@ -1,0 +1,44 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:BeBoosted.Desktop.ViewModels"
+             x:Class="BeBoosted.Desktop.Views.ScheduleFlyoutContent"
+             x:DataType="vm:ScheduleFlyoutViewModel">
+
+  <!-- The one manual-scheduling form: Schedule (unscheduled task) and Change time
+       (approved block) share it. Warnings inform; domain errors keep it open. -->
+  <StackPanel Width="272" Spacing="10" Margin="4">
+    <TextBlock Text="{Binding Heading}" FontWeight="SemiBold" />
+    <StackPanel Spacing="6">
+      <TextBlock Classes="metaLabel" Text="DATE" />
+      <DatePicker SelectedDate="{Binding Date}" HorizontalAlignment="Stretch"
+                  AutomationProperties.Name="Date" />
+    </StackPanel>
+    <Grid ColumnDefinitions="*,10,120">
+      <StackPanel Grid.Column="0" Spacing="6">
+        <TextBlock Classes="metaLabel" Text="START" />
+        <TimePicker SelectedTime="{Binding Start}" MinuteIncrement="15"
+                    ClockIdentifier="12HourClock" HorizontalAlignment="Stretch" MinWidth="0"
+                    AutomationProperties.Name="Start time" />
+      </StackPanel>
+      <StackPanel Grid.Column="2" Spacing="6">
+        <TextBlock Classes="metaLabel" Text="MINUTES" />
+        <NumericUpDown Value="{Binding DurationMinutes}" Minimum="5" Maximum="720"
+                       Increment="15" FormatString="0"
+                       AutomationProperties.Name="Duration minutes" />
+      </StackPanel>
+    </Grid>
+    <TextBlock Classes="meta" Text="{Binding WarningText}" TextWrapping="Wrap"
+               IsVisible="{Binding WarningText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+    <TextBlock Foreground="{StaticResource BrushInkHover}"
+               FontSize="{StaticResource TextSizeSmall}"
+               Text="{Binding Error}" TextWrapping="Wrap"
+               IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />
+    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+      <Button Content="Cancel" Height="30" Click="OnCancelClick" />
+      <Button Classes="primary" Height="30" Content="{Binding ConfirmLabel}"
+              Click="OnConfirmClick"
+              AutomationProperties.Name="{Binding ConfirmAccessibleName}" />
+    </StackPanel>
+  </StackPanel>
+
+</UserControl>

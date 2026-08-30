@@ -9,6 +9,8 @@ namespace BeBoosted.Tests.Persistence;
 /// <summary>
 /// Upgrade coverage for 0009_commitment_completions: a version-8 database gains the
 /// per-occurrence completion table without losing blocks or their project links.
+/// (0010 later unifies commitments onto Tasks — that step has its own coverage in
+/// <see cref="UnifiedTaskMigrationTests"/>.)
 /// </summary>
 public sealed class CommitmentCompletionMigrationTests : IDisposable
 {
@@ -46,24 +48,71 @@ public sealed class CommitmentCompletionMigrationTests : IDisposable
         command.ExecuteNonQuery();
     }
 
+    private long ScalarLong(string sql)
+    {
+        using var connection = _database.Factory.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return (long)command.ExecuteScalar()!;
+    }
+
     [Fact]
-    public void Upgrade_AddsTheCompletionTable_WithoutLosingBlocksOrProjectLinks()
+    public void Upgrade_To0009_AddsTheCompletionTable_WithoutLosingBlocksOrProjectLinks()
     {
         BuildVersion8DatabaseWithLinkedCommitment();
 
+        _runner.Apply(EmbeddedMigrations.Load().Where(m => m.Version <= 9).ToList());
+
+        Assert.Equal("Stats HW", (string)ScalarText(
+            $"SELECT title FROM calendar_blocks WHERE id = '{BlockId}';")!);
+        Assert.Equal(ProjectId, ScalarText(
+            $"SELECT project_id FROM calendar_blocks WHERE id = '{BlockId}';"));
+
+        // The new table is usable immediately at version 9.
+        using var connection = _database.Factory.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            $"""
+            INSERT INTO commitment_completions (block_id, occurrence_date, completed_at)
+            VALUES ('{BlockId}', '2026-08-11', '2026-08-11T17:05:00.0000000-07:00');
+            """;
+        command.ExecuteNonQuery();
+        Assert.Equal(1, ScalarLong(
+            $"SELECT COUNT(*) FROM commitment_completions WHERE block_id = '{BlockId}';"));
+    }
+
+    [Fact]
+    public void Upgrade_ToLatest_CarriesTheVersion9CompletionThroughUnification()
+    {
+        BuildVersion8DatabaseWithLinkedCommitment();
+        _runner.Apply(EmbeddedMigrations.Load().Where(m => m.Version <= 9).ToList());
+        using (var connection = _database.Factory.Open())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                $"""
+                INSERT INTO commitment_completions (block_id, occurrence_date, completed_at)
+                VALUES ('{BlockId}', '2026-08-11', '2026-08-11T17:05:00.0000000-07:00');
+                """;
+            command.ExecuteNonQuery();
+        }
+
         _runner.Apply(EmbeddedMigrations.Load());
 
+        // The one-off's completion now lives on its migrated Task.
         var blocks = new SqliteCalendarBlockRepository(_database.Factory);
         var block = blocks.GetById(CalendarBlockId.Parse(BlockId));
         Assert.NotNull(block);
-        Assert.Equal("Stats HW", block.Title);
-        Assert.Equal(BeBoosted.Domain.ProjectId.Parse(ProjectId), block.ProjectId);
+        Assert.NotNull(block.TaskId);
+        Assert.Equal(1, ScalarLong("SELECT is_completed FROM tasks WHERE title = 'Stats HW';"));
+    }
 
-        // The new table is usable immediately.
-        var completions = new SqliteCommitmentCompletionRepository(_database.Factory);
-        completions.Add(new BeBoosted.Domain.Calendar.CommitmentCompletion(
-            block.Id, block.Date, new DateTimeOffset(2026, 8, 11, 17, 5, 0, TimeSpan.FromHours(-7))));
-        Assert.NotNull(completions.Get(block.Id, block.Date));
+    private string? ScalarText(string sql)
+    {
+        using var connection = _database.Factory.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return command.ExecuteScalar() as string;
     }
 
     public void Dispose() => _database.Dispose();

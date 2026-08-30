@@ -21,10 +21,10 @@ public interface ICalendarBlockRepository
     /// <summary>Blocks linked to the given task.</summary>
     IReadOnlyList<CalendarBlock> GetForTask(TaskId taskId);
 
-    /// <summary>Blocks directly linked to the given project (fixed commitments).</summary>
-    IReadOnlyList<CalendarBlock> GetForProject(ProjectId projectId);
-
-    /// <summary>Task blocks whose occurrence has fully elapsed but have no recorded outcome.</summary>
+    /// <summary>
+    /// One-off sessions of open tasks that fully elapsed with no recorded outcome.
+    /// Repeating sessions never appear — they complete per occurrence instead.
+    /// </summary>
     IReadOnlyList<CalendarBlock> GetElapsedWithoutOutcome(DateOnly today, TimeOnly now);
 
     /// <summary>Task ids that have at least one block with no recorded outcome (pending work).</summary>

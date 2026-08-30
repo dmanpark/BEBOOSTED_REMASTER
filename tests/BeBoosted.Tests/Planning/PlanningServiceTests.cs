@@ -43,10 +43,11 @@ public sealed class PlanningServiceTests : IDisposable
         _blocks = new SqliteCalendarBlockRepository(_database.Factory);
         _proposals = new SqlitePlanningProposalRepository(_database.Factory);
         _inbox = new InboxQueryService(_tasks, _blocks);
-        var calendar = new CalendarService(_blocks, new SqliteCommitmentCompletionRepository(_database.Factory), new SqliteCalendarMutations(_database.Factory), _tasks, _clock);
+        var calendar = new CalendarService(_blocks, new SqliteOccurrenceCompletionRepository(_database.Factory), new SqliteCalendarMutations(_database.Factory), _tasks, _clock);
         _service = new PlanningService(
-            _proposals, _blocks, _inbox,
-            new SqlitePrioritizationRepository(_database.Factory), calendar, _clock);
+            _proposals, _inbox,
+            new SqlitePrioritizationRepository(_database.Factory), calendar,
+            new SqliteCalendarMutations(_database.Factory), _clock);
     }
 
     private TaskItem AddTask(string title, int minutes, DateOnly? deadline = null)
@@ -127,7 +128,7 @@ public sealed class PlanningServiceTests : IDisposable
         Assert.Equal(task.Id, calendarBlock.TaskId);
         Assert.Equal(proposed.Date, calendarBlock.Date);
         Assert.Equal(proposed.StartTime, calendarBlock.StartTime);
-        Assert.Equal(BlockKind.TaskBlock, calendarBlock.Kind);
+        Assert.Equal(BlockKind.TaskSession, calendarBlock.Kind);
 
         // Fully-approved drafts flip to Approved and stop being the active draft.
         Assert.Equal(ProposalState.Approved, _proposals.GetById(draft.Id)!.State);
@@ -179,10 +180,12 @@ public sealed class PlanningServiceTests : IDisposable
     [Fact]
     public void CreateDraft_ReportsUnplacedTasks()
     {
-        // A commitment fills the whole planning window today; deadline today → unplaceable.
-        var calendar = new CalendarService(_blocks, new SqliteCommitmentCompletionRepository(_database.Factory), new SqliteCalendarMutations(_database.Factory), _tasks, _clock);
-        calendar.CreateFixedCommitment(
-            "All-day", new DateOnly(2026, 8, 11), new TimeOnly(8, 0), new TimeOnly(21, 0));
+        // A scheduled task fills the whole planning window today; deadline today → unplaceable.
+        var calendar = new CalendarService(_blocks, new SqliteOccurrenceCompletionRepository(_database.Factory), new SqliteCalendarMutations(_database.Factory), _tasks, _clock);
+        calendar.CreateTask(
+            new TaskDetailsRequest("All-day", null, null, null),
+            new TaskScheduleRequest(
+                new DateOnly(2026, 8, 11), new TimeOnly(8, 0), new TimeOnly(21, 0), null));
         AddTask("Urgent today", 45, new DateOnly(2026, 8, 11));
 
         var result = _service.CreateDraft(Week);
@@ -190,6 +193,50 @@ public sealed class PlanningServiceTests : IDisposable
         Assert.Empty(result.Proposal.Blocks);
         var unplaced = Assert.Single(result.Unplaced);
         Assert.Equal("Urgent today", unplaced.Title);
+    }
+
+    /// <summary>
+    /// A plan that places nothing writes nothing: no invisible zero-block draft may
+    /// survive (it would block approval-undo and hide the Discard remedy forever).
+    /// </summary>
+    [Fact]
+    public void CreateDraft_WithNothingPlaceable_LeavesNoActiveDraft()
+    {
+        var calendar = new CalendarService(_blocks, new SqliteOccurrenceCompletionRepository(_database.Factory), new SqliteCalendarMutations(_database.Factory), _tasks, _clock);
+        calendar.CreateTask(
+            new TaskDetailsRequest("All-day", null, null, null),
+            new TaskScheduleRequest(
+                new DateOnly(2026, 8, 11), new TimeOnly(8, 0), new TimeOnly(21, 0), null));
+        AddTask("Urgent today", 45, new DateOnly(2026, 8, 11));
+
+        var result = _service.CreateDraft(Week);
+
+        Assert.Empty(result.Proposal.Blocks);
+        Assert.Null(_proposals.GetActiveDraft());
+        // The state after reopening the app agrees.
+        Assert.Null(new SqlitePlanningProposalRepository(_database.Factory).GetActiveDraft());
+    }
+
+    /// <summary>An empty result must not destroy the draft the user can see.</summary>
+    [Fact]
+    public void CreateDraft_WithNothingPlaceable_PreservesThePreviousActiveDraft()
+    {
+        AddTask("Urgent today", 45, new DateOnly(2026, 8, 11));
+        var good = _service.CreateDraft(Week).Proposal;
+        Assert.NotEmpty(good.Blocks);
+
+        // The calendar fills up after that draft was proposed; a re-plan now fits nothing.
+        var calendar = new CalendarService(_blocks, new SqliteOccurrenceCompletionRepository(_database.Factory), new SqliteCalendarMutations(_database.Factory), _tasks, _clock);
+        calendar.CreateTask(
+            new TaskDetailsRequest("All-day", null, null, null),
+            new TaskScheduleRequest(
+                new DateOnly(2026, 8, 11), new TimeOnly(8, 0), new TimeOnly(21, 0), null));
+
+        var result = _service.CreateDraft(Week);
+
+        Assert.Empty(result.Proposal.Blocks);
+        Assert.Single(result.Unplaced);
+        Assert.Equal(good.Id, _proposals.GetActiveDraft()!.Id);
     }
 
     public void Dispose() => _database.Dispose();

@@ -31,7 +31,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITaskRepository, SqliteTaskRepository>();
         services.AddSingleton<TaskService>();
         services.AddSingleton<ICalendarBlockRepository, SqliteCalendarBlockRepository>();
-        services.AddSingleton<ICommitmentCompletionRepository, SqliteCommitmentCompletionRepository>();
+        services.AddSingleton<IOccurrenceCompletionRepository, SqliteOccurrenceCompletionRepository>();
         services.AddSingleton<ICalendarMutations, SqliteCalendarMutations>();
         services.AddSingleton<CalendarService>();
         services.AddSingleton<InboxQueryService>();
@@ -43,6 +43,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectFileRepository, SqliteProjectFileRepository>();
         services.AddSingleton<IResourceRepository, SqliteResourceRepository>();
         services.AddSingleton<IResourceStorage, LocalResourceStorage>();
+        services.AddSingleton<IProjectMutations, SqliteProjectMutations>();
+        services.AddSingleton<FolderIdentityBackfill>();
+        services.AddSingleton<ResourceLayoutReconciler>();
+        services.AddSingleton<ResourceLayoutStartup>();
         services.AddSingleton<IResourceIndexer, SimpleLocalIndexer>();
         services.AddSingleton<ProjectService>();
         services.AddSingleton<IAiProvider, LocalHeuristicAiProvider>();

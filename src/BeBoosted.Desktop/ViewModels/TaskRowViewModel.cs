@@ -7,43 +7,20 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace BeBoosted.Desktop.ViewModels;
 
-/// <summary>A project option in the task edit flyout ("No project" uses a null id).</summary>
-public sealed record ProjectChoiceViewModel(Domain.ProjectId? Id, string Name)
+/// <summary>
+/// One Inbox row wrapping a task. Editing always opens the one canonical Task editor
+/// (via <paramref name="onEditRequested"/>) — the row keeps no form state of its own.
+/// </summary>
+public sealed partial class TaskRowViewModel(
+    TaskItem task,
+    Application.Calendar.CalendarService calendar,
+    IClock clock,
+    Action<TaskRowViewModel> onRemoved,
+    string? projectName = null,
+    Action<TaskRowViewModel>? onEditRequested = null,
+    Action<TaskRowViewModel>? onRerankRequested = null) : ViewModelBase
 {
-    public static readonly ProjectChoiceViewModel None = new(null, "No project");
-}
-
-/// <summary>One Inbox row wrapping a task, with inline edit state for its flyout.</summary>
-public sealed partial class TaskRowViewModel : ViewModelBase
-{
-    private readonly TaskService _service;
-    private readonly IClock _clock;
-    private readonly Action<TaskRowViewModel> _onRemoved;
-    private readonly string? _projectName;
-
-    public TaskRowViewModel(
-        TaskItem task,
-        TaskService service,
-        IClock clock,
-        Action<TaskRowViewModel> onRemoved,
-        IReadOnlyList<ProjectChoiceViewModel>? projectChoices = null,
-        string? projectName = null)
-    {
-        Task = task;
-        _service = service;
-        _clock = clock;
-        _onRemoved = onRemoved;
-        _projectName = projectName;
-        ProjectChoices = projectChoices ?? [ProjectChoiceViewModel.None];
-        ResetEditFields();
-    }
-
-    public IReadOnlyList<ProjectChoiceViewModel> ProjectChoices { get; }
-
-    [ObservableProperty]
-    public partial ProjectChoiceViewModel? EditProject { get; set; }
-
-    public TaskItem Task { get; private set; }
+    public TaskItem Task { get; } = task;
 
     public string Title => Task.Title;
 
@@ -58,7 +35,7 @@ public sealed partial class TaskRowViewModel : ViewModelBase
         get
         {
             var parts = new List<string>(3);
-            if (_projectName is { } project)
+            if (projectName is { } project)
             {
                 parts.Add(project);
             }
@@ -86,67 +63,37 @@ public sealed partial class TaskRowViewModel : ViewModelBase
 
     public bool HasRank => RankText is not null;
 
-    [ObservableProperty]
-    public partial string EditTitle { get; set; } = string.Empty;
-
-    [ObservableProperty]
-    public partial DateTimeOffset? EditDeadline { get; set; }
-
-    [ObservableProperty]
-    public partial decimal? EditDurationMinutes { get; set; }
-
     [RelayCommand]
     private void Complete()
     {
-        _service.Complete(Task.Id);
-        _onRemoved(this);
+        // The authoritative path: reconciles any one-off session outcome with the
+        // Task in one transaction. A no-op stays silent.
+        if (calendar.CompleteTask(Task.Id))
+        {
+            onRemoved(this);
+        }
     }
 
     [RelayCommand]
     private void Delete()
     {
-        _service.Delete(Task.Id);
-        _onRemoved(this);
+        // Deletion owns the whole aggregate: the Task, its sessions, and their
+        // occurrence rows go together in one transaction — never an orphan.
+        calendar.DeleteTask(Task.Id);
+        onRemoved(this);
     }
 
+    /// <summary>Opens the one canonical Task editor for this task.</summary>
     [RelayCommand]
-    private void CommitEdit()
-    {
-        if (string.IsNullOrWhiteSpace(EditTitle))
-        {
-            ResetEditFields();
-            return;
-        }
+    private void Edit() => onEditRequested?.Invoke(this);
 
-        Task = _service.UpdateDetails(
-            Task.Id,
-            EditTitle,
-            EditDurationMinutes is { } minutes and > 0 ? TimeSpan.FromMinutes((double)minutes) : null,
-            EditDeadline is { } deadline ? DateOnly.FromDateTime(deadline.Date) : null,
-            EditProject?.Id);
-        ResetEditFields();
-        OnPropertyChanged(nameof(Title));
-        OnPropertyChanged(nameof(MetaText));
-        OnPropertyChanged(nameof(HasMeta));
-    }
-
+    /// <summary>The rank chip: re-place this task among the others.</summary>
     [RelayCommand]
-    private void ResetEdit() => ResetEditFields();
-
-    private void ResetEditFields()
-    {
-        EditTitle = Task.Title;
-        EditDeadline = Task.Deadline is { } deadline
-            ? new DateTimeOffset(deadline.ToDateTime(TimeOnly.MinValue))
-            : null;
-        EditDurationMinutes = Task.EstimatedDuration is { } duration ? (decimal)duration.TotalMinutes : null;
-        EditProject = ProjectChoices.FirstOrDefault(choice => choice.Id == Task.ProjectId)
-            ?? ProjectChoices[0];
-    }
+    private void Rerank() => onRerankRequested?.Invoke(this);
 
     private string DescribeDeadline(DateOnly deadline)
     {
-        var today = _clock.Today;
+        var today = clock.Today;
         if (deadline == today)
         {
             return "Today";

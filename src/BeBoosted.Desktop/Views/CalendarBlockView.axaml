@@ -8,25 +8,32 @@
              AutomationProperties.Name="{Binding AccessibleName}">
 
   <UserControl.Styles>
-    <!-- Checked treatment for the commitment done circle -->
-    <Style Selector="Button#CommitmentDoneButton.checked">
+    <!-- Checked treatment for the occurrence done circle -->
+    <Style Selector="Button#OccurrenceDoneButton.checked">
       <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
       <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    </Style>
+    <!-- The source block keeps a lime halo behind the scrim while edited (frame 3b).
+         The literal equals ColorLimeHalo — BoxShadows cannot compose a resource color. -->
+    <Style Selector="Border#BlockBorder.editing">
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+      <Setter Property="BoxShadow" Value="0 0 0 3 #8CC8F24A" />
     </Style>
   </UserControl.Styles>
 
   <Border Name="BlockBorder"
           Classes="calendarBlock"
-          Classes.fixed="{Binding IsFixed}"
+          Classes.external="{Binding IsExternal}"
           Classes.done="{Binding IsDone}"
           Classes.conflict="{Binding IsConflicted}"
-          Classes.proposal="{Binding IsProposal}">
+          Classes.proposal="{Binding IsProposal}"
+          Classes.editing="{Binding IsBeingEdited}">
     <Grid>
       <DockPanel Margin="0">
         <!-- project-accent edge (task blocks only) -->
         <Border DockPanel.Dock="Left" Width="3"
                 Background="{StaticResource BrushAccentSlate}"
-                IsVisible="{Binding IsTaskBlock}" />
+                IsVisible="{Binding IsSession}" />
         <Grid Margin="8,5,8,5" RowDefinitions="Auto,*" ColumnDefinitions="Auto,*">
           <!-- Outcome control (approved task blocks) -->
           <Button Grid.Row="0" Grid.Column="0" Grid.RowSpan="2"
@@ -70,16 +77,16 @@
             </Button.Flyout>
           </Button>
 
-          <!-- Completion circle (local fixed commitments): one click marks done,
-               another reopens — never opens the editor. -->
+          <!-- Occurrence circle (repeating task sessions): one click marks this
+               day done, another reopens — never opens the editor. -->
           <Button Grid.Row="0" Grid.Column="0" Grid.RowSpan="2"
-                  Name="CommitmentDoneButton"
+                  Name="OccurrenceDoneButton"
                   Classes="icon" Classes.checked="{Binding IsDone}"
                   Width="20" Height="20" CornerRadius="10"
                   Margin="0,1,8,0" VerticalAlignment="Top"
                   BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1.5"
-                  IsVisible="{Binding ShowCommitmentCompletionControl}"
-                  Command="{Binding ToggleCommitmentDoneCommand}"
+                  IsVisible="{Binding ShowOccurrenceCompletionControl}"
+                  Command="{Binding ToggleOccurrenceDoneCommand}"
                   AutomationProperties.Name="{Binding CompletionControlName}"
                   ToolTip.Tip="{Binding CompletionControlName}">
             <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
@@ -182,7 +189,7 @@
                  StrokeDashArray="3,2" RadiusX="5" RadiusY="5"
                  IsHitTestVisible="False" IsVisible="{Binding IsProposal}" />
 
-      <!-- resize grip (task blocks, proposals, and local commitments) -->
+      <!-- resize grip (local sessions and proposals) -->
       <Border Name="ResizeGrip" Height="7" VerticalAlignment="Bottom"
               Background="Transparent" Cursor="SizeNorthSouth"
               IsVisible="{Binding CanResize}" />

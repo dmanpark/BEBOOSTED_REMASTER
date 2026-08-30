@@ -66,7 +66,7 @@ public sealed class Resource
     public string? OriginalFileName { get; }
 
     /// <summary>Documents/images: path relative to the resources directory.</summary>
-    public string? StoredPath { get; }
+    public string? StoredPath { get; private set; }
 
     public DateTimeOffset AddedAt { get; }
 
@@ -127,6 +127,27 @@ public sealed class Resource
     public void Rename(string title, DateTimeOffset now)
     {
         Title = ValidateTitle(title);
+        Touch(now);
+    }
+
+    /// <summary>
+    /// Records a new location after the bytes were moved on disk. Called only once the
+    /// move has succeeded, so the stored path never names a file that is not there.
+    /// </summary>
+    public void RelocateTo(string storedPath, DateTimeOffset now)
+    {
+        if (StoredPath is null)
+        {
+            throw new DomainException("Only a stored document or image has a location to change.");
+        }
+
+        var trimmed = storedPath?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+        {
+            throw new DomainException("A stored resource needs a path.");
+        }
+
+        StoredPath = trimmed;
         Touch(now);
     }
 

@@ -4,7 +4,7 @@
   <!--
     BeBoosted design tokens — Academic Workbench palette.
     Core six colors come from the approved spec; the extended set formalizes
-    colors observed in the Claude Design frames (folio underlay, fixed-event
+    colors observed in the Claude Design frames (folio underlay, synced-event
     cream gray, muted project accents, hover-ink green).
   -->
 
@@ -17,7 +17,7 @@
   <Color x:Key="ColorLimeWash">#EDF8C8</Color>
 
   <!-- Extended semantic colors -->
-  <Color x:Key="ColorFixedCreamGray">#ECE9DC</Color>
+  <Color x:Key="ColorSyncedCream">#ECE9DC</Color>
   <Color x:Key="ColorFolioUnderlay">#F6F3E4</Color>
   <Color x:Key="ColorInkHover">#5A6B1E</Color>
   <Color x:Key="ColorAccentUmber">#C2803F</Color>
@@ -51,7 +51,7 @@
   <SolidColorBrush x:Key="BrushPencilGray" Color="{StaticResource ColorPencilGray}" />
   <SolidColorBrush x:Key="BrushHighlighterLime" Color="{StaticResource ColorHighlighterLime}" />
   <SolidColorBrush x:Key="BrushLimeWash" Color="{StaticResource ColorLimeWash}" />
-  <SolidColorBrush x:Key="BrushFixedCreamGray" Color="{StaticResource ColorFixedCreamGray}" />
+  <SolidColorBrush x:Key="BrushSyncedCream" Color="{StaticResource ColorSyncedCream}" />
   <SolidColorBrush x:Key="BrushFolioUnderlay" Color="{StaticResource ColorFolioUnderlay}" />
   <SolidColorBrush x:Key="BrushInkHover" Color="{StaticResource ColorInkHover}" />
   <SolidColorBrush x:Key="BrushAccentUmber" Color="{StaticResource ColorAccentUmber}" />

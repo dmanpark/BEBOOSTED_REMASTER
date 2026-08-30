@@ -8,16 +8,34 @@ using Microsoft.Data.Sqlite;
 
 namespace BeBoosted.Infrastructure.Tasks;
 
-public sealed class SqliteTaskRepository(SqliteConnectionFactory connectionFactory) : ITaskRepository
+public sealed class SqliteTaskRepository : ITaskRepository
 {
+    private readonly SqliteConnectionFactory? _connectionFactory;
+    private readonly SqliteConnection? _sharedConnection;
+    private readonly SqliteTransaction? _transaction;
+
+    public SqliteTaskRepository(SqliteConnectionFactory connectionFactory)
+        => _connectionFactory = connectionFactory;
+
+    /// <summary>Binds every operation to one shared connection and transaction.</summary>
+    internal SqliteTaskRepository(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        _sharedConnection = connection;
+        _transaction = transaction;
+    }
+
+    private SqliteSession OpenSession() => _sharedConnection is not null
+        ? new SqliteSession(_sharedConnection, _transaction, ownsConnection: false)
+        : new SqliteSession(_connectionFactory!.Open(), null, ownsConnection: true);
+
     private const string Columns =
         "id, title, estimated_minutes, deadline, project_id, not_before, earliest_time, latest_time, " +
         "recurrence, origin, provenance_id, is_completed, completed_at, created_at, modified_at";
 
     public void Add(TaskItem task)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             $"""
             INSERT INTO tasks ({Columns})
@@ -31,8 +49,8 @@ public sealed class SqliteTaskRepository(SqliteConnectionFactory connectionFacto
 
     public void Update(TaskItem task)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             """
             UPDATE tasks SET
@@ -53,8 +71,8 @@ public sealed class SqliteTaskRepository(SqliteConnectionFactory connectionFacto
 
     public void Delete(TaskId id)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = "DELETE FROM tasks WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         command.ExecuteNonQuery();
@@ -62,8 +80,8 @@ public sealed class SqliteTaskRepository(SqliteConnectionFactory connectionFacto
 
     public TaskItem? GetById(TaskId id)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = $"SELECT {Columns} FROM tasks WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         using var reader = command.ExecuteReader();
@@ -77,8 +95,8 @@ public sealed class SqliteTaskRepository(SqliteConnectionFactory connectionFacto
 
     private List<TaskItem> Query(string sql)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = sql;
         using var reader = command.ExecuteReader();
         var tasks = new List<TaskItem>();

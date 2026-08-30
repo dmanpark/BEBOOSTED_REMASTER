@@ -2,7 +2,7 @@ namespace BeBoosted.Domain.Calendar;
 
 /// <summary>
 /// An occurrence of a block on a concrete date (recurrence expanded).
-/// <paramref name="IsCompleted"/> reflects a fixed commitment's per-occurrence
+/// <paramref name="IsCompleted"/> reflects a repeating session's per-occurrence
 /// completion; task blocks track completion through their outcome instead.
 /// </summary>
 public sealed record BlockOccurrence(CalendarBlock Block, DateOnly Date, bool IsCompleted = false)
@@ -16,7 +16,7 @@ public sealed record BlockOccurrence(CalendarBlock Block, DateOnly Date, bool Is
 public readonly record struct TimedItem(CalendarBlockId Id, DateOnly Date, TimeOnly StartTime, TimeOnly EndTime);
 
 /// <summary>
-/// Finds overlapping approved/fixed occurrences. Conflicts are surfaced, never silently
+/// Finds overlapping approved occurrences. Conflicts are surfaced, never silently
 /// resolved — the user moves or changes one of the blocks.
 /// </summary>
 public static class ConflictDetector

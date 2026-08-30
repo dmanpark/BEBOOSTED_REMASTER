@@ -7,16 +7,34 @@ using Microsoft.Data.Sqlite;
 
 namespace BeBoosted.Infrastructure.Projects;
 
-public sealed class SqliteProjectRepository(SqliteConnectionFactory connectionFactory) : IProjectRepository
+public sealed class SqliteProjectRepository : IProjectRepository
 {
+    private readonly SqliteConnectionFactory? _connectionFactory;
+    private readonly SqliteConnection? _sharedConnection;
+    private readonly SqliteTransaction? _transaction;
+
+    public SqliteProjectRepository(SqliteConnectionFactory connectionFactory)
+        => _connectionFactory = connectionFactory;
+
+    /// <summary>Binds every operation to one shared connection and transaction.</summary>
+    internal SqliteProjectRepository(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        _sharedConnection = connection;
+        _transaction = transaction;
+    }
+
+    private SqliteSession OpenSession() => _sharedConnection is not null
+        ? new SqliteSession(_sharedConnection, _transaction, ownsConnection: false)
+        : new SqliteSession(_connectionFactory!.Open(), null, ownsConnection: true);
+
     public void Add(Project project)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             """
-            INSERT INTO projects (id, name, accent_color, created_at, modified_at)
-            VALUES ($id, $name, $accent, $createdAt, $modifiedAt);
+            INSERT INTO projects (id, name, accent_color, folder_segment, created_at, modified_at)
+            VALUES ($id, $name, $accent, $folderSegment, $createdAt, $modifiedAt);
             """;
         Bind(command, project);
         command.ExecuteNonQuery();
@@ -24,11 +42,12 @@ public sealed class SqliteProjectRepository(SqliteConnectionFactory connectionFa
 
     public void Update(Project project)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             """
-            UPDATE projects SET name = $name, accent_color = $accent, modified_at = $modifiedAt
+            UPDATE projects SET name = $name, accent_color = $accent, folder_segment = $folderSegment,
+                modified_at = $modifiedAt
             WHERE id = $id;
             """;
         Bind(command, project);
@@ -40,8 +59,8 @@ public sealed class SqliteProjectRepository(SqliteConnectionFactory connectionFa
 
     public void Delete(ProjectId id)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = "DELETE FROM projects WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         command.ExecuteNonQuery();
@@ -49,10 +68,10 @@ public sealed class SqliteProjectRepository(SqliteConnectionFactory connectionFa
 
     public Project? GetById(ProjectId id)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
-            "SELECT id, name, accent_color, created_at, modified_at FROM projects WHERE id = $id;";
+            "SELECT id, name, accent_color, folder_segment, created_at, modified_at FROM projects WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
@@ -60,10 +79,10 @@ public sealed class SqliteProjectRepository(SqliteConnectionFactory connectionFa
 
     public IReadOnlyList<Project> GetAll()
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
-            "SELECT id, name, accent_color, created_at, modified_at FROM projects ORDER BY created_at;";
+            "SELECT id, name, accent_color, folder_segment, created_at, modified_at FROM projects ORDER BY created_at;";
         using var reader = command.ExecuteReader();
         var projects = new List<Project>();
         while (reader.Read())
@@ -79,6 +98,7 @@ public sealed class SqliteProjectRepository(SqliteConnectionFactory connectionFa
         command.Parameters.AddWithValue("$id", project.Id.ToString());
         command.Parameters.AddWithValue("$name", project.Name);
         command.Parameters.AddWithValue("$accent", project.AccentColor);
+        command.Parameters.AddWithValue("$folderSegment", project.FolderSegment);
         command.Parameters.AddWithValue("$createdAt", project.CreatedAt.ToString("O", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$modifiedAt", project.ModifiedAt.ToString("O", CultureInfo.InvariantCulture));
     }
@@ -88,22 +108,41 @@ public sealed class SqliteProjectRepository(SqliteConnectionFactory connectionFa
             ProjectId.Parse(reader.GetString(0)),
             reader.GetString(1),
             reader.GetString(2),
-            DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture),
-            DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture));
+            DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture),
+            reader.GetString(3));
 }
 
-public sealed class SqliteProjectFileRepository(SqliteConnectionFactory connectionFactory) : IProjectFileRepository
+public sealed class SqliteProjectFileRepository : IProjectFileRepository
 {
-    private const string Columns = "id, project_id, title, description, created_at, modified_at";
+    private readonly SqliteConnectionFactory? _connectionFactory;
+    private readonly SqliteConnection? _sharedConnection;
+    private readonly SqliteTransaction? _transaction;
+
+    private const string Columns = "id, project_id, title, description, folder_segment, created_at, modified_at";
+
+    public SqliteProjectFileRepository(SqliteConnectionFactory connectionFactory)
+        => _connectionFactory = connectionFactory;
+
+    /// <summary>Binds every operation to one shared connection and transaction.</summary>
+    internal SqliteProjectFileRepository(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        _sharedConnection = connection;
+        _transaction = transaction;
+    }
+
+    private SqliteSession OpenSession() => _sharedConnection is not null
+        ? new SqliteSession(_sharedConnection, _transaction, ownsConnection: false)
+        : new SqliteSession(_connectionFactory!.Open(), null, ownsConnection: true);
 
     public void Add(ProjectFile file)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             $"""
             INSERT INTO project_files ({Columns})
-            VALUES ($id, $projectId, $title, $description, $createdAt, $modifiedAt);
+            VALUES ($id, $projectId, $title, $description, $folderSegment, $createdAt, $modifiedAt);
             """;
         Bind(command, file);
         command.ExecuteNonQuery();
@@ -111,11 +150,12 @@ public sealed class SqliteProjectFileRepository(SqliteConnectionFactory connecti
 
     public void Update(ProjectFile file)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             """
-            UPDATE project_files SET title = $title, description = $description, modified_at = $modifiedAt
+            UPDATE project_files SET title = $title, description = $description,
+                folder_segment = $folderSegment, modified_at = $modifiedAt
             WHERE id = $id;
             """;
         Bind(command, file);
@@ -127,8 +167,8 @@ public sealed class SqliteProjectFileRepository(SqliteConnectionFactory connecti
 
     public void Delete(ProjectFileId id)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = "DELETE FROM project_files WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         command.ExecuteNonQuery();
@@ -136,8 +176,8 @@ public sealed class SqliteProjectFileRepository(SqliteConnectionFactory connecti
 
     public ProjectFile? GetById(ProjectFileId id)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = $"SELECT {Columns} FROM project_files WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         using var reader = command.ExecuteReader();
@@ -146,8 +186,8 @@ public sealed class SqliteProjectFileRepository(SqliteConnectionFactory connecti
 
     public IReadOnlyList<ProjectFile> GetForProject(ProjectId projectId)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = $"SELECT {Columns} FROM project_files WHERE project_id = $projectId ORDER BY created_at;";
         command.Parameters.AddWithValue("$projectId", projectId.ToString());
         using var reader = command.ExecuteReader();
@@ -166,6 +206,7 @@ public sealed class SqliteProjectFileRepository(SqliteConnectionFactory connecti
         command.Parameters.AddWithValue("$projectId", file.ProjectId.ToString());
         command.Parameters.AddWithValue("$title", file.Title);
         command.Parameters.AddWithValue("$description", (object?)file.Description ?? DBNull.Value);
+        command.Parameters.AddWithValue("$folderSegment", file.FolderSegment);
         command.Parameters.AddWithValue("$createdAt", file.CreatedAt.ToString("O", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$modifiedAt", file.ModifiedAt.ToString("O", CultureInfo.InvariantCulture));
     }
@@ -176,19 +217,38 @@ public sealed class SqliteProjectFileRepository(SqliteConnectionFactory connecti
             ProjectId.Parse(reader.GetString(1)),
             reader.GetString(2),
             reader.IsDBNull(3) ? null : reader.GetString(3),
-            DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture),
-            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture));
+            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse(reader.GetString(6), CultureInfo.InvariantCulture),
+            reader.GetString(4));
 }
 
-public sealed class SqliteResourceRepository(SqliteConnectionFactory connectionFactory) : IResourceRepository
+public sealed class SqliteResourceRepository : IResourceRepository
 {
+    private readonly SqliteConnectionFactory? _connectionFactory;
+    private readonly SqliteConnection? _sharedConnection;
+    private readonly SqliteTransaction? _transaction;
+
     private const string Columns =
         "id, file_id, kind, title, url, content, original_file_name, stored_path, added_at, index_state, modified_at";
 
+    public SqliteResourceRepository(SqliteConnectionFactory connectionFactory)
+        => _connectionFactory = connectionFactory;
+
+    /// <summary>Binds every operation to one shared connection and transaction.</summary>
+    internal SqliteResourceRepository(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        _sharedConnection = connection;
+        _transaction = transaction;
+    }
+
+    private SqliteSession OpenSession() => _sharedConnection is not null
+        ? new SqliteSession(_sharedConnection, _transaction, ownsConnection: false)
+        : new SqliteSession(_connectionFactory!.Open(), null, ownsConnection: true);
+
     public void Add(Resource resource)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             $"""
             INSERT INTO resources ({Columns})
@@ -201,19 +261,21 @@ public sealed class SqliteResourceRepository(SqliteConnectionFactory connectionF
 
     public void Update(Resource resource)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             """
             UPDATE resources SET
-                title = $title, url = $url, content = $content, index_state = $indexState,
-                modified_at = $modifiedAt
+                title = $title, url = $url, content = $content, stored_path = $storedPath,
+                index_state = $indexState, modified_at = $modifiedAt
             WHERE id = $id;
             """;
         command.Parameters.AddWithValue("$id", resource.Id.ToString());
         command.Parameters.AddWithValue("$title", resource.Title);
         command.Parameters.AddWithValue("$url", (object?)resource.Url ?? DBNull.Value);
         command.Parameters.AddWithValue("$content", (object?)resource.Content ?? DBNull.Value);
+        // The layout reconciler relocates stored bytes, so the path is no longer fixed.
+        command.Parameters.AddWithValue("$storedPath", (object?)resource.StoredPath ?? DBNull.Value);
         command.Parameters.AddWithValue("$indexState", (long)resource.IndexState);
         command.Parameters.AddWithValue("$modifiedAt", resource.ModifiedAt.ToString("O", CultureInfo.InvariantCulture));
         if (command.ExecuteNonQuery() == 0)
@@ -224,8 +286,8 @@ public sealed class SqliteResourceRepository(SqliteConnectionFactory connectionF
 
     public void Delete(ResourceId id)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = "DELETE FROM resources WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         command.ExecuteNonQuery();
@@ -233,8 +295,8 @@ public sealed class SqliteResourceRepository(SqliteConnectionFactory connectionF
 
     public Resource? GetById(ResourceId id)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = $"SELECT {Columns} FROM resources WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         using var reader = command.ExecuteReader();
@@ -243,8 +305,8 @@ public sealed class SqliteResourceRepository(SqliteConnectionFactory connectionF
 
     public IReadOnlyList<Resource> GetForFile(ProjectFileId fileId)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = $"SELECT {Columns} FROM resources WHERE file_id = $fileId ORDER BY added_at;";
         command.Parameters.AddWithValue("$fileId", fileId.ToString());
         using var reader = command.ExecuteReader();
@@ -259,8 +321,8 @@ public sealed class SqliteResourceRepository(SqliteConnectionFactory connectionF
 
     public int CountForFile(ProjectFileId fileId)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM resources WHERE file_id = $fileId;";
         command.Parameters.AddWithValue("$fileId", fileId.ToString());
         return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
@@ -268,8 +330,8 @@ public sealed class SqliteResourceRepository(SqliteConnectionFactory connectionF
 
     public void SetIndexText(ResourceId id, string text)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText = "UPDATE resources SET index_text = $text WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         command.Parameters.AddWithValue("$text", text);
@@ -278,8 +340,8 @@ public sealed class SqliteResourceRepository(SqliteConnectionFactory connectionF
 
     public IReadOnlyList<Resource> SearchInProject(ProjectId projectId, string query)
     {
-        using var connection = connectionFactory.Open();
-        using var command = connection.CreateCommand();
+        using var session = OpenSession();
+        using var command = session.CreateCommand();
         command.CommandText =
             """
             SELECT r.id, r.file_id, r.kind, r.title, r.url, r.content, r.original_file_name,
