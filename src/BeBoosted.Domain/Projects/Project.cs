@@ -68,9 +68,9 @@ public sealed class Project
         ProjectId id,
         string name,
         string accentColor,
-        string folderSegment,
         DateTimeOffset createdAt,
-        DateTimeOffset modifiedAt)
+        DateTimeOffset modifiedAt,
+        string folderSegment)
         => new(id, name, accentColor, folderSegment, createdAt, modifiedAt);
 
     public void Rename(string name, DateTimeOffset now)

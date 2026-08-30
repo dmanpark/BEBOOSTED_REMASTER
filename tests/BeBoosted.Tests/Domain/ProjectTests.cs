@@ -49,7 +49,7 @@ public sealed class ProjectTests
     public void Rehydrate_CarriesTheStoredFolderSegment()
     {
         var project = Project.Rehydrate(
-            ProjectId.New(), "DECA", "#5B8DEF", "DECA-2", Now, Now);
+            ProjectId.New(), "DECA", "#5B8DEF", Now, Now, "DECA-2");
 
         Assert.Equal("DECA-2", project.FolderSegment);
     }

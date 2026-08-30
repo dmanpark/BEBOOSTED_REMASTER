@@ -108,9 +108,9 @@ public sealed class SqliteProjectRepository : IProjectRepository
             ProjectId.Parse(reader.GetString(0)),
             reader.GetString(1),
             reader.GetString(2),
-            reader.GetString(3),
             DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture),
-            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture));
+            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture),
+            reader.GetString(3));
 }
 
 public sealed class SqliteProjectFileRepository : IProjectFileRepository
@@ -217,9 +217,9 @@ public sealed class SqliteProjectFileRepository : IProjectFileRepository
             ProjectId.Parse(reader.GetString(1)),
             reader.GetString(2),
             reader.IsDBNull(3) ? null : reader.GetString(3),
-            reader.GetString(4),
             DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture),
-            DateTimeOffset.Parse(reader.GetString(6), CultureInfo.InvariantCulture));
+            DateTimeOffset.Parse(reader.GetString(6), CultureInfo.InvariantCulture),
+            reader.GetString(4));
 }
 
 public sealed class SqliteResourceRepository : IResourceRepository

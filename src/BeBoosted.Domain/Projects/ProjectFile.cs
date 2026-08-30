@@ -52,9 +52,9 @@ public sealed class ProjectFile
         ProjectId projectId,
         string title,
         string? description,
-        string folderSegment,
         DateTimeOffset createdAt,
-        DateTimeOffset modifiedAt)
+        DateTimeOffset modifiedAt,
+        string folderSegment)
         => new(id, projectId, title, description, folderSegment, createdAt, modifiedAt);
 
     public void Rename(string title, DateTimeOffset now)

@@ -47,7 +47,7 @@ public sealed class ProjectFileTests
     public void Rehydrate_CarriesTheStoredFolderSegment()
     {
         var file = ProjectFile.Rehydrate(
-            ProjectFileId.New(), ProjectId.New(), "Transcripts", null, "Transcripts-2", Now, Now);
+            ProjectFileId.New(), ProjectId.New(), "Transcripts", null, Now, Now, "Transcripts-2");
 
         Assert.Equal("Transcripts-2", file.FolderSegment);
     }
