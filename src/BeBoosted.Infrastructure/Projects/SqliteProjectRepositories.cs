@@ -33,8 +33,8 @@ public sealed class SqliteProjectRepository : IProjectRepository
         using var command = session.CreateCommand();
         command.CommandText =
             """
-            INSERT INTO projects (id, name, accent_color, created_at, modified_at)
-            VALUES ($id, $name, $accent, $createdAt, $modifiedAt);
+            INSERT INTO projects (id, name, accent_color, folder_segment, created_at, modified_at)
+            VALUES ($id, $name, $accent, $folderSegment, $createdAt, $modifiedAt);
             """;
         Bind(command, project);
         command.ExecuteNonQuery();
@@ -46,7 +46,8 @@ public sealed class SqliteProjectRepository : IProjectRepository
         using var command = session.CreateCommand();
         command.CommandText =
             """
-            UPDATE projects SET name = $name, accent_color = $accent, modified_at = $modifiedAt
+            UPDATE projects SET name = $name, accent_color = $accent, folder_segment = $folderSegment,
+                modified_at = $modifiedAt
             WHERE id = $id;
             """;
         Bind(command, project);
@@ -70,7 +71,7 @@ public sealed class SqliteProjectRepository : IProjectRepository
         using var session = OpenSession();
         using var command = session.CreateCommand();
         command.CommandText =
-            "SELECT id, name, accent_color, created_at, modified_at FROM projects WHERE id = $id;";
+            "SELECT id, name, accent_color, folder_segment, created_at, modified_at FROM projects WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString());
         using var reader = command.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
@@ -81,7 +82,7 @@ public sealed class SqliteProjectRepository : IProjectRepository
         using var session = OpenSession();
         using var command = session.CreateCommand();
         command.CommandText =
-            "SELECT id, name, accent_color, created_at, modified_at FROM projects ORDER BY created_at;";
+            "SELECT id, name, accent_color, folder_segment, created_at, modified_at FROM projects ORDER BY created_at;";
         using var reader = command.ExecuteReader();
         var projects = new List<Project>();
         while (reader.Read())
@@ -97,6 +98,7 @@ public sealed class SqliteProjectRepository : IProjectRepository
         command.Parameters.AddWithValue("$id", project.Id.ToString());
         command.Parameters.AddWithValue("$name", project.Name);
         command.Parameters.AddWithValue("$accent", project.AccentColor);
+        command.Parameters.AddWithValue("$folderSegment", project.FolderSegment);
         command.Parameters.AddWithValue("$createdAt", project.CreatedAt.ToString("O", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$modifiedAt", project.ModifiedAt.ToString("O", CultureInfo.InvariantCulture));
     }
@@ -106,8 +108,9 @@ public sealed class SqliteProjectRepository : IProjectRepository
             ProjectId.Parse(reader.GetString(0)),
             reader.GetString(1),
             reader.GetString(2),
-            DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture),
-            DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture));
+            reader.GetString(3),
+            DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture));
 }
 
 public sealed class SqliteProjectFileRepository : IProjectFileRepository
@@ -116,7 +119,7 @@ public sealed class SqliteProjectFileRepository : IProjectFileRepository
     private readonly SqliteConnection? _sharedConnection;
     private readonly SqliteTransaction? _transaction;
 
-    private const string Columns = "id, project_id, title, description, created_at, modified_at";
+    private const string Columns = "id, project_id, title, description, folder_segment, created_at, modified_at";
 
     public SqliteProjectFileRepository(SqliteConnectionFactory connectionFactory)
         => _connectionFactory = connectionFactory;
@@ -139,7 +142,7 @@ public sealed class SqliteProjectFileRepository : IProjectFileRepository
         command.CommandText =
             $"""
             INSERT INTO project_files ({Columns})
-            VALUES ($id, $projectId, $title, $description, $createdAt, $modifiedAt);
+            VALUES ($id, $projectId, $title, $description, $folderSegment, $createdAt, $modifiedAt);
             """;
         Bind(command, file);
         command.ExecuteNonQuery();
@@ -151,7 +154,8 @@ public sealed class SqliteProjectFileRepository : IProjectFileRepository
         using var command = session.CreateCommand();
         command.CommandText =
             """
-            UPDATE project_files SET title = $title, description = $description, modified_at = $modifiedAt
+            UPDATE project_files SET title = $title, description = $description,
+                folder_segment = $folderSegment, modified_at = $modifiedAt
             WHERE id = $id;
             """;
         Bind(command, file);
@@ -202,6 +206,7 @@ public sealed class SqliteProjectFileRepository : IProjectFileRepository
         command.Parameters.AddWithValue("$projectId", file.ProjectId.ToString());
         command.Parameters.AddWithValue("$title", file.Title);
         command.Parameters.AddWithValue("$description", (object?)file.Description ?? DBNull.Value);
+        command.Parameters.AddWithValue("$folderSegment", file.FolderSegment);
         command.Parameters.AddWithValue("$createdAt", file.CreatedAt.ToString("O", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$modifiedAt", file.ModifiedAt.ToString("O", CultureInfo.InvariantCulture));
     }
@@ -212,8 +217,9 @@ public sealed class SqliteProjectFileRepository : IProjectFileRepository
             ProjectId.Parse(reader.GetString(1)),
             reader.GetString(2),
             reader.IsDBNull(3) ? null : reader.GetString(3),
-            DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture),
-            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture));
+            reader.GetString(4),
+            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse(reader.GetString(6), CultureInfo.InvariantCulture));
 }
 
 public sealed class SqliteResourceRepository : IResourceRepository
