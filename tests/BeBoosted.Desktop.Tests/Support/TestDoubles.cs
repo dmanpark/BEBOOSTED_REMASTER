@@ -309,6 +309,7 @@ public sealed class InMemoryResourceRepository : IResourceRepository
 public sealed class FakeResourceStorage : IResourceStorage
 {
     private readonly HashSet<string> _stored = [];
+    private readonly HashSet<string> _folders = [];
 
     public string Store(string relativeFolder, string preferredFileName, string sourcePath)
     {
@@ -334,6 +335,28 @@ public sealed class FakeResourceStorage : IResourceStorage
     public bool Exists(string storedPath) => _stored.Contains(storedPath);
 
     public void Delete(string storedPath) => _stored.Remove(storedPath);
+
+    public string ReserveFolderSegment(
+        string relativeParent, string preferredSegment, IReadOnlySet<string> claimed, string? ownedSegment = null)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var candidate = attempt == 1 ? preferredSegment : $"{preferredSegment} ({attempt})";
+            if (claimed.Contains(candidate))
+            {
+                continue;
+            }
+
+            var isOwned = ownedSegment is not null
+                && string.Equals(candidate, ownedSegment, StringComparison.OrdinalIgnoreCase);
+            var storedPath = Path.Combine(relativeParent, candidate);
+            if (isOwned || (!_stored.Contains(storedPath) && !_folders.Contains(storedPath)))
+            {
+                _folders.Add(storedPath);
+                return candidate;
+            }
+        }
+    }
 
     private string FreePath(string relativeFolder, string preferredFileName)
     {

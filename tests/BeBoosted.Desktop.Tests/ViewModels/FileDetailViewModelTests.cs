@@ -87,6 +87,10 @@ public sealed class FileDetailViewModelTests
 
         public string ResolvePath(string storedPath) => _inner.ResolvePath(storedPath);
 
+        public string ReserveFolderSegment(
+            string relativeParent, string preferredSegment, IReadOnlySet<string> claimed, string? ownedSegment = null)
+            => _inner.ReserveFolderSegment(relativeParent, preferredSegment, claimed, ownedSegment);
+
         public bool Exists(string storedPath) => _inner.Exists(storedPath);
 
         public void Delete(string storedPath) => _inner.Delete(storedPath);

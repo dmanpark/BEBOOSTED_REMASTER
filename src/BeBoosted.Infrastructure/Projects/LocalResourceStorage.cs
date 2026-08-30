@@ -90,6 +90,38 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
         }
     }
 
+    /// <summary>
+    /// Reserves a folder name inside <paramref name="relativeParent"/>, probing the
+    /// "(2)", "(3)", … suffix shape on collision, and creates the directory before
+    /// returning — the directory IS the claim, closing the gap between checking a name
+    /// is free and using it. A candidate is occupied when it is in <paramref name="claimed"/>,
+    /// or already exists on disk as a file or a directory; the one exception is
+    /// <paramref name="ownedSegment"/>, this entity's own directory, which is handed back
+    /// unchanged rather than displaced — unless <paramref name="claimed"/> already holds it,
+    /// which always wins.
+    /// </summary>
+    public string ReserveFolderSegment(
+        string relativeParent, string preferredSegment, IReadOnlySet<string> claimed, string? ownedSegment = null)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var candidate = ResourceLayout.CandidateName(preferredSegment, attempt);
+            if (claimed.Contains(candidate))
+            {
+                continue;
+            }
+
+            var isOwned = ownedSegment is not null
+                && string.Equals(candidate, ownedSegment, StringComparison.OrdinalIgnoreCase);
+            var absolute = ResolvePath(Path.Combine(relativeParent, candidate));
+            if (isOwned || (!File.Exists(absolute) && !Directory.Exists(absolute)))
+            {
+                Directory.CreateDirectory(absolute);
+                return candidate;
+            }
+        }
+    }
+
     public void Delete(string storedPath)
     {
         try
@@ -117,7 +149,8 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
                 ? preferredFileName
                 : string.Create(CultureInfo.InvariantCulture, $"{stem} ({attempt}){extension}");
             var storedPath = Path.Combine(relativeFolder, candidate);
-            if (!File.Exists(ResolvePath(storedPath)))
+            var absolute = ResolvePath(storedPath);
+            if (!File.Exists(absolute) && !Directory.Exists(absolute))
             {
                 return storedPath;
             }

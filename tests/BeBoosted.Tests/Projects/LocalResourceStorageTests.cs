@@ -120,6 +120,74 @@ public sealed class LocalResourceStorageTests : IDisposable
     public void MoveInto_ReturnsNullWhenTheSourceIsGone()
         => Assert.Null(_storage.MoveInto("missing.pdf", "College", "Transcript.pdf"));
 
+    /// <summary>A file occupying the candidate name must not be handed out as a folder segment.</summary>
+    [Fact]
+    public void ReserveFolderSegment_SkipsACandidateOccupiedByAFile()
+    {
+        const string parent = "College";
+        Directory.CreateDirectory(_storage.ResolvePath(parent));
+        File.WriteAllText(_storage.ResolvePath(Path.Combine(parent, "Notes")), "not a folder");
+
+        var segment = _storage.ReserveFolderSegment(parent, "Notes", new HashSet<string>());
+
+        Assert.NotEqual("Notes", segment);
+    }
+
+    /// <summary>
+    /// A directory occupying the preferred file name must not be targeted by <see cref="Store"/> —
+    /// this fails today: <see cref="File.Copy(string, string)"/> onto a directory throws.
+    /// </summary>
+    [Fact]
+    public void Store_SkipsAFileNameThatCollidesWithADirectory()
+    {
+        const string folder = "College";
+        Directory.CreateDirectory(_storage.ResolvePath(Path.Combine(folder, "Notes")));
+
+        var stored = _storage.Store(folder, "Notes", CreateSource("src.notes"));
+
+        Assert.Equal(Path.Combine(folder, "Notes (2)"), stored);
+        Assert.True(File.Exists(_storage.ResolvePath(stored)));
+    }
+
+    /// <summary>Reserving a folder segment IS the claim: the directory must exist afterward.</summary>
+    [Fact]
+    public void ReserveFolderSegment_CreatesTheDirectory_AsItsClaim()
+    {
+        const string parent = "College";
+
+        var segment = _storage.ReserveFolderSegment(parent, "Metric Proof", new HashSet<string>());
+
+        Assert.True(Directory.Exists(_storage.ResolvePath(Path.Combine(parent, segment))));
+    }
+
+    /// <summary>
+    /// A rename that lands back on the entity's own directory must keep it rather than
+    /// advancing to "(2)" and moving every byte for nothing.
+    /// </summary>
+    [Fact]
+    public void ReserveFolderSegment_KeepsTheOwnedSegment_EvenThoughItExistsOnDisk()
+    {
+        const string parent = "College";
+        Directory.CreateDirectory(_storage.ResolvePath(Path.Combine(parent, "Notes")));
+
+        var segment = _storage.ReserveFolderSegment(parent, "Notes", new HashSet<string>(), ownedSegment: "Notes");
+
+        Assert.Equal("Notes", segment);
+    }
+
+    /// <summary>A sibling's in-flight claim outranks this entity's own remembered segment.</summary>
+    [Fact]
+    public void ReserveFolderSegment_ClaimedBeatsOwnedSegment()
+    {
+        const string parent = "College";
+        Directory.CreateDirectory(_storage.ResolvePath(Path.Combine(parent, "Notes")));
+
+        var segment = _storage.ReserveFolderSegment(
+            parent, "Notes", new HashSet<string> { "Notes" }, ownedSegment: "Notes");
+
+        Assert.NotEqual("Notes", segment);
+    }
+
     public void Dispose()
     {
         try

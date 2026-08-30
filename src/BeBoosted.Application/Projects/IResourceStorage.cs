@@ -22,6 +22,20 @@ public interface IResourceStorage
     /// </summary>
     string? MoveInto(string currentStoredPath, string relativeFolder, string preferredFileName);
 
+    /// <summary>
+    /// Claims a folder name inside <paramref name="relativeParent"/>, disambiguating on
+    /// collision the same way <see cref="Store"/> does for file names, and creates the
+    /// directory before returning — claiming a folder name is worthless if a later
+    /// import can still take it before it is used. A candidate already present in
+    /// <paramref name="claimed"/>, or already occupying disk space as a file or a
+    /// directory, is skipped, except that a candidate equal to
+    /// <paramref name="ownedSegment"/> — this entity's own directory — is returned
+    /// unchanged rather than displaced; <paramref name="claimed"/> still overrides that
+    /// exception when a sibling has already taken the name.
+    /// </summary>
+    string ReserveFolderSegment(
+        string relativeParent, string preferredSegment, IReadOnlySet<string> claimed, string? ownedSegment = null);
+
     /// <summary>Absolute path for a stored resource.</summary>
     string ResolvePath(string storedPath);
 
