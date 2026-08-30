@@ -80,9 +80,12 @@ public partial class App : Avalonia.Application
                 // verbatim — so reconciling first would resolve every legacy document's
                 // folder to the resources root and flatten the whole library into it.
                 // Backfill claims each row's existing directory, and only then does the
-                // reconciler have a layout worth agreeing with. Sharing one try/catch is
-                // part of that: if the backfill fails, the reconcile it protects against
-                // is skipped too, and both are retried on the next start.
+                // reconciler have a layout worth agreeing with.
+                //
+                // The ordering only governs this sweep, though. ProjectService reconciles
+                // a single Project on rename, outside this block entirely, so it can meet
+                // a row the backfill skipped. The reconciler therefore refuses the
+                // half-backfilled shape itself rather than trusting this call order.
                 var claimed = _services.GetRequiredService<FolderIdentityBackfill>().Backfill();
                 if (claimed > 0)
                 {

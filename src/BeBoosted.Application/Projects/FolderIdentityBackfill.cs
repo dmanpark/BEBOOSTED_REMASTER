@@ -18,10 +18,16 @@ namespace BeBoosted.Application.Projects;
 /// two entities cannot both own one directory, which is why every reserved segment joins
 /// <c>claimed</c> as it is taken.
 ///
-/// Like <see cref="ResourceLayoutReconciler"/> this is cosmetic bookkeeping, and a
-/// failure is caught at the call site rather than here: aborting leaves rows unclaimed,
-/// which is the state the next run repairs, and — because the two share one try/catch —
-/// stops the reconciler from running against them in the meantime.
+/// Like <see cref="ResourceLayoutReconciler"/> this is cosmetic bookkeeping and recovers
+/// per entity rather than aborting. A transient fault would converge on its own — each row
+/// is persisted the moment its directory is claimed, and the next run seeds <c>claimed</c>
+/// from those persisted segments and carries on — but a deterministic one (a path-length
+/// limit, an ACL, a rejected update) would meet the same row on every launch and strand
+/// every row behind it forever. A skipped entity keeps the sentinel and costs only itself.
+///
+/// That is why <see cref="BackfillFiles"/> states the invariant the old abort-everything
+/// shape held implicitly: a Project still holding the sentinel has its Files skipped too,
+/// so no File ever reserves beneath the empty string.
 /// </summary>
 public sealed class FolderIdentityBackfill(
     IProjectRepository projects,
@@ -50,13 +56,23 @@ public sealed class FolderIdentityBackfill(
         var filled = 0;
         foreach (var project in all.Where(project => project.FolderSegment.Length == 0))
         {
-            var preferred = ResourceLayout.Sanitize(project.Name, project.Id.ToString());
-            var reserved = storage.ReserveFolderSegment(
-                string.Empty, preferred, claimed, ownedSegment: preferred);
-            claimed.Add(reserved);
-            project.RelocateTo(reserved, clock.Now);
-            projects.Update(project);
-            filled++;
+            try
+            {
+                var preferred = ResourceLayout.Sanitize(project.Name, project.Id.ToString());
+                var reserved = storage.ReserveFolderSegment(
+                    string.Empty, preferred, claimed, ownedSegment: preferred);
+                claimed.Add(reserved);
+                project.RelocateTo(reserved, clock.Now);
+                projects.Update(project);
+                filled++;
+            }
+            catch (Exception)
+            {
+                // A deterministic wall on one folder name — a path-length limit, an ACL,
+                // a rejected update — would otherwise strand every later row against the
+                // same obstacle on every launch, and take the reconciler down with it.
+                // This Project keeps the sentinel and is retried on the next run.
+            }
         }
 
         return filled;
@@ -71,6 +87,15 @@ public sealed class FolderIdentityBackfill(
         var filled = 0;
         foreach (var project in projects.GetAll())
         {
+            if (project.FolderSegment.Length == 0)
+            {
+                // Its own backfill failed. Reserving beneath the sentinel would put this
+                // File's folder in the resources root, so the whole Project waits for the
+                // next run. Running the passes in order is what makes this the only way a
+                // Project can still be unclaimed by the time its Files are reached.
+                continue;
+            }
+
             var siblings = files.GetForProject(project.Id);
 
             // One set per Project, not one for the whole store: two Files of different
@@ -79,13 +104,21 @@ public sealed class FolderIdentityBackfill(
 
             foreach (var file in siblings.Where(file => file.FolderSegment.Length == 0))
             {
-                var preferred = ResourceLayout.Sanitize(file.Title, file.Id.ToString());
-                var reserved = storage.ReserveFolderSegment(
-                    project.FolderSegment, preferred, claimed, ownedSegment: preferred);
-                claimed.Add(reserved);
-                file.RelocateTo(reserved, clock.Now);
-                files.Update(file);
-                filled++;
+                try
+                {
+                    var preferred = ResourceLayout.Sanitize(file.Title, file.Id.ToString());
+                    var reserved = storage.ReserveFolderSegment(
+                        project.FolderSegment, preferred, claimed, ownedSegment: preferred);
+                    claimed.Add(reserved);
+                    file.RelocateTo(reserved, clock.Now);
+                    files.Update(file);
+                    filled++;
+                }
+                catch (Exception)
+                {
+                    // Same bargain as a Project: one unclaimable File keeps the sentinel
+                    // and is retried, rather than stranding its siblings behind it.
+                }
             }
         }
 

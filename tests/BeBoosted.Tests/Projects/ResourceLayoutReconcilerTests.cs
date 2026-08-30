@@ -362,6 +362,45 @@ public sealed class ResourceLayoutReconcilerTests : IDisposable
         Assert.Equal("project A bytes", File.ReadAllText(_storage.ResolvePath(resourceA.StoredPath!)));
     }
 
+    /// <summary>
+    /// The half-backfilled shape: a Project holds a claimed segment while one of its Files
+    /// still holds the empty sentinel. A backfill that skipped that Project leaves it, and
+    /// a later rename then hands the Project a segment — <c>RenameProject</c> calls
+    /// <see cref="ResourceLayoutReconciler.ReconcileProject"/> directly, outside the
+    /// startup try/catch the backfill shares, so this state genuinely reaches the
+    /// reconciler. <c>FolderFor</c> computes <c>Path.Combine("DECA", "")</c> = "DECA", and
+    /// every document in the File's subfolder is flattened into the project root.
+    ///
+    /// Only this mixed shape is skipped. Both segments empty is the pure legacy state and
+    /// must still be reconciled — see
+    /// <see cref="ReconcileProject_NeverAdoptsAnotherOwnersFile_EvenWhenTheirFoldersCollide"/>,
+    /// which builds exactly that and would pass vacuously under a broader guard.
+    /// </summary>
+    [Fact]
+    public void ReconcileProject_SkipsAFileStillHoldingTheEmptySegment_WhenItsProjectHasOne()
+    {
+        var project = Project.Create("DECA", "#ffffff", _clock.Now);
+        project.RelocateTo("DECA", _clock.Now);
+        _projects.Add(project);
+
+        var file = ProjectFile.Create(project.Id, "Notes", null, _clock.Now);
+        _files.Add(file);
+
+        var stored = Path.Combine("DECA", "Notes", "Agenda.pdf");
+        var resource = Resource.CreateStored(
+            file.Id, ResourceKind.Document, "Agenda", "Agenda.pdf", stored, _clock.Now);
+        var absolute = _storage.ResolvePath(stored);
+        Directory.CreateDirectory(Path.GetDirectoryName(absolute)!);
+        File.WriteAllText(absolute, "agenda");
+        _resources.Add(resource);
+
+        Assert.Equal(0, CreateReconciler().ReconcileProject(project.Id));
+
+        Assert.Equal(stored, _resources.GetById(resource.Id)!.StoredPath);
+        Assert.Equal("agenda", File.ReadAllText(_storage.ResolvePath(stored)));
+        Assert.False(_storage.Exists(Path.Combine("DECA", "Agenda.pdf")));
+    }
+
     public void Dispose()
     {
         _database.Dispose();

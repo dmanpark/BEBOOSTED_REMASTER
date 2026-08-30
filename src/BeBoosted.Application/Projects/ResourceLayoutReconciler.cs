@@ -43,6 +43,20 @@ public sealed class ResourceLayoutReconciler(
 
         foreach (var file in files.GetForProject(project.Id))
         {
+            if (file.FolderSegment.Length == 0 && project.FolderSegment.Length != 0)
+            {
+                // Half-backfilled: the Project holds a claimed segment, this File never
+                // got one. FolderFor would combine them into the Project's own folder and
+                // flatten every document here into it. Nothing legitimate produces this —
+                // CreateFile always reserves — so it means FolderIdentityBackfill skipped
+                // this Project and a rename has since given it a segment. Wait for the
+                // backfill to finish the job; the documents stay usable meanwhile.
+                //
+                // Deliberately narrow: BOTH segments empty is the pure pre-0012 state and
+                // must still reconcile.
+                continue;
+            }
+
             var folder = ResourceLayout.FolderFor(project, file);
             var fileResources = resources.GetForFile(file.Id);
             foreach (var resource in fileResources)

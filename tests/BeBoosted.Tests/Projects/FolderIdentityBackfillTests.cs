@@ -137,8 +137,9 @@ public sealed class FolderIdentityBackfillTests : IDisposable
     /// The mixed database an upgrade actually produces: one Project created since 0012
     /// already holds "DECA", one legacy row still derives it. Provisional ownership makes
     /// the backfill treat an existing directory as its own, so without the live claim in
-    /// <c>claimed</c> the legacy row walks straight into a Project's live folder — and the
-    /// legacy row is reached first, so nothing else stands in its way.
+    /// <c>claimed</c> the legacy row walks straight into a Project's live folder. Only the
+    /// seeding stops it: which row is reached first does not matter, since the live one is
+    /// skipped by the non-empty filter either way and never adds itself to the set.
     /// </summary>
     [Fact]
     public void Backfill_NeverTakesASegmentAnotherProjectAlreadyHolds()
@@ -247,6 +248,89 @@ public sealed class FolderIdentityBackfillTests : IDisposable
         Assert.Equal("Notes", _files.GetById(betaNotes.Id)!.FolderSegment);
         Assert.True(Directory.Exists(Path.Combine(_paths.ResourcesDirectory, "Alpha", "Notes")));
         Assert.True(Directory.Exists(Path.Combine(_paths.ResourcesDirectory, "Beta", "Notes")));
+    }
+
+    /// <summary>
+    /// The File-level twin of <see cref="Backfill_NeverTakesASegmentAnotherProjectAlreadyHolds"/>,
+    /// and the reason the per-Project sets are seeded rather than merely accumulated.
+    /// Inside one Project, a File created since 0012 already holds "Notes" while a legacy
+    /// sibling derives the same name; provisional ownership would hand the legacy row its
+    /// live sibling's folder. Unlike the Project-level set this one is rebuilt per Project,
+    /// so the seeding is easy to drop on one side and not the other.
+    /// </summary>
+    [Fact]
+    public void Backfill_NeverTakesASegmentASiblingFileAlreadyHolds()
+    {
+        var project = SeedLegacyProject("DECA");
+        project.RelocateTo("DECA", _clock.Now);
+        _projects.Update(project);
+
+        var legacy = SeedLegacyFile(project, "Notes", order: 0);
+        var live = SeedLegacyFile(project, "Notes", order: 1);
+        live.RelocateTo("Notes", _clock.Now);
+        _files.Update(live);
+        Directory.CreateDirectory(Path.Combine(_paths.ResourcesDirectory, "DECA", "Notes"));
+
+        CreateBackfill().Backfill();
+
+        Assert.Equal("Notes (2)", _files.GetById(legacy.Id)!.FolderSegment);
+        Assert.Equal("Notes", _files.GetById(live.Id)!.FolderSegment);
+    }
+
+    /// <summary>
+    /// Delegates everything; <c>ReserveFolderSegment</c> throws for one chosen segment —
+    /// a deterministic wall (a path-length limit, an ACL, a rejected name) rather than a
+    /// transient one, so it hits the same row on every single run.
+    /// </summary>
+    private sealed class SabotagedStorage(IResourceStorage inner, string failOnSegment) : IResourceStorage
+    {
+        public string Store(string relativeFolder, string preferredFileName, string sourcePath)
+            => inner.Store(relativeFolder, preferredFileName, sourcePath);
+
+        public string? MoveInto(string currentStoredPath, string relativeFolder, string preferredFileName)
+            => inner.MoveInto(currentStoredPath, relativeFolder, preferredFileName);
+
+        public string ReserveFolderSegment(
+            string relativeParent, string preferredSegment, IReadOnlySet<string> claimed, string? ownedSegment = null)
+            => string.Equals(preferredSegment, failOnSegment, StringComparison.Ordinal)
+                ? throw new IOException("the filesystem refused this name")
+                : inner.ReserveFolderSegment(relativeParent, preferredSegment, claimed, ownedSegment);
+
+        public string ResolvePath(string storedPath) => inner.ResolvePath(storedPath);
+
+        public bool Exists(string storedPath) => inner.Exists(storedPath);
+
+        public void Delete(string storedPath) => inner.Delete(storedPath);
+    }
+
+    /// <summary>
+    /// A deterministic failure on one folder name must cost exactly that Project and its
+    /// Files. Aborting the whole pass would stand every later row up against the same wall
+    /// on every launch — permanently unclaimed, and with the reconciler never running
+    /// again either, since it sits after the backfill in one shared try.
+    ///
+    /// The skipped Project's File must not then fall back to reserving in the resources
+    /// root. Abort-everything used to prevent that implicitly; per-entity recovery has to
+    /// state it, so <c>BackfillFiles</c> skips any Project still holding the sentinel.
+    /// </summary>
+    [Fact]
+    public void Backfill_SkipsOnlyTheProjectWhoseReservationFails_AndItsFiles()
+    {
+        var doomed = SeedLegacyProject("Boom", order: 0);
+        var doomedFile = SeedLegacyFile(doomed, "Stranded Notes");
+        var healthy = SeedLegacyProject("Robotics", order: 1);
+        var healthyFile = SeedLegacyFile(healthy, "Kickoff");
+
+        var storage = new SabotagedStorage(_storage, failOnSegment: "Boom");
+        var filled = new FolderIdentityBackfill(_projects, _files, storage, _clock).Backfill();
+
+        Assert.Equal(2, filled);
+        Assert.Equal(string.Empty, _projects.GetById(doomed.Id)!.FolderSegment);
+        Assert.Equal("Robotics", _projects.GetById(healthy.Id)!.FolderSegment);
+        Assert.Equal("Kickoff", _files.GetById(healthyFile.Id)!.FolderSegment);
+
+        Assert.Equal(string.Empty, _files.GetById(doomedFile.Id)!.FolderSegment);
+        Assert.False(Directory.Exists(Path.Combine(_paths.ResourcesDirectory, "Stranded Notes")));
     }
 
     public void Dispose()
