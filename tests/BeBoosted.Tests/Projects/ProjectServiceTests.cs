@@ -408,6 +408,36 @@ public sealed class ProjectServiceTests : IDisposable
         Assert.Equal(ResourceIndexState.Failed, _resources.GetById(resource.Id)!.IndexState);
     }
 
+    /// <summary>
+    /// Two Projects named the same thing sanitize identically, but each must claim its
+    /// own directory — never share one, and never silently overwrite the other's files.
+    /// </summary>
+    [Fact]
+    public void CreateProject_TwoProjectsSharingASanitizedName_ClaimDifferentFolders()
+    {
+        var first = _service.CreateProject("DECA");
+        var second = _service.CreateProject("DECA");
+
+        Assert.Equal("DECA", first.FolderSegment);
+        Assert.Equal("DECA (2)", second.FolderSegment);
+        Assert.NotEqual(first.FolderSegment, second.FolderSegment);
+
+        var firstFile = _service.CreateFile(first.Id, "Notes", null);
+        var secondFile = _service.CreateFile(second.Id, "Notes", null);
+        var firstSource = Path.Combine(_paths.DataDirectory, "a.pdf");
+        File.WriteAllText(firstSource, "first project bytes");
+        var secondSource = Path.Combine(_paths.DataDirectory, "b.pdf");
+        File.WriteAllText(secondSource, "second project bytes");
+
+        var firstResource = _service.ImportFile(firstFile.Id, ResourceKind.Document, firstSource);
+        var secondResource = _service.ImportFile(secondFile.Id, ResourceKind.Document, secondSource);
+
+        Assert.Equal(Path.Combine("DECA", "Notes", "a.pdf"), firstResource.StoredPath);
+        Assert.Equal(Path.Combine("DECA (2)", "Notes", "b.pdf"), secondResource.StoredPath);
+        Assert.Equal("first project bytes", File.ReadAllText(_storage.ResolvePath(firstResource.StoredPath!)));
+        Assert.Equal("second project bytes", File.ReadAllText(_storage.ResolvePath(secondResource.StoredPath!)));
+    }
+
     [Fact]
     public void RenameProject_MovesTheFolder_AndKeepsStoredPathsResolvable()
     {

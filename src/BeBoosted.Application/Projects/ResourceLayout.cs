@@ -57,11 +57,14 @@ public static partial class ResourceLayout
         return IsReserved(cleaned) ? cleaned + "_" : cleaned;
     }
 
-    /// <summary>The folder for one File: &lt;project&gt;/&lt;file&gt;, relative to the resources root.</summary>
+    /// <summary>
+    /// The folder for one File: &lt;project&gt;/&lt;file&gt;, relative to the resources root.
+    /// Combines the already-claimed segments verbatim — both were sanitized and reserved
+    /// against collision when they were stored, so re-sanitizing here would be redundant
+    /// at best and could disagree with what was actually claimed on disk.
+    /// </summary>
     public static string FolderFor(Project project, ProjectFile file)
-        => Path.Combine(
-            Sanitize(project.Name, project.Id.ToString()),
-            Sanitize(file.Title, file.Id.ToString()));
+        => Path.Combine(project.FolderSegment, file.FolderSegment);
 
     /// <summary>
     /// The user's own file name, made safe. The extension is protected from the length

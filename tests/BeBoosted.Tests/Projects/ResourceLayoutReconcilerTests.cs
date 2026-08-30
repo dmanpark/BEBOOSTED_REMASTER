@@ -59,7 +59,11 @@ public sealed class ResourceLayoutReconcilerTests : IDisposable
     private ResourceLayoutReconciler CreateReconciler()
         => new(_projects, _files, _resources, _storage, _clock);
 
-    /// <summary>A project/file pair plus a legacy guid-named document already on disk.</summary>
+    /// <summary>
+    /// A project/file pair — each with a claimed folder segment, exactly as
+    /// <c>ProjectService</c> now leaves them — plus a legacy guid-named document
+    /// already on disk that still needs migrating into that folder.
+    /// </summary>
     private (Project Project, ProjectFile File, Resource Resource) SeedLegacyDocument(
         string projectName = "College Admissions",
         string fileTitle = "Metric Proof",
@@ -67,8 +71,19 @@ public sealed class ResourceLayoutReconcilerTests : IDisposable
         string content = "payload")
     {
         var project = Project.Create(projectName, "#ffffff", _clock.Now);
+        var projectSegment = _storage.ReserveFolderSegment(
+            string.Empty,
+            ResourceLayout.Sanitize(projectName, project.Id.ToString()),
+            new HashSet<string>());
+        project.RelocateTo(projectSegment, _clock.Now);
         _projects.Add(project);
+
         var file = ProjectFile.Create(project.Id, fileTitle, null, _clock.Now);
+        var fileSegment = _storage.ReserveFolderSegment(
+            projectSegment,
+            ResourceLayout.Sanitize(fileTitle, file.Id.ToString()),
+            new HashSet<string>());
+        file.RelocateTo(fileSegment, _clock.Now);
         _files.Add(file);
 
         var resource = Resource.CreateStored(
@@ -264,6 +279,76 @@ public sealed class ResourceLayoutReconcilerTests : IDisposable
     {
         Assert.Equal(0, CreateReconciler().Reconcile());
         Assert.Equal(0, CreateReconciler().ReconcileProject(ProjectId.New()));
+    }
+
+    /// <summary>
+    /// Two Projects whose names sanitize identically — a routine occurrence now that
+    /// each one owns a distinct claimed segment — must not shuffle their files back and
+    /// forth on a second pass. This is the churn regression: a reconcile that ever
+    /// disagrees with its own previous run is unusable as an idempotent migration.
+    /// </summary>
+    [Fact]
+    public void Reconcile_TwiceInARow_MovesNothingTheSecondTime_ForNameCollidingProjects()
+    {
+        SeedLegacyDocument("DECA", "Notes", "Notes.pdf", content: "first");
+        SeedLegacyDocument("DECA", "Notes", "Notes.pdf", content: "second");
+
+        var firstRun = CreateReconciler().Reconcile();
+        Assert.Equal(2, firstRun);
+
+        Assert.Equal(0, CreateReconciler().Reconcile());
+        Assert.Equal(0, CreateReconciler().Reconcile());
+    }
+
+    /// <summary>
+    /// The narrower, more common path: a rename calls <c>ReconcileProject</c> for just
+    /// that one Project. Two legacy (never-relocated) Projects that share a name collide
+    /// on the exact same folder under <see cref="ResourceLayout.FolderFor"/> — Project
+    /// A's file already sits there correctly; Project B's own record is stale and points
+    /// nowhere. Reconciling only Project B must never let it adopt Project A's bytes,
+    /// even though the scoped walk never looks at Project A's rows at all.
+    /// </summary>
+    [Fact]
+    public void ReconcileProject_NeverAdoptsAnotherOwnersFile_EvenWhenTheirFoldersCollide()
+    {
+        var projectA = Project.Create("DECA", "#ffffff", _clock.Now);
+        _projects.Add(projectA);
+        var fileA = ProjectFile.Create(projectA.Id, "Notes", null, _clock.Now);
+        _files.Add(fileA);
+
+        var projectB = Project.Create("DECA", "#ffffff", _clock.Now);
+        _projects.Add(projectB);
+        var fileB = ProjectFile.Create(projectB.Id, "Notes", null, _clock.Now);
+        _files.Add(fileB);
+
+        // Neither pair was ever relocated, so they collide on exactly the same folder —
+        // the legacy shape this test's claimed-set widening must survive.
+        var folder = ResourceLayout.FolderFor(projectA, fileA);
+        Assert.Equal(folder, ResourceLayout.FolderFor(projectB, fileB));
+
+        // Project A's file is already correctly recorded and its bytes are present.
+        // Neither project was ever relocated, so `folder` is the empty sentinel — the
+        // resources root itself — which needs no subdirectory, only for the root to exist.
+        var resourceA = Resource.CreateStored(
+            fileA.Id, ResourceKind.Document, "Notes", "Notes.pdf",
+            Path.Combine(folder, "Notes.pdf"), _clock.Now);
+        Directory.CreateDirectory(_paths.ResourcesDirectory);
+        File.WriteAllText(_storage.ResolvePath(resourceA.StoredPath!), "project A bytes");
+        _resources.Add(resourceA);
+
+        // Project B wants the same desired name, but its own recorded path is stale —
+        // no bytes sit behind it — the exact shape the reconciler tries to repair by
+        // adopting an already-present file at the desired location.
+        var resourceB = Resource.CreateStored(
+            fileB.Id, ResourceKind.Document, "Notes", "Notes.pdf",
+            Guid.NewGuid().ToString("N") + ".pdf", _clock.Now);
+        _resources.Add(resourceB);
+
+        var moved = CreateReconciler().ReconcileProject(projectB.Id);
+
+        Assert.Equal(0, moved);
+        Assert.Equal(resourceB.StoredPath, _resources.GetById(resourceB.Id)!.StoredPath);
+        Assert.Equal("project A bytes", File.ReadAllText(_storage.ResolvePath(resourceA.StoredPath!)));
     }
 
     public void Dispose()

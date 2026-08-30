@@ -188,6 +188,23 @@ public sealed class LocalResourceStorageTests : IDisposable
         Assert.NotEqual("Notes", segment);
     }
 
+    /// <summary>
+    /// A folder segment routinely contains a period with no extension meaning ("Ch. 5
+    /// Notes"). The collision suffix must land after the whole segment — "Ch. 5 Notes
+    /// (2)" — not before the first period the way <see cref="ResourceLayout.CandidateName"/>
+    /// treats file extensions, which would mangle it into "Ch (2). 5 Notes".
+    /// </summary>
+    [Fact]
+    public void ReserveFolderSegment_SuffixesAfterTheWholeSegment_WhenItContainsAPeriod()
+    {
+        const string parent = "College";
+        Directory.CreateDirectory(_storage.ResolvePath(Path.Combine(parent, "Ch. 5 Notes")));
+
+        var segment = _storage.ReserveFolderSegment(parent, "Ch. 5 Notes", new HashSet<string>());
+
+        Assert.Equal("Ch. 5 Notes (2)", segment);
+    }
+
     public void Dispose()
     {
         try

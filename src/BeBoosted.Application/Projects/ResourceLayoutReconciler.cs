@@ -32,14 +32,19 @@ public sealed class ResourceLayoutReconciler(
     private int Reconcile(Project project)
     {
         var moved = 0;
+
+        // Every currently recorded stored path, across every Project and File — not just
+        // the one File being processed, and not just this Project. A narrower set lets
+        // FindUnrecordedPlacement below adopt a file that genuinely belongs to another
+        // File or Project: the rename path reconciles a single Project through
+        // ReconcileProject, which never walks the other owner's rows, so this set is the
+        // only thing standing between an adoption and a sibling's resource.
+        var claimed = AllRecordedStoredPaths();
+
         foreach (var file in files.GetForProject(project.Id))
         {
             var folder = ResourceLayout.FolderFor(project, file);
             var fileResources = resources.GetForFile(file.Id);
-            var claimed = fileResources
-                .Select(r => r.StoredPath)
-                .OfType<string>()
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var resource in fileResources)
             {
                 if (resource.StoredPath is not { } current)
@@ -88,6 +93,14 @@ public sealed class ResourceLayoutReconciler(
 
         return moved;
     }
+
+    private HashSet<string> AllRecordedStoredPaths()
+        => projects.GetAll()
+            .SelectMany(p => files.GetForProject(p.Id))
+            .SelectMany(f => resources.GetForFile(f.Id))
+            .Select(r => r.StoredPath)
+            .OfType<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private string? FindUnrecordedPlacement(string folder, string desired, HashSet<string> claimed)
     {

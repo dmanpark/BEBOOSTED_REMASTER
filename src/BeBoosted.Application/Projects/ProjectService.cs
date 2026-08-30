@@ -28,6 +28,12 @@ public sealed class ProjectService(
     {
         var accent = ProjectPalette.ColorFor(projects.GetAll().Count);
         var project = Project.Create(name, accent, clock.Now);
+
+        var preferred = ResourceLayout.Sanitize(project.Name, project.Id.ToString());
+        var claimed = SiblingProjectSegments(exclude: null);
+        var reserved = storage.ReserveFolderSegment(string.Empty, preferred, claimed);
+        project.RelocateTo(reserved, clock.Now);
+
         projects.Add(project);
         return project;
     }
@@ -37,6 +43,12 @@ public sealed class ProjectService(
     {
         var project = Require(id);
         project.Rename(name, clock.Now);
+
+        var preferred = ResourceLayout.Sanitize(project.Name, project.Id.ToString());
+        var claimed = SiblingProjectSegments(exclude: id);
+        var reserved = storage.ReserveFolderSegment(string.Empty, preferred, claimed, project.FolderSegment);
+        project.RelocateTo(reserved, clock.Now);
+
         projects.Update(project);
 
         // The rename itself has already succeeded; moving the folder to match is
@@ -44,6 +56,13 @@ public sealed class ProjectService(
         reconciler?.ReconcileProject(id);
         return project;
     }
+
+    /// <summary>Every other Project's claimed segment, so a reservation can never collide with one.</summary>
+    private HashSet<string> SiblingProjectSegments(ProjectId? exclude)
+        => projects.GetAll()
+            .Where(p => p.Id != exclude)
+            .Select(p => p.FolderSegment)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Deletes the project and its Files/resources (and stored bytes), and unlinks
@@ -86,8 +105,14 @@ public sealed class ProjectService(
 
     public ProjectFile CreateFile(ProjectId projectId, string title, string? description)
     {
-        _ = Require(projectId);
+        var project = Require(projectId);
         var file = ProjectFile.Create(projectId, title, description, clock.Now);
+
+        var preferred = ResourceLayout.Sanitize(file.Title, file.Id.ToString());
+        var claimed = SiblingFileSegments(projectId, exclude: null);
+        var reserved = storage.ReserveFolderSegment(project.FolderSegment, preferred, claimed);
+        file.RelocateTo(reserved, clock.Now);
+
         files.Add(file);
         return file;
     }
@@ -97,7 +122,14 @@ public sealed class ProjectService(
     {
         var file = files.GetById(id)
             ?? throw new DomainException("That file no longer exists.");
+        var project = Require(file.ProjectId);
         file.Rename(title, clock.Now);
+
+        var preferred = ResourceLayout.Sanitize(file.Title, file.Id.ToString());
+        var claimed = SiblingFileSegments(file.ProjectId, exclude: id);
+        var reserved = storage.ReserveFolderSegment(project.FolderSegment, preferred, claimed, file.FolderSegment);
+        file.RelocateTo(reserved, clock.Now);
+
         files.Update(file);
 
         // Same contract as RenameProject: the rename has already succeeded, and
@@ -105,6 +137,13 @@ public sealed class ProjectService(
         reconciler?.ReconcileProject(file.ProjectId);
         return file;
     }
+
+    /// <summary>Every other File's claimed segment within the same Project.</summary>
+    private HashSet<string> SiblingFileSegments(ProjectId projectId, ProjectFileId? exclude)
+        => files.GetForProject(projectId)
+            .Where(f => f.Id != exclude)
+            .Select(f => f.FolderSegment)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Deletes a File. Its resource rows go with it through the foreign-key cascade;

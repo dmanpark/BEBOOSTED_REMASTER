@@ -58,14 +58,34 @@ public sealed class ResourceLayoutTests
     }
 
     [Fact]
-    public void FolderFor_NestsTheFileInsideTheProject()
+    public void FolderFor_NestsTheFilesSegmentInsideTheProjectsSegment()
     {
-        var project = Project.Create("College: Admissions", "#ffffff", Now);
-        var file = ProjectFile.Create(project.Id, "Metric/Proof", null, Now);
+        var project = Project.Create("College Admissions", "#ffffff", Now);
+        project.RelocateTo("College Admissions", Now);
+        var file = ProjectFile.Create(project.Id, "Metric Proof", null, Now);
+        file.RelocateTo("Metric Proof", Now);
 
         var folder = ResourceLayout.FolderFor(project, file);
 
-        Assert.Equal(Path.Combine("College- Admissions", "Metric-Proof"), folder);
+        Assert.Equal(Path.Combine("College Admissions", "Metric Proof"), folder);
+    }
+
+    /// <summary>
+    /// FolderFor combines the persisted segments as-is: both were already sanitized and
+    /// claimed when they were reserved, so re-sanitizing here would be redundant at best
+    /// and could silently disagree with what was actually claimed on disk.
+    /// </summary>
+    [Fact]
+    public void FolderFor_TrustsThePersistedSegments_WithoutSanitizingThemAgain()
+    {
+        var project = Project.Create("College Admissions", "#ffffff", Now);
+        project.RelocateTo("Not: Sanitized", Now);
+        var file = ProjectFile.Create(project.Id, "Metric Proof", null, Now);
+        file.RelocateTo("Also raw...", Now);
+
+        var folder = ResourceLayout.FolderFor(project, file);
+
+        Assert.Equal(Path.Combine("Not: Sanitized", "Also raw..."), folder);
     }
 
     [Fact]

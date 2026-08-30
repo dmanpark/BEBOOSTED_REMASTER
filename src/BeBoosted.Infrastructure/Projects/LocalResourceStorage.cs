@@ -105,7 +105,11 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
     {
         for (var attempt = 1; ; attempt++)
         {
-            var candidate = ResourceLayout.CandidateName(preferredSegment, attempt);
+            // Folder titles routinely carry a period with no extension meaning ("Ch. 5
+            // Notes"), so the suffix goes after the whole segment, not before the first
+            // '.' the way ResourceLayout.CandidateName treats file extensions — that is
+            // correct there because file names genuinely have extensions.
+            var candidate = attempt <= 1 ? preferredSegment : $"{preferredSegment} ({attempt})";
             if (claimed.Contains(candidate))
             {
                 continue;
