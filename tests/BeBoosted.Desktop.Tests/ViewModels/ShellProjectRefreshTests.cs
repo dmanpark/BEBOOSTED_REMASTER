@@ -63,13 +63,19 @@ public sealed class ShellProjectRefreshTests
         return blocks.GetForTask(task.Id).Single().Id;
     }
 
-    /// <summary>A second task on the same project, left unscheduled so it sits in the Inbox.</summary>
+    /// <summary>
+    /// A second task on the same project, left unscheduled so it sits in the Inbox.
+    /// Seeds the Inbox by announcing through the same central chain the production
+    /// code uses — otherwise nothing has ever told the Inbox to load this task, and a
+    /// later lookup fails on a missing row instead of pinning a stale label.
+    /// </summary>
     private static void AddUnscheduledProjectTask(
         ShellViewModel shell, InMemoryTaskRepository tasks, string title)
     {
         var project = shell.Projects.Projects.Single().Project;
         var task = TaskItem.Create(title, TestShell.DesignDate.ToDateTime(TimeOnly.MinValue), projectId: project.Id);
         tasks.Add(task);
+        shell.Calendar.NotifyTasksMutated();
     }
 
     [Fact]
@@ -78,6 +84,13 @@ public sealed class ShellProjectRefreshTests
         var (shell, blocks, tasks) = CreateShell();
         CreateProjectWithScheduledTask(shell, blocks, tasks);
         AddUnscheduledProjectTask(shell, tasks, "Read chapter 4");
+
+        // Seed the Daily list — and every other surface — with the OLD label before
+        // the rename: the Daily list defaults to today, but the session is tomorrow.
+        // Setting this now (not after the mutation) means Rebuild only ever sees
+        // "Schoolwork" here; the assertions below can only pass if the rename chain
+        // itself refreshes these rows.
+        shell.Calendar.VisibleDate = Tomorrow;
 
         shell.NavigateCommand.Execute(AppSection.Projects);
         var detail = shell.Projects.Detail!;
@@ -90,7 +103,6 @@ public sealed class ShellProjectRefreshTests
         Assert.Equal("Coursework", shell.Projects.Projects.Single().Name);
 
         shell.NavigateCommand.Execute(AppSection.Calendar);
-        shell.Calendar.VisibleDate = Tomorrow; // the Daily list defaults to today; the session is tomorrow
 
         // Positively: the scheduled row now carries the new label.
         var scheduled = shell.Calendar.Daily.ScheduledRows.Single(r => r.Title == "Stats HW");
@@ -112,6 +124,9 @@ public sealed class ShellProjectRefreshTests
         CreateProjectWithScheduledTask(shell, blocks, tasks);
         AddUnscheduledProjectTask(shell, tasks, "Read chapter 4");
 
+        // Seed every surface with the project still attached, before the delete.
+        shell.Calendar.VisibleDate = Tomorrow;
+
         shell.NavigateCommand.Execute(AppSection.Projects);
         var detail = shell.Projects.Detail!;
         detail.RequestDeleteCommand.Execute(null);
@@ -120,7 +135,6 @@ public sealed class ShellProjectRefreshTests
         Assert.Empty(shell.Projects.Projects);
 
         shell.NavigateCommand.Execute(AppSection.Calendar);
-        shell.Calendar.VisibleDate = Tomorrow; // the Daily list defaults to today; the session is tomorrow
 
         // Both tasks survive, both unassigned — asserted on the rows themselves, so a
         // vanished row cannot pass for a cleared label.
