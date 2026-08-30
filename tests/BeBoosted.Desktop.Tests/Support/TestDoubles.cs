@@ -219,9 +219,20 @@ public sealed class InMemoryProjectRepository : IProjectRepository
     /// <summary>Mirrors project_files.project_id ON DELETE CASCADE.</summary>
     public InMemoryProjectFileRepository? Files { get; set; }
 
-    public void Add(Project project) => _projects[project.Id] = project;
+    public void Add(Project project) => _projects[project.Id] = Clone(project);
 
-    public void Update(Project project) => _projects[project.Id] = project;
+    public void Update(Project project) => _projects[project.Id] = Clone(project);
+
+    /// <summary>
+    /// A detached copy, the way the SQLite repository necessarily hands one back. Storing
+    /// and returning the caller's own instance makes every read a live view of it, so a
+    /// mutation is visible through a stale reference and a test can pass without the
+    /// refresh it means to pin ever happening.
+    /// </summary>
+    private static Project Clone(Project project)
+        => Project.Rehydrate(
+            project.Id, project.Name, project.AccentColor,
+            project.CreatedAt, project.ModifiedAt, project.FolderSegment);
 
     public void Delete(ProjectId id)
     {
@@ -236,9 +247,11 @@ public sealed class InMemoryProjectRepository : IProjectRepository
         _projects.Remove(id);
     }
 
-    public Project? GetById(ProjectId id) => _projects.GetValueOrDefault(id);
+    public Project? GetById(ProjectId id)
+        => _projects.GetValueOrDefault(id) is { } project ? Clone(project) : null;
 
-    public IReadOnlyList<Project> GetAll() => _projects.Values.OrderBy(p => p.CreatedAt).ToList();
+    public IReadOnlyList<Project> GetAll()
+        => _projects.Values.OrderBy(p => p.CreatedAt).Select(Clone).ToList();
 }
 
 public sealed class InMemoryProjectFileRepository : IProjectFileRepository

@@ -75,27 +75,43 @@ public partial class App : Avalonia.Application
 
             try
             {
-                // Order is load-bearing. Rows persisted before migration 0012 hold an
-                // empty folder segment, and ResourceLayout.FolderFor returns segments
-                // verbatim — so reconciling first would resolve every legacy document's
-                // folder to the resources root and flatten the whole library into it.
-                // Backfill claims each row's existing directory, and only then does the
-                // reconciler have a layout worth agreeing with.
+                // Order is load-bearing, and so is the gate below. Rows persisted before
+                // migration 0012 hold an empty folder segment, and ResourceLayout.FolderFor
+                // returns segments verbatim — so reconciling against one resolves its
+                // folder to the resources root and physically moves its documents there.
+                // Backfill claims each row's existing directory first; the sweep runs only
+                // if it left nothing behind, because the backfill recovers per entity
+                // rather than throwing and can now return having skipped a row.
                 //
-                // The ordering only governs this sweep, though. ProjectService reconciles
-                // a single Project on rename, outside this block entirely, so it can meet
-                // a row the backfill skipped. The reconciler therefore refuses the
-                // half-backfilled shape itself rather than trusting this call order.
-                var claimed = _services.GetRequiredService<FolderIdentityBackfill>().Backfill();
-                if (claimed > 0)
+                // Deferring is the cheap side of the trade: the documents simply stay where
+                // they are and a later launch picks them up, whereas sweeping unclaimed
+                // rows destroys the layout. One bad row still costs only itself — every
+                // other project is backfilled, and the sweep resumes once it succeeds.
+                //
+                // This governs the startup sweep only. ProjectService reconciles a single
+                // Project on rename, outside this block entirely, so the reconciler also
+                // refuses the half-backfilled shape itself rather than trusting call order.
+                var backfill = _services.GetRequiredService<FolderIdentityBackfill>().Backfill();
+                if (backfill.Claimed > 0)
                 {
-                    Log.Information("Backfilled folder segments for {Count} projects and Files", claimed);
+                    Log.Information(
+                        "Backfilled folder segments for {Count} projects and Files", backfill.Claimed);
                 }
 
-                var moved = _services.GetRequiredService<ResourceLayoutReconciler>().Reconcile();
-                if (moved > 0)
+                if (backfill.Skipped > 0)
                 {
-                    Log.Information("Moved {Count} stored resources into named folders", moved);
+                    Log.Warning(
+                        "{Count} projects or Files could not claim a folder segment; "
+                        + "deferring the resource layout reconcile until they can",
+                        backfill.Skipped);
+                }
+                else
+                {
+                    var moved = _services.GetRequiredService<ResourceLayoutReconciler>().Reconcile();
+                    if (moved > 0)
+                    {
+                        Log.Information("Moved {Count} stored resources into named folders", moved);
+                    }
                 }
             }
             catch (Exception exception)

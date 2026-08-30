@@ -322,6 +322,29 @@ public sealed class ProjectRenameDeleteViewModelTests
     }
 
     /// <summary>
+    /// The detail has to be torn down before the refresh chain is rung, not after.
+    /// <c>TasksMutated</c> reaches <c>RefreshActive</c>, which calls
+    /// <c>Detail.Refresh()</c> whenever a detail is still open — so announcing the
+    /// mutation first points the refresh at the project that was just deleted. It is
+    /// survivable today only because every lookup for a deleted project returns empty;
+    /// the ordering, not that accident, is what should be holding it up.
+    /// </summary>
+    [Fact]
+    public void ConfirmingAProjectDeletion_ClosesTheDetail_BeforeAnnouncingTheMutation()
+    {
+        var projects = WithProjectAndFile();
+        var detail = projects.Detail!;
+        detail.RequestDeleteCommand.Execute(null);
+
+        var detailWasOpenWhenAnnounced = false;
+        projects.TasksMutated += () => detailWasOpenWhenAnnounced = projects.Detail is not null;
+
+        detail.ConfirmPromptCommand.Execute(null);
+
+        Assert.False(detailWasOpenWhenAnnounced);
+    }
+
+    /// <summary>
     /// The same one level up: a deleted project leaves neither its Files nor their
     /// resources behind. Both hops of the cascade have to fire.
     /// </summary>

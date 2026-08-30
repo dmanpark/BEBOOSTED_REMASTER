@@ -83,9 +83,9 @@ public sealed class FolderIdentityBackfillTests : IDisposable
     }
 
     /// <summary>A document already recorded at, and physically sitting at, a legacy path.</summary>
-    private Resource SeedDocumentAt(ProjectFile file, string storedPath)
+    private Resource SeedDocumentAt(ProjectFile file, string storedPath, string? originalFileName = null)
     {
-        var fileName = Path.GetFileName(storedPath);
+        var fileName = originalFileName ?? Path.GetFileName(storedPath);
         var resource = Resource.CreateStored(
             file.Id, ResourceKind.Document, Path.GetFileNameWithoutExtension(fileName),
             fileName, storedPath, _clock.Now);
@@ -98,6 +98,23 @@ public sealed class FolderIdentityBackfillTests : IDisposable
 
     private ResourceLayoutReconciler CreateReconciler()
         => new(_projects, _files, _resources, _storage, _clock);
+
+    /// <summary>
+    /// The startup layout pass from <c>App.axaml.cs</c>, in the same order and under the
+    /// same conditions. Deliberately a mirror of that call site rather than a convenience:
+    /// the backfill's contract with the reconciler lives at this seam and nowhere else, so
+    /// when the call site changes, this changes with it.
+    /// </summary>
+    private void RunStartupLayoutPass(IResourceStorage storage)
+    {
+        var backfill = new FolderIdentityBackfill(_projects, _files, storage, _clock).Backfill();
+        if (backfill.Skipped > 0)
+        {
+            return;
+        }
+
+        new ResourceLayoutReconciler(_projects, _files, _resources, storage, _clock).Reconcile();
+    }
 
     [Fact]
     public void Backfill_ClaimsTheDirectoryALegacyProjectsBytesAlreadyOccupy()
@@ -171,11 +188,11 @@ public sealed class FolderIdentityBackfillTests : IDisposable
         Directory.CreateDirectory(Path.Combine(_paths.ResourcesDirectory, "Model UN (2)"));
         var legacy = SeedLegacyProject("Robotics", order: 1);
 
-        Assert.Equal(1, CreateBackfill().Backfill());
+        Assert.Equal(1, CreateBackfill().Backfill().Claimed);
         Assert.Equal("Model UN (2)", _projects.GetById(live.Id)!.FolderSegment);
         Assert.Equal("Robotics", _projects.GetById(legacy.Id)!.FolderSegment);
 
-        Assert.Equal(0, CreateBackfill().Backfill());
+        Assert.Equal(0, CreateBackfill().Backfill().Claimed);
         Assert.Equal("Model UN (2)", _projects.GetById(live.Id)!.FolderSegment);
         Assert.Equal("Robotics", _projects.GetById(legacy.Id)!.FolderSegment);
     }
@@ -221,7 +238,7 @@ public sealed class FolderIdentityBackfillTests : IDisposable
         var legacyPath = Path.Combine("College Admissions", "Metric Proof", "Transcript.pdf");
         var resource = SeedDocumentAt(file, legacyPath);
 
-        Assert.Equal(2, CreateBackfill().Backfill());
+        Assert.Equal(2, CreateBackfill().Backfill().Claimed);
 
         Assert.Equal(0, CreateReconciler().Reconcile());
         Assert.Equal(legacyPath, _resources.GetById(resource.Id)!.StoredPath);
@@ -322,15 +339,68 @@ public sealed class FolderIdentityBackfillTests : IDisposable
         var healthyFile = SeedLegacyFile(healthy, "Kickoff");
 
         var storage = new SabotagedStorage(_storage, failOnSegment: "Boom");
-        var filled = new FolderIdentityBackfill(_projects, _files, storage, _clock).Backfill();
+        var outcome = new FolderIdentityBackfill(_projects, _files, storage, _clock).Backfill();
 
-        Assert.Equal(2, filled);
+        Assert.Equal(2, outcome.Claimed);
+
+        // The Project and the File it took down with it. The startup pass gates the
+        // reconcile on this being zero, so a run that silently reported nothing skipped
+        // would let the sweep loose on rows that still hold the sentinel.
+        Assert.Equal(2, outcome.Skipped);
         Assert.Equal(string.Empty, _projects.GetById(doomed.Id)!.FolderSegment);
         Assert.Equal("Robotics", _projects.GetById(healthy.Id)!.FolderSegment);
         Assert.Equal("Kickoff", _files.GetById(healthyFile.Id)!.FolderSegment);
 
         Assert.Equal(string.Empty, _files.GetById(doomedFile.Id)!.FolderSegment);
         Assert.False(Directory.Exists(Path.Combine(_paths.ResourcesDirectory, "Stranded Notes")));
+    }
+
+    /// <summary>
+    /// The Task 6 / Task 7 seam. Per-entity recovery means a failed row no longer aborts
+    /// the pass — but the abort was also what stopped <c>Reconcile()</c> from running
+    /// against the row it left unclaimed. With both segments still empty, the reconciler's
+    /// guard is deliberately silent (both-empty is the pure legacy state it must process),
+    /// <c>FolderFor</c> is <c>Path.Combine("", "")</c> = "", and every document under the
+    /// skipped Project is physically moved into the resources root and re-recorded there.
+    /// Under a deterministic fault that repeats on every launch and never heals.
+    ///
+    /// The startup pass must therefore defer the sweep whenever the backfill left anything
+    /// behind. Deferring costs nothing — the documents stay where they are and a later
+    /// launch picks them up — while sweeping unclaimed rows destroys the layout.
+    /// </summary>
+    [Fact]
+    public void AStartupPass_AfterASkippedRow_DoesNotFlattenThatProjectsDocumentsIntoTheRoot()
+    {
+        var doomed = SeedLegacyProject("Boom", order: 0);
+        var doomedFile = SeedLegacyFile(doomed, "Stranded Notes");
+        var legacyPath = Path.Combine("Boom", "Stranded Notes", "Transcript.pdf");
+        var resource = SeedDocumentAt(doomedFile, legacyPath);
+
+        RunStartupLayoutPass(new SabotagedStorage(_storage, failOnSegment: "Boom"));
+
+        Assert.Equal(legacyPath, _resources.GetById(resource.Id)!.StoredPath);
+        Assert.Equal("payload", File.ReadAllText(_storage.ResolvePath(legacyPath)));
+        Assert.False(_storage.Exists("Transcript.pdf"));
+    }
+
+    /// <summary>
+    /// The other half of that gate, and the guard against it being permanently shut: when
+    /// the backfill skips nothing, the sweep must still run and still migrate a legacy
+    /// guid-named document into its newly claimed folder.
+    /// </summary>
+    [Fact]
+    public void AStartupPass_WithNothingSkipped_StillRunsTheSweep()
+    {
+        var project = SeedLegacyProject("College Admissions");
+        var file = SeedLegacyFile(project, "Metric Proof");
+        var resource = SeedDocumentAt(
+            file, Guid.NewGuid().ToString("N") + ".pdf", originalFileName: "Transcript.pdf");
+
+        RunStartupLayoutPass(_storage);
+
+        Assert.Equal(
+            Path.Combine("College Admissions", "Metric Proof", "Transcript.pdf"),
+            _resources.GetById(resource.Id)!.StoredPath);
     }
 
     public void Dispose()

@@ -3,6 +3,14 @@ using BeBoosted.Application.Abstractions;
 namespace BeBoosted.Application.Projects;
 
 /// <summary>
+/// What one backfill run achieved and what it left behind. <paramref name="Skipped"/> is
+/// the load-bearing half: a caller must not reconcile while any row still holds the empty
+/// sentinel, because <see cref="ResourceLayout.FolderFor"/> resolves such a row to the
+/// resources root and the reconciler would move its documents there.
+/// </summary>
+public readonly record struct FolderBackfillOutcome(int Claimed, int Skipped);
+
+/// <summary>
 /// Gives every Project and File persisted before migration 0012 the folder segment its
 /// bytes already occupy. Those rows hold the empty sentinel, and <see
 /// cref="ResourceLayout.FolderFor"/> returns persisted segments verbatim, so an
@@ -25,9 +33,12 @@ namespace BeBoosted.Application.Projects;
 /// limit, an ACL, a rejected update) would meet the same row on every launch and strand
 /// every row behind it forever. A skipped entity keeps the sentinel and costs only itself.
 ///
-/// That is why <see cref="BackfillFiles"/> states the invariant the old abort-everything
-/// shape held implicitly: a Project still holding the sentinel has its Files skipped too,
-/// so no File ever reserves beneath the empty string.
+/// Recovering rather than throwing costs two guarantees the throw used to provide for
+/// free, and both are restored explicitly. Inside, <see cref="BackfillFiles"/> skips any
+/// Project still holding the sentinel, so no File ever reserves beneath the empty string.
+/// Outside, the skipped count in <see cref="FolderBackfillOutcome"/> tells the caller not
+/// to reconcile yet: an escaping exception used to stop the sweep, and a swallowed one
+/// would let it run against exactly the unclaimed rows described above.
 /// </summary>
 public sealed class FolderIdentityBackfill(
     IProjectRepository projects,
@@ -36,16 +47,23 @@ public sealed class FolderIdentityBackfill(
     IClock clock)
 {
     /// <summary>
-    /// Backfills every unclaimed row and returns how many segments were claimed.
+    /// Backfills every unclaimed row, reporting both what it claimed and what it could not.
     ///
     /// Two separate passes, and they must stay that way: a File is reserved inside its
     /// Project's claimed segment, so a File reached before its Project's backfill would
     /// resolve its parent to the empty sentinel and claim a directory in the resources
     /// root instead. Projects first, all of them, before any File is touched.
     /// </summary>
-    public int Backfill() => BackfillProjects() + BackfillFiles();
+    public FolderBackfillOutcome Backfill()
+    {
+        var projectPass = BackfillProjects();
+        var filePass = BackfillFiles();
+        return new FolderBackfillOutcome(
+            projectPass.Claimed + filePass.Claimed,
+            projectPass.Skipped + filePass.Skipped);
+    }
 
-    private int BackfillProjects()
+    private FolderBackfillOutcome BackfillProjects()
     {
         var all = projects.GetAll();
 
@@ -54,6 +72,7 @@ public sealed class FolderIdentityBackfill(
         var claimed = ClaimedSegments(all.Select(project => project.FolderSegment));
 
         var filled = 0;
+        var skipped = 0;
         foreach (var project in all.Where(project => project.FolderSegment.Length == 0))
         {
             try
@@ -70,21 +89,24 @@ public sealed class FolderIdentityBackfill(
             {
                 // A deterministic wall on one folder name — a path-length limit, an ACL,
                 // a rejected update — would otherwise strand every later row against the
-                // same obstacle on every launch, and take the reconciler down with it.
-                // This Project keeps the sentinel and is retried on the next run.
+                // same obstacle on every launch. This Project keeps the sentinel and is
+                // retried on the next run. Counted, not logged: this class takes no
+                // logger, and the count reaches the caller that can report it.
+                skipped++;
             }
         }
 
-        return filled;
+        return new FolderBackfillOutcome(filled, skipped);
     }
 
     /// <summary>
     /// Runs only after <see cref="BackfillProjects"/>, and re-reads the Projects so every
     /// parent path is a persisted, claimed segment rather than an in-flight one.
     /// </summary>
-    private int BackfillFiles()
+    private FolderBackfillOutcome BackfillFiles()
     {
         var filled = 0;
+        var skipped = 0;
         foreach (var project in projects.GetAll())
         {
             if (project.FolderSegment.Length == 0)
@@ -93,6 +115,7 @@ public sealed class FolderIdentityBackfill(
                 // File's folder in the resources root, so the whole Project waits for the
                 // next run. Running the passes in order is what makes this the only way a
                 // Project can still be unclaimed by the time its Files are reached.
+                skipped += files.GetForProject(project.Id).Count(file => file.FolderSegment.Length == 0);
                 continue;
             }
 
@@ -118,11 +141,12 @@ public sealed class FolderIdentityBackfill(
                 {
                     // Same bargain as a Project: one unclaimable File keeps the sentinel
                     // and is retried, rather than stranding its siblings behind it.
+                    skipped++;
                 }
             }
         }
 
-        return filled;
+        return new FolderBackfillOutcome(filled, skipped);
     }
 
     /// <summary>
