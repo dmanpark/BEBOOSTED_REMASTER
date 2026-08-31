@@ -348,7 +348,7 @@ public sealed class InMemoryResourceGroupRepository : IResourceGroupRepository
     {
         if (string.IsNullOrWhiteSpace(group.FolderSegment))
         {
-            throw new DomainException("A group needs a reserved folder segment.");
+            throw new DomainException("A group needs a claimed folder segment.");
         }
     }
 

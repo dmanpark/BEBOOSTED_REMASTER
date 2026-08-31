@@ -399,7 +399,7 @@ CREATE INDEX idx_resources_group ON resources (group_id);
 ~~~
 
 - [ ] Implement SqliteResourceGroupRepository using the same factory/shared-connection/OpenSession pattern as SqliteProjectFileRepository. All five methods must call OpenSession; only OpenSession may open a factory connection. Use these SQL shapes, parameterize all values, map all seven columns in this order, and reject blank FolderSegment before Add/Update, throwing
-DomainException("A group needs a reserved folder segment.") so the test can assert the type:
+DomainException("A group needs a claimed folder segment.") so the test can assert the type:
 
 ~~~sql
 INSERT INTO resource_groups (id, file_id, title, folder_segment, sort_order, created_at, modified_at)

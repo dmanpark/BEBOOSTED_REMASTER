@@ -103,7 +103,7 @@ public sealed class SqliteResourceGroupRepositoryTests : IDisposable
         var group = ResourceGroup.Create(_fixture.File.Id, "Notes", 0, _fixture.Now);
 
         var error = Assert.Throws<DomainException>(() => _fixture.Groups.Add(group));
-        Assert.Equal("A group needs a reserved folder segment.", error.Message);
+        Assert.Equal("A group needs a claimed folder segment.", error.Message);
         Assert.Null(_fixture.Groups.GetById(group.Id));
     }
 
@@ -116,7 +116,7 @@ public sealed class SqliteResourceGroupRepositoryTests : IDisposable
             _fixture.Now, _fixture.Now, string.Empty);
 
         var error = Assert.Throws<DomainException>(() => _fixture.Groups.Update(unreserved));
-        Assert.Equal("A group needs a reserved folder segment.", error.Message);
+        Assert.Equal("A group needs a claimed folder segment.", error.Message);
     }
 
     /// <summary>
