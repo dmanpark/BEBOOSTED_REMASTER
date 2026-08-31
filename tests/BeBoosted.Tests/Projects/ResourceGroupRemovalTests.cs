@@ -1,6 +1,10 @@
-using BeBoosted.Application.Projects;
+﻿using BeBoosted.Application.Projects;
+using BeBoosted.Application.Tasks;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Projects;
+using BeBoosted.Infrastructure.Persistence;
+using BeBoosted.Infrastructure.Projects;
+using BeBoosted.Infrastructure.Tasks;
 using BeBoosted.Tests.Support;
 
 namespace BeBoosted.Tests.Projects;
@@ -14,8 +18,13 @@ namespace BeBoosted.Tests.Projects;
 /// </summary>
 public sealed class ResourceGroupRemovalTests
 {
-    private static string Read(ResourceGroupFixture f, string? storedPath)
-        => System.IO.File.ReadAllText(f.Storage.ResolvePath(storedPath!));
+    /// <summary>
+    /// The bytes behind a stored path. Deliberately non-nullable: a link or a note has no
+    /// stored path at all, and swallowing that here would surface as an NRE from deep
+    /// inside <c>ResolvePath</c> instead of at the call site that produced it.
+    /// </summary>
+    private static string Read(ResourceGroupFixture f, string storedPath)
+        => System.IO.File.ReadAllText(f.Storage.ResolvePath(storedPath));
 
     /// <summary>
     /// Delegates everything, and refuses to delete one named path — a read-only file, an
@@ -125,7 +134,7 @@ public sealed class ResourceGroupRemovalTests
             var loose = Assert.IsType<Resource>(f.Resources.GetById(member.Id));
             Assert.Null(loose.GroupId);
             Assert.Equal(Assert.IsType<Resource>(afterFirst).StoredPath, loose.StoredPath);
-            Assert.Equal("member bytes", Read(f, loose.StoredPath));
+            Assert.Equal("member bytes", Read(f, loose.StoredPath!));
         }
     }
 
@@ -181,18 +190,18 @@ public sealed class ResourceGroupRemovalTests
         Assert.Equal(onePath, f.Resources.GetById(one.Id)!.StoredPath);
         Assert.Equal(Path.Combine(parent, "two.txt"), f.Resources.GetById(two.Id)!.StoredPath);
         Assert.Equal("one bytes", Read(f, onePath));
-        Assert.Equal("two bytes", Read(f, f.Resources.GetById(two.Id)!.StoredPath));
+        Assert.Equal("two bytes", Read(f, f.Resources.GetById(two.Id)!.StoredPath!));
         Assert.Equal("https://oyez.org/marbury", f.Resources.GetById(link.Id)!.Url);
         Assert.Equal("chapter three", f.Resources.GetById(note.Id)!.Content);
 
         var untouched = f.Resources.GetById(loose.Id)!;
         Assert.Null(untouched.GroupId);
         Assert.Equal(Path.Combine(parent, "one.txt"), untouched.StoredPath);
-        Assert.Equal("loose bytes", Read(f, untouched.StoredPath));
+        Assert.Equal("loose bytes", Read(f, untouched.StoredPath!));
         var kept = f.Resources.GetById(neighbour.Id)!;
         Assert.Equal(other.Id, kept.GroupId);
         Assert.Equal(Path.Combine(parent, "Sources", "neighbour.txt"), kept.StoredPath);
-        Assert.Equal("neighbour bytes", Read(f, kept.StoredPath));
+        Assert.Equal("neighbour bytes", Read(f, kept.StoredPath!));
 
         Assert.Empty(invalidator.Calls);
         Assert.Equal(0, f.Reconciler().ReconcileProject(f.Project.Id));
@@ -259,6 +268,75 @@ public sealed class ResourceGroupRemovalTests
         Assert.Equal(other.Id, kept.GroupId);
         Assert.Equal(neighbourPath, kept.StoredPath);
         Assert.Equal("neighbour bytes", Read(f, neighbourPath));
+    }
+
+    /// <summary>
+    /// A real transaction that files one more resource into the group before it runs the
+    /// service's callback, then commits everything together — a member that arrives after
+    /// the service has decided what the group contains, but before the delete lands.
+    ///
+    /// Contrived on a single UI thread, and deliberately so: it is the cheapest way to make
+    /// the difference between reading the member set inside the transaction and outside it
+    /// observable at all. The hazard it stands for is not: <c>resources.group_id</c> is
+    /// <c>ON DELETE SET NULL</c>, so a member missing from an outside snapshot is not merely
+    /// skipped — it is silently loosened, keeping its bytes and leaving everything derived
+    /// from it unflagged, in a group the user was told had been destroyed.
+    /// </summary>
+    private sealed class LateMemberMutation(
+        SqliteConnectionFactory factory, ProjectFileId fileId, ResourceGroupId groupId,
+        DateTimeOffset now) : IProjectMutations
+    {
+        /// <summary>The member filed in after the service looked, inside this transaction.</summary>
+        public ResourceId LateMember { get; } = ResourceId.New();
+
+        public void Execute(
+            Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository,
+                IResourceGroupRepository> mutation)
+        {
+            using var connection = factory.Open();
+            using var transaction = connection.BeginTransaction();
+            var resourceRepo = new SqliteResourceRepository(connection, transaction);
+            resourceRepo.Add(Resource.Rehydrate(
+                LateMember, fileId, ResourceKind.Note, "Late arrival", null,
+                "filed while the delete was in flight", null, null, now,
+                ResourceIndexState.Pending, now, groupId));
+            mutation(
+                new SqliteProjectRepository(connection, transaction),
+                new SqliteProjectFileRepository(connection, transaction),
+                resourceRepo,
+                new SqliteTaskRepository(connection, transaction),
+                new SqliteResourceGroupRepository(connection, transaction));
+            transaction.Commit();
+        }
+    }
+
+    /// <summary>
+    /// The member set has to be read through the transaction that deletes it, not from the
+    /// service's own repository beforehand. A member the outside read cannot see is not
+    /// merely left behind: deleting the group row then <c>SET NULL</c>s it, so it survives
+    /// loose with its bytes intact and its derived items never flagged — the group is gone
+    /// and one of its documents quietly is not.
+    ///
+    /// Ungroup already reads inside its callback. This holds Delete to the same shape.
+    /// </summary>
+    [Fact]
+    public void DeleteGroup_TakesAMemberFiledAfterTheServiceLooked()
+    {
+        using var f = new ResourceGroupFixture();
+        var group = f.Group();
+        var member = f.Document("member.txt", "member bytes");
+        f.Assign(member.Id, group.Id);
+        f.Reconciler().ReconcileProject(f.Project.Id);
+        var invalidator = new RecordingGroupInvalidator();
+        var mutations = new LateMemberMutation(f.Database.Factory, f.File.Id, group.Id, f.Now);
+        var service = f.CreateService(mutations, invalidator: invalidator);
+
+        service.DeleteGroup(group.Id);
+
+        Assert.Null(f.Groups.GetById(group.Id));
+        Assert.Null(f.Resources.GetById(member.Id));
+        Assert.Null(f.Resources.GetById(mutations.LateMember));
+        Assert.Equal(Ids([member.Id, mutations.LateMember]), Ids(invalidator.Calls));
     }
 
     /// <summary>
@@ -404,7 +482,7 @@ public sealed class ResourceGroupRemovalTests
             .Select(id => Assert.IsType<Resource>(f.Resources.GetById(id)))
             .ToList();
         var invalidator = new RecordingGroupInvalidator();
-        var service = f.CreateService(new FailGroupMutation(f.Database.Factory), invalidator: invalidator);
+        var service = f.CreateService(new FailAfterMutation(f.Database.Factory), invalidator: invalidator);
 
         Assert.Throws<InvalidOperationException>(() => Remove(service, group.Id, delete));
 

@@ -1,4 +1,4 @@
-using BeBoosted.Application.Projects;
+﻿using BeBoosted.Application.Projects;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Infrastructure.Persistence;
 using BeBoosted.Infrastructure.Projects;
@@ -11,17 +11,16 @@ namespace BeBoosted.Tests.Support;
 /// repositories — and then throws before the commit. So the callback's writes are
 /// genuinely rolled back rather than merely never attempted.
 ///
-/// That distinction is the whole point. A substituted repository that throws on its
-/// first call proves only that the service stopped; it never exercises the transaction,
-/// so it would pass just as happily against an implementation that commits each member
-/// separately. This one lets every delete and update land, then discards them all.
+/// That distinction is the whole point. A substituted repository that throws on its first
+/// call proves only that the service stopped; it never exercises the transaction, so it
+/// would pass just as happily against an implementation that commits each row separately.
+/// This one lets every write land, then discards them all.
 ///
-/// Deliberately a near-twin of <c>ProjectServiceTests.FailAfterMutation</c>, which is
-/// private to that class and predates this file. Sharing one double across both would
-/// have to be named for neither caller or for only one of them; the duplication is two
-/// constructor calls wide and says plainly which tests each belongs to.
+/// Nothing here is specific to any one use case — it is "run the real callback on a real
+/// transaction, then throw" — so it is shared by every rollback test rather than copied per
+/// caller. No test asserts on the message.
 /// </summary>
-public sealed class FailGroupMutation(SqliteConnectionFactory factory) : IProjectMutations
+public sealed class FailAfterMutation(SqliteConnectionFactory factory) : IProjectMutations
 {
     public void Execute(
         Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository,
@@ -35,6 +34,6 @@ public sealed class FailGroupMutation(SqliteConnectionFactory factory) : IProjec
             new SqliteResourceRepository(connection, transaction),
             new SqliteTaskRepository(connection, transaction),
             new SqliteResourceGroupRepository(connection, transaction));
-        throw new InvalidOperationException("after mutation, before commit");
+        throw new InvalidOperationException("after the mutation, before the commit");
     }
 }

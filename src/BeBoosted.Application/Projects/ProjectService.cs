@@ -1,4 +1,4 @@
-using BeBoosted.Application.Abstractions;
+﻿using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Ai;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Tasks;
@@ -370,6 +370,13 @@ public sealed class ProjectService(
     ///
     /// One transaction for all of it: a failure part-way must not leave some members loose
     /// and others still filed under a group the user was told had gone.
+    ///
+    /// The group's directory is left on disk, empty, as the phase-1 plan calls for — no
+    /// pruning here. Note what that makes routine: <see cref="ResourceLayoutReconciler"/>'s
+    /// DirectoryClaims covers only directories a live group ROW claims, so a directory whose
+    /// row is gone still ends an adoption probe one slot short. That state was previously
+    /// reachable only through a rolled-back create; both removals now produce it on the
+    /// happy path.
     /// </summary>
     public void UngroupGroup(ResourceGroupId id)
     {
@@ -400,11 +407,19 @@ public sealed class ProjectService(
 
         // Deferred rather than refused when either parent has claimed nothing. Ungroup is a
         // recovery action and must stay available on data in that state — but reconciling
-        // there is the hazard RenameFile also defers around: the reconciler deliberately
-        // lets a both-empty Project/File through as the pre-0012 legacy shape, so an
-        // unclaimed Project resolves its Files' folders to the File segment alone and drags
-        // every newly loosened document out into the resources root. The rows are already
-        // correct; the bytes stay put and converge once the backfill claims the Project.
+        // there is the hazard RenameFile also defers around.
+        //
+        // The Project half is the load-bearing one, and the only one RenameFile checks: the
+        // reconciler deliberately lets a both-empty Project/File through as the pre-0012
+        // legacy shape, so an unclaimed Project resolves its Files' folders to the File
+        // segment alone and drags every newly loosened document out into the resources root.
+        // The rows are already correct; the bytes stay put and converge once the backfill
+        // claims the Project.
+        //
+        // The File half is belt-and-braces. The reconciler's own half-backfilled guard
+        // already skips a File whose segment is empty under a claimed Project, so this
+        // cannot be the thing that saves us — it is here to state the precondition the
+        // sibling group actions state, not because removing it is known to break anything.
         if (file is { FolderSegment.Length: > 0 } && project is { FolderSegment.Length: > 0 } owner)
         {
             // AfterCommit for the same reason RenameGroup uses it: the rows have landed and
@@ -431,6 +446,9 @@ public sealed class ProjectService(
     /// Bytes and provenance follow the commit, one <see cref="AfterCommit"/> each, so a
     /// path that refuses to be deleted costs only itself — the remaining paths and every
     /// invalidation still run.
+    ///
+    /// This leaves the group's emptied directory behind too; see
+    /// <see cref="UngroupGroup"/> for what that means for the reconciler's probe gap.
     /// </summary>
     public void DeleteGroup(ResourceGroupId id)
     {
@@ -440,13 +458,21 @@ public sealed class ProjectService(
             return;
         }
 
-        // Snapshotted before the commit, deliberately: afterwards the rows are gone and
-        // neither the ids to invalidate nor the paths to delete can be read back.
-        var doomed = resources.GetForFile(group.FileId).Where(r => r.GroupId == id).ToList();
-        var paths = doomed.Select(r => r.StoredPath).OfType<string>().ToList();
+        // Filled inside the callback below and read after it. The list outlives the
+        // callback, so it still does the job a snapshot has to do: once the commit lands the
+        // rows are gone, and neither the ids to invalidate nor the paths to delete can be
+        // read back.
+        var doomed = new List<Resource>();
 
         mutations.Execute((_, _, resourceRepo, _, groupRepo) =>
         {
+            // Read through the transaction-bound repository, exactly as UngroupGroup does. A
+            // member filed into this group between an outside read and this commit would be
+            // missing from the list — and then not merely skipped: groupRepo.Delete below
+            // SET NULLs it, so it survives loose, with its bytes, and with everything derived
+            // from it unflagged, inside a group the user was told had been destroyed.
+            doomed = resourceRepo.GetForFile(group.FileId).Where(r => r.GroupId == id).ToList();
+
             foreach (var resource in doomed)
             {
                 resourceRepo.Delete(resource.Id);
@@ -457,7 +483,7 @@ public sealed class ProjectService(
 
         // Outside the callback: filesystem work never runs inside a transaction, because a
         // rollback cannot put the bytes back.
-        foreach (var path in paths)
+        foreach (var path in doomed.Select(r => r.StoredPath).OfType<string>())
         {
             AfterCommit(() => storage.Delete(path));
         }

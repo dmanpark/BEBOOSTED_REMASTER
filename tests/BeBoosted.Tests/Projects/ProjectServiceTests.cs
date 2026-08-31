@@ -1,4 +1,4 @@
-using BeBoosted.Application.Abstractions;
+﻿using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Ai;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Projects;
@@ -134,28 +134,6 @@ public sealed class ProjectServiceTests : IDisposable
             new SimpleLocalIndexer(_resources, _storage, _clock), _tasks,
             new SqliteCalendarBlockRepository(_database.Factory), _completions, _clock, _groups,
             invalidator);
-
-    /// <summary>
-    /// Runs the real mutation inside the real transaction, then throws before commit —
-    /// so the callback's writes are genuinely rolled back, not merely never attempted.
-    /// </summary>
-    private sealed class FailAfterMutation(SqliteConnectionFactory factory) : IProjectMutations
-    {
-        public void Execute(
-            Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository,
-                IResourceGroupRepository> mutation)
-        {
-            using var connection = factory.Open();
-            using var transaction = connection.BeginTransaction();
-            mutation(
-                new SqliteProjectRepository(connection, transaction),
-                new SqliteProjectFileRepository(connection, transaction),
-                new SqliteResourceRepository(connection, transaction),
-                new SqliteTaskRepository(connection, transaction),
-                new SqliteResourceGroupRepository(connection, transaction));
-            throw new InvalidOperationException("injected failure");
-        }
-    }
 
     /// <summary>Records every invalidation so a test can assert none happened.</summary>
     private sealed class RecordingInvalidator : IProvenanceInvalidator
