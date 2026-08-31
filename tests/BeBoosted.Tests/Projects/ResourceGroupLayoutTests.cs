@@ -384,9 +384,10 @@ public sealed class ResourceGroupLayoutTests
     }
 
     /// <summary>
-    /// A File whose resources are all loose never needs its groups, so it must not pay for
-    /// the query. Lazy rather than eager, which is also what puts the read inside the
-    /// per-resource try above.
+    /// A File whose resources are all loose AND all already placed never needs its groups,
+    /// so it must not pay for the query. Adoption reads the claims for loose resources too,
+    /// so this holds only while nothing here is misplaced. Lazy rather than eager, which is
+    /// also what puts the read inside the per-resource try above.
     /// </summary>
     [Fact]
     public void Reconcile_WithNoGroupedResources_NeverReadsTheGroups()

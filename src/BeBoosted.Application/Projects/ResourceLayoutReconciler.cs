@@ -62,8 +62,10 @@ public sealed class ResourceLayoutReconciler(
             IReadOnlySet<string>? directoryClaims = null;
 
             // Loaded on first need, from inside the per-resource try below. Lazily,
-            // because a File whose resources are all loose never needs the query at all;
-            // and from inside the try, because this class's contract is per-resource
+            // because a File that never resolves a membership and never reaches the
+            // adoption path skips the query entirely — note adoption needs the claims for
+            // loose resources too, so "all loose" alone does not mean "never queried".
+            // And from inside the try, because this class's contract is per-resource
             // recovery — an eager load at File scope turns one repository fault into an
             // abort of every remaining File and Project.
             Dictionary<ResourceGroupId, ResourceGroup> Groups()
