@@ -155,23 +155,33 @@ public sealed class ProjectService(
     }
 
     /// <summary>
-    /// Runs one side effect that follows a committed transaction, and swallows anything it
-    /// throws. The rows are already gone and nothing here can undo that, so a failure can
-    /// only do two things, both worse than the failure itself: skip the side effects after
-    /// it — including the provenance invalidation that flags derived items as needing
-    /// review, leaving them citing sources that no longer exist — and escape to a caller
-    /// that will report a delete which fully succeeded as a failure. An orphaned file on
-    /// disk is the lesser outcome, and the reconciler already tolerates one.
+    /// Runs one side effect that follows a committed write, and swallows anything it throws.
+    /// The write has already landed and nothing here can undo it, so a failure can only do
+    /// two things, both worse than the failure itself: skip the side effects after it, and
+    /// escape to a caller that will report an operation which fully succeeded as a failure.
+    ///
+    /// Three kinds of side effect run through here, and the reasoning is the same for each:
+    /// <list type="bullet">
+    /// <item>Deleting a removed resource's bytes. The row is gone; an orphaned file on disk
+    /// is the lesser outcome, and the reconciler already tolerates one.</item>
+    /// <item>Invalidating AI provenance, which flags derived items as needing review. Skipping
+    /// it would leave them citing sources that no longer exist — which is why it is isolated
+    /// from the byte delete above rather than sequenced behind it.</item>
+    /// <item>Reconciling after a group rename or a membership move. The row names the new
+    /// group or folder either way; the bytes catch up on the next run, and the resource stays
+    /// openable at its recorded path meanwhile.</item>
+    /// </list>
     ///
     /// Per side effect, deliberately: one path that refuses must not cost the next one.
     ///
-    /// This cannot be pushed down into <see cref="IResourceStorage.Delete"/> or
-    /// <see cref="IProvenanceInvalidator"/>. Both are interfaces, so any implementation may
-    /// throw; hardening the ones shipped today would leave the guarantee resting on every
-    /// future implementation remembering. The isolation belongs where the sequencing is.
+    /// This cannot be pushed down into <see cref="IResourceStorage.Delete"/>,
+    /// <see cref="IProvenanceInvalidator"/> or <see cref="ResourceLayoutReconciler"/>. The
+    /// first two are interfaces, so any implementation may throw, and hardening the ones
+    /// shipped today would leave the guarantee resting on every future implementation
+    /// remembering. The isolation belongs where the sequencing is.
     ///
-    /// Nothing before the commit goes through here — <c>mutations.Execute</c> must still
-    /// throw and still roll back.
+    /// Nothing before a commit goes through here — <c>mutations.Execute</c> must still throw
+    /// and still roll back, and so must a reservation that fails before its row is written.
     /// </summary>
     private static void AfterCommit(Action sideEffect)
     {
@@ -182,7 +192,7 @@ public sealed class ProjectService(
         catch (Exception)
         {
             // Deliberately unreported at this layer: the service takes no logger, and the
-            // delete it belongs to has already succeeded.
+            // operation this belongs to has already succeeded.
         }
     }
 
@@ -216,16 +226,26 @@ public sealed class ProjectService(
     }
 
     /// <summary>
-    /// The Project and File a group may be claimed under, refusing while either still
-    /// holds the empty sentinel. Nothing else stops it: <c>Path.Combine</c> swallows an
-    /// empty part, so an unclaimed File would put a group's directory straight into the
-    /// Project folder and an unclaimed Project would put it in the resources root — a
-    /// folder no part of the layout agrees with, recorded on the row for good.
+    /// The Project and File under which a group action may proceed, refusing while either
+    /// still holds the empty sentinel. It guards two different hazards, one per caller.
     ///
-    /// Deliberately group-specific. <see cref="ImportFile"/> keeps storing a document
-    /// somewhere findable under an unclaimed parent, because refusing an import outright
-    /// is a worse answer than a folder the next reconcile tidies. A group's segment is
-    /// persisted rather than recomputed, so the same tolerance would be permanent.
+    /// For <see cref="CreateGroup"/> and <see cref="RenameGroup"/>, which claim a directory:
+    /// <c>Path.Combine</c> swallows an empty part, so an unclaimed File would put the group's
+    /// directory straight into the Project folder and an unclaimed Project would put it in
+    /// the resources root — a folder no part of the layout agrees with, recorded on the row
+    /// for good.
+    ///
+    /// For <see cref="MoveResourceToGroup"/>, which claims nothing, the load-bearing half is
+    /// the Project segment, because the move reconciles the whole Project. The reconciler
+    /// deliberately lets a both-empty Project/File through as the pre-0012 legacy shape, so
+    /// sweeping an unclaimed Project resolves its Files' folders to "" and flattens their
+    /// loose documents into the resources root — the same hazard <see cref="RenameFile"/>
+    /// defers around, reached here through a sibling File the caller never touched.
+    ///
+    /// Deliberately group-specific either way. <see cref="ImportFile"/> keeps storing a
+    /// document somewhere findable under an unclaimed parent, because refusing an import
+    /// outright is a worse answer than a folder the next reconcile tidies. A group's segment
+    /// is persisted rather than recomputed, so the same tolerance would be permanent.
     /// </summary>
     private (Project Project, ProjectFile File) RequireClaimedGroupParent(ProjectFileId fileId)
     {
@@ -284,11 +304,10 @@ public sealed class ProjectService(
         group.RelocateTo(segment, clock.Now);
         groups.Update(group);
 
-        // AfterCommit, deliberately unlike RenameFile/RenameProject: the row write has
-        // already committed, so a throw from the reconcile cannot undo the rename — it can
-        // only misreport an operation that fully succeeded. Recorded in the phase-1 plan
-        // under "Two execution decisions ruled before Task 1"; aligning RenameFile with
-        // this is a follow-up, not part of this branch.
+        // AfterCommit, deliberately unlike RenameFile/RenameProject, which call the
+        // reconciler directly: the row write has already committed, so a throw from the
+        // reconcile cannot undo the rename — it can only misreport an operation that fully
+        // succeeded. Aligning those two is a follow-up.
         AfterCommit(() => reconciler?.ReconcileProject(project.Id));
         return group;
     }
@@ -314,19 +333,22 @@ public sealed class ProjectService(
             }
         }
 
-        if (resource.GroupId == groupId)
-        {
-            return;
-        }
-
-        resource.MoveToGroup(groupId, clock.Now);
-        resources.Update(resource);
-
         // No indexer and no provenance invalidation, deliberately: filing changes neither
         // the bytes, the extracted text, nor the resource's identity, so anything derived
         // from it still cites exactly what it cited before.
+        if (resource.GroupId != groupId)
+        {
+            resource.MoveToGroup(groupId, clock.Now);
+            resources.Update(resource);
+        }
+
+        // Outside that branch on purpose: re-issuing a move that already landed is the
+        // recovery path, not a no-op. The membership row and the bytes commit separately, so
+        // a relocation that failed leaves the resource correctly filed at its old path — and
+        // the user's response to seeing it in the wrong place is to file it there again.
+        // Returning early would answer that with silence until the next app start.
         //
-        // The single-row membership write is atomic on its own and has already committed.
+        // The row write, when there was one, is atomic on its own and has already committed.
         // Moving the bytes to match is best-effort from here: a failure leaves the resource
         // filed, at its old and still-openable path, for the next reconcile to converge —
         // reporting a filing that genuinely happened as failed would be the worse answer.

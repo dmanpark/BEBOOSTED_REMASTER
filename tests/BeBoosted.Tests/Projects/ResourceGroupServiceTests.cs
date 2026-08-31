@@ -21,15 +21,6 @@ public sealed class ResourceGroupServiceTests
     private static string Read(ResourceGroupFixture f, string? storedPath)
         => System.IO.File.ReadAllText(f.Storage.ResolvePath(storedPath!));
 
-    /// <summary>A file on disk outside the resources root, ready to import.</summary>
-    private static string SourceFile(ResourceGroupFixture f, string name, string content)
-    {
-        var source = Path.Combine(f.DataDirectory, "inputs", Guid.NewGuid().ToString("N"), name);
-        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
-        System.IO.File.WriteAllText(source, content);
-        return source;
-    }
-
     /// <summary>
     /// Delegates everything, with the two failures a group action has to survive: a
     /// reservation that cannot create its directory, and a byte move that cannot happen.
@@ -133,6 +124,12 @@ public sealed class ResourceGroupServiceTests
     /// A resource crossing group boundaries keeps its identity, its bytes and its place in
     /// the index. Membership is a single-row change; nothing here re-imports, re-indexes,
     /// or mints a new resource.
+    ///
+    /// The per-hop stored-path assertion is what makes this a test of the move *operation*
+    /// rather than only of what the move preserves: every other assertion here stays true
+    /// if the bytes never follow the membership at all. It iterates the groups rather than
+    /// their ids so the expected folder can be built with the three-argument
+    /// <c>FolderFor</c> — which resolves the loose folder for the trailing null hop.
     /// </summary>
     [Fact]
     public void MoveIntoBetweenAndOut_KeepsIdentityBytesAndSearchText()
@@ -142,13 +139,16 @@ public sealed class ResourceGroupServiceTests
         var a = service.CreateGroup(f.File.Id, "Unit 3");
         var b = service.CreateGroup(f.File.Id, "Unit 4");
         var r = f.Document("source.txt", "search-only-token");
-        foreach (var destination in new ResourceGroupId?[] { a.Id, b.Id, null })
+        foreach (var destination in new ResourceGroup?[] { a, b, null })
         {
-            service.MoveResourceToGroup(r.Id, destination);
+            service.MoveResourceToGroup(r.Id, destination?.Id);
             var current = f.Resources.GetById(r.Id)!;
-            Assert.Equal(destination, current.GroupId);
+            Assert.Equal(destination?.Id, current.GroupId);
             Assert.Equal(r.Id, current.Id);
             Assert.Equal(ResourceIndexState.Indexed, current.IndexState);
+            Assert.Equal(
+                Path.Combine(ResourceLayout.FolderFor(f.Project, f.File, destination), "source.txt"),
+                current.StoredPath);
             Assert.Equal("search-only-token",
                 System.IO.File.ReadAllText(f.Storage.ResolvePath(current.StoredPath!)));
             Assert.Equal(r.Id, Assert.Single(
@@ -277,7 +277,7 @@ public sealed class ResourceGroupServiceTests
         Assert.Empty(f.Resources.GetForFile(f.File.Id));
 
         var imported = service.ImportFile(
-            f.File.Id, ResourceKind.Document, SourceFile(f, "Notes", "loose bytes"));
+            f.File.Id, ResourceKind.Document, f.SourceFile("Notes", "loose bytes"));
 
         Assert.Null(imported.GroupId);
         Assert.Equal(Path.Combine(parent, "Notes (2)"), imported.StoredPath);
@@ -428,9 +428,9 @@ public sealed class ResourceGroupServiceTests
         var link = service.AddLink(f.File.Id, "SAT scores", "https://collegeboard.org/scores");
         var note = service.AddNote(f.File.Id, "Reading note", "chapter three");
         var document = service.ImportFile(
-            f.File.Id, ResourceKind.Document, SourceFile(f, "Transcript.pdf", "pdf bytes"));
+            f.File.Id, ResourceKind.Document, f.SourceFile("Transcript.pdf", "pdf bytes"));
         var image = service.ImportFile(
-            f.File.Id, ResourceKind.Image, SourceFile(f, "cert.png", "png bytes"));
+            f.File.Id, ResourceKind.Image, f.SourceFile("cert.png", "png bytes"));
 
         foreach (var id in new[] { link.Id, note.Id, document.Id, image.Id })
         {
@@ -539,6 +539,42 @@ public sealed class ResourceGroupServiceTests
         Assert.Equal(1, f.Reconciler().ReconcileProject(f.Project.Id));
 
         var settled = f.Resources.GetById(member.Id)!;
+        Assert.Equal(
+            Path.Combine(ResourceLayout.FolderFor(f.Project, f.File, group), "member.txt"),
+            settled.StoredPath);
+        Assert.Equal("member bytes", Read(f, settled.StoredPath));
+        Assert.Equal(0, f.Reconciler().ReconcileProject(f.Project.Id));
+    }
+
+    /// <summary>
+    /// Re-issuing a move that already landed is the recovery path, not a no-op. It is
+    /// reached from the state the test above builds: the byte relocation failed, so the
+    /// resource is correctly filed but still sitting at its old path. The user sees it in
+    /// the wrong place and files it into the same group again — and returning early on
+    /// "already a member" would answer that with silence, leaving the bytes stranded until
+    /// the next app start reconciles them.
+    /// </summary>
+    [Fact]
+    public void ReIssuingAMoveWhoseBytesNeverFollowed_RetriesTheRelocation()
+    {
+        using var f = new ResourceGroupFixture();
+        var storage = new SabotagedStorage(f.Storage);
+        var service = f.CreateService(storage: storage);
+        var group = service.CreateGroup(f.File.Id, "Notes");
+        var member = f.Document("member.txt", "member bytes");
+        var loosePath = f.Resources.GetById(member.Id)!.StoredPath;
+
+        storage.RefuseMoves = true;
+        service.MoveResourceToGroup(member.Id, group.Id);
+        Assert.Equal(group.Id, f.Resources.GetById(member.Id)!.GroupId);
+        Assert.Equal(loosePath, f.Resources.GetById(member.Id)!.StoredPath);
+
+        // The same move again, with the filesystem healthy this time.
+        storage.RefuseMoves = false;
+        service.MoveResourceToGroup(member.Id, group.Id);
+
+        var settled = f.Resources.GetById(member.Id)!;
+        Assert.Equal(group.Id, settled.GroupId);
         Assert.Equal(
             Path.Combine(ResourceLayout.FolderFor(f.Project, f.File, group), "member.txt"),
             settled.StoredPath);

@@ -95,9 +95,11 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
     /// "(2)", "(3)", … suffix shape on collision, and creates the directory before
     /// returning. A candidate is occupied when it is in <paramref name="claimed"/>, or
     /// already exists on disk as a file or a directory; the one exception is
-    /// <paramref name="ownedSegment"/>, this entity's own directory, which is handed back
-    /// unchanged rather than displaced — unless <paramref name="claimed"/> already holds it,
-    /// which always wins.
+    /// <paramref name="ownedSegment"/>, this entity's own directory, which is kept rather
+    /// than displaced — unless <paramref name="claimed"/> already holds it, which always
+    /// wins. Ownership is matched case-insensitively and answered in the owned segment's own
+    /// spelling; see <see cref="IResourceStorage.ReserveFolderSegment"/> for why that is not
+    /// cosmetic.
     ///
     /// Creating the directory closes the gap between checking a name is free and using it,
     /// but only for sequential callers in this process: the next reservation's disk check
@@ -115,6 +117,12 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
             // '.' the way ResourceLayout.CandidateName treats file extensions — that is
             // correct there because file names genuinely have extensions.
             var candidate = attempt <= 1 ? preferredSegment : $"{preferredSegment} ({attempt})";
+
+            // Tested against the requested candidate, before ownership is resolved, so a
+            // sibling's claim outranks this entity's own remembered segment — deliberate
+            // precedence, not an ordering slip. It assumes `claimed` compares
+            // OrdinalIgnoreCase, as every caller's does; an ordinal set would let a
+            // differently-cased owned segment past a claim that meant to exclude it.
             if (claimed.Contains(candidate))
             {
                 continue;

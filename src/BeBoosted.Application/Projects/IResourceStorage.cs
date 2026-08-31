@@ -27,10 +27,25 @@ public interface IResourceStorage
     /// collision the same way <see cref="Store"/> does for file names, and creates the
     /// directory before returning. A candidate already present in
     /// <paramref name="claimed"/>, or already occupying disk space as a file or a
-    /// directory, is skipped, except that a candidate equal to
-    /// <paramref name="ownedSegment"/> — this entity's own directory — is returned
-    /// unchanged rather than displaced; <paramref name="claimed"/> still overrides that
-    /// exception when a sibling has already taken the name.
+    /// directory, is skipped, except that a candidate matching
+    /// <paramref name="ownedSegment"/> — this entity's own directory — is kept rather than
+    /// displaced; <paramref name="claimed"/> still overrides that exception when a sibling
+    /// has already taken the name.
+    ///
+    /// **Ownership is matched case-insensitively, and what comes back is
+    /// <paramref name="ownedSegment"/>'s own spelling, not the requested one.** Answering
+    /// "notes" for a directory called "Notes" would persist a folder name that exists under
+    /// no such name. On a case-sensitive filesystem that is not cosmetic: the directory
+    /// creation below makes a *second*, empty directory, and because
+    /// <c>ResourceLayout.IsAlreadyPlaced</c> compares folders <c>OrdinalIgnoreCase</c> the
+    /// reconciler judges the existing members correctly placed and never moves them, while
+    /// every future member lands in the other directory — a permanently split group no
+    /// reconcile can see.
+    ///
+    /// <paramref name="claimed"/> is expected to use an <c>OrdinalIgnoreCase</c> comparer, as
+    /// every caller's does. It is tested against the requested candidate rather than the
+    /// owned spelling, so an ordinal set could let a differently-cased owned segment through
+    /// that it meant to exclude.
     ///
     /// What creating the directory buys, precisely: within one process, reserving
     /// sequentially, a later reservation cannot be handed a name an earlier one has

@@ -99,7 +99,7 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
     {
         var bytes = storage ?? Storage;
         return new ProjectService(Projects, Files, Resources, bytes,
-            mutations ?? new SqliteProjectMutations(Database.Factory),
+            mutations ?? Mutations,
             new SimpleLocalIndexer(Resources, bytes, this),
             new SqliteTaskRepository(Database.Factory),
             new SqliteCalendarBlockRepository(Database.Factory),
@@ -122,14 +122,27 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
     }
 
     /// <summary>
+    /// A file on disk OUTSIDE the resources root, ready to be imported or stored. Each one
+    /// gets its own guid directory, so two sources may share a name without the second
+    /// overwriting the first — which matters because the name is what the layout sanitizes
+    /// and collides on, and a shared source directory would hide a collision the test is
+    /// trying to provoke.
+    /// </summary>
+    public string SourceFile(string name, string content)
+    {
+        var source = Path.Combine(DataDirectory, "inputs", Guid.NewGuid().ToString("N"), name);
+        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+        System.IO.File.WriteAllText(source, content);
+        return source;
+    }
+
+    /// <summary>
     /// A persisted document with real bytes on disk and real index text, so a test can
     /// tell "the row survived" apart from "the row survived and its bytes did too".
     /// </summary>
     public Resource Document(string name = "source.txt", string content = "sentinel")
     {
-        var source = Path.Combine(DataDirectory, "inputs", Guid.NewGuid().ToString("N"), name);
-        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
-        System.IO.File.WriteAllText(source, content);
+        var source = SourceFile(name, content);
 
         // The id is minted first and the name routed through ResourceLayout.FileNameFor,
         // exactly as ProjectService.ImportFile does. Storing under the raw name is
