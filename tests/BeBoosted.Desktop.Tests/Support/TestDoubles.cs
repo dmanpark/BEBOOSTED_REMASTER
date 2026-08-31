@@ -161,11 +161,13 @@ public sealed class InMemoryProjectMutations(
     IProjectRepository projects,
     IProjectFileRepository files,
     IResourceRepository resources,
-    ITaskRepository tasks) : IProjectMutations
+    ITaskRepository tasks,
+    IResourceGroupRepository groups) : IProjectMutations
 {
     public void Execute(
-        Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository> mutation)
-        => mutation(projects, files, resources, tasks);
+        Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository,
+            IResourceGroupRepository> mutation)
+        => mutation(projects, files, resources, tasks, groups);
 }
 
 public sealed class InMemoryPlanningProposalRepository : IPlanningProposalRepository
@@ -261,6 +263,9 @@ public sealed class InMemoryProjectFileRepository : IProjectFileRepository
     /// <summary>Mirrors resources.file_id ON DELETE CASCADE.</summary>
     public InMemoryResourceRepository? Resources { get; set; }
 
+    /// <summary>Mirrors resource_groups.file_id ON DELETE CASCADE.</summary>
+    public InMemoryResourceGroupRepository? Groups { get; set; }
+
     public void Add(ProjectFile file) => _files[file.Id] = Clone(file);
 
     public void Update(ProjectFile file) => _files[file.Id] = Clone(file);
@@ -285,6 +290,14 @@ public sealed class InMemoryProjectFileRepository : IProjectFileRepository
             }
         }
 
+        if (Groups is { } groups)
+        {
+            foreach (var group in groups.GetForFile(id))
+            {
+                groups.Delete(group.Id);
+            }
+        }
+
         _files.Remove(id);
     }
 
@@ -295,14 +308,96 @@ public sealed class InMemoryProjectFileRepository : IProjectFileRepository
         => _files.Values.Where(f => f.ProjectId == projectId).OrderBy(f => f.CreatedAt).Select(Clone).ToList();
 }
 
+/// <summary>
+/// Mirrors resource_groups: a group is a row of its own, cloned in and out the way the
+/// SQLite repository necessarily hands back detached instances.
+/// </summary>
+public sealed class InMemoryResourceGroupRepository : IResourceGroupRepository
+{
+    private readonly Dictionary<ResourceGroupId, ResourceGroup> _groups = [];
+
+    /// <summary>
+    /// Mirrors resources.group_id ON DELETE SET NULL. Deleting a group must leave its
+    /// members alive and loose — modelling it as a cascade here would let a test pass
+    /// against behaviour the database does not have.
+    /// </summary>
+    public InMemoryResourceRepository? Resources { get; set; }
+
+    public void Add(ResourceGroup group)
+    {
+        RequireReservedSegment(group);
+        _groups[group.Id] = Clone(group);
+    }
+
+    public void Update(ResourceGroup group)
+    {
+        RequireReservedSegment(group);
+        if (!_groups.ContainsKey(group.Id))
+        {
+            throw new DomainException("That group no longer exists.");
+        }
+
+        _groups[group.Id] = Clone(group);
+    }
+
+    /// <summary>
+    /// Both refusals mirror SqliteResourceGroupRepository. Without them a view-model test
+    /// could pass on a write real SQLite would reject.
+    /// </summary>
+    private static void RequireReservedSegment(ResourceGroup group)
+    {
+        if (string.IsNullOrWhiteSpace(group.FolderSegment))
+        {
+            throw new DomainException("A group needs a reserved folder segment.");
+        }
+    }
+
+    public void Delete(ResourceGroupId id)
+    {
+        if (Resources is { } resources)
+        {
+            foreach (var member in resources.GetForGroup(id))
+            {
+                member.MoveToGroup(null, member.ModifiedAt);
+                resources.Update(member);
+            }
+        }
+
+        _groups.Remove(id);
+    }
+
+    public ResourceGroup? GetById(ResourceGroupId id)
+        => _groups.GetValueOrDefault(id) is { } group ? Clone(group) : null;
+
+    /// <summary>The repository's ORDER BY sort_order, created_at, id.</summary>
+    public IReadOnlyList<ResourceGroup> GetForFile(ProjectFileId fileId)
+        => _groups.Values
+            .Where(g => g.FileId == fileId)
+            .OrderBy(g => g.SortOrder)
+            .ThenBy(g => g.CreatedAt)
+            .ThenBy(g => g.Id.ToString(), StringComparer.Ordinal)
+            .Select(Clone)
+            .ToList();
+
+    /// <summary>
+    /// A detached copy, for the same reason the other project doubles make one: handing
+    /// back the caller's own instance turns every read into a live view of it, and a
+    /// failed write would still appear to have landed.
+    /// </summary>
+    private static ResourceGroup Clone(ResourceGroup group)
+        => ResourceGroup.Rehydrate(
+            group.Id, group.FileId, group.Title, group.SortOrder,
+            group.CreatedAt, group.ModifiedAt, group.FolderSegment);
+}
+
 public sealed class InMemoryResourceRepository : IResourceRepository
 {
     private readonly Dictionary<ResourceId, Resource> _resources = [];
     private readonly Dictionary<ResourceId, string> _indexText = [];
 
-    public void Add(Resource resource) => _resources[resource.Id] = resource;
+    public void Add(Resource resource) => _resources[resource.Id] = Clone(resource);
 
-    public void Update(Resource resource) => _resources[resource.Id] = resource;
+    public void Update(Resource resource) => _resources[resource.Id] = Clone(resource);
 
     public void Delete(ResourceId id)
     {
@@ -310,10 +405,15 @@ public sealed class InMemoryResourceRepository : IResourceRepository
         _indexText.Remove(id);
     }
 
-    public Resource? GetById(ResourceId id) => _resources.GetValueOrDefault(id);
+    public Resource? GetById(ResourceId id)
+        => _resources.GetValueOrDefault(id) is { } resource ? Clone(resource) : null;
 
     public IReadOnlyList<Resource> GetForFile(ProjectFileId fileId)
-        => _resources.Values.Where(r => r.FileId == fileId).OrderBy(r => r.AddedAt).ToList();
+        => _resources.Values.Where(r => r.FileId == fileId).OrderBy(r => r.AddedAt).Select(Clone).ToList();
+
+    /// <summary>The members of one group, for the SET NULL the group double models.</summary>
+    public IReadOnlyList<Resource> GetForGroup(ResourceGroupId groupId)
+        => _resources.Values.Where(r => r.GroupId == groupId).OrderBy(r => r.AddedAt).Select(Clone).ToList();
 
     public int CountForFile(ProjectFileId fileId) => GetForFile(fileId).Count;
 
@@ -327,7 +427,19 @@ public sealed class InMemoryResourceRepository : IResourceRepository
                     .Contains(query, StringComparison.OrdinalIgnoreCase)
                 || r.Title.Contains(query, StringComparison.OrdinalIgnoreCase))
             .OrderBy(r => r.AddedAt)
+            .Select(Clone)
             .ToList();
+
+    /// <summary>
+    /// A detached copy, carrying GroupId with everything else. Storing the caller's own
+    /// instance would let a failed update still mutate the cached row, so a test could
+    /// pass on a write that never happened.
+    /// </summary>
+    private static Resource Clone(Resource resource)
+        => Resource.Rehydrate(
+            resource.Id, resource.FileId, resource.Kind, resource.Title, resource.Url,
+            resource.Content, resource.OriginalFileName, resource.StoredPath, resource.AddedAt,
+            resource.IndexState, resource.ModifiedAt, resource.GroupId);
 }
 
 public sealed class FakeResourceStorage : IResourceStorage
@@ -526,11 +638,14 @@ public static class TestShell
         var projectRepo = projects ?? new InMemoryProjectRepository();
         var fileRepo = new InMemoryProjectFileRepository();
         var resourceRepo = new InMemoryResourceRepository();
+        var groupRepo = new InMemoryResourceGroupRepository();
 
         // The service now leaves child rows to the database's ON DELETE CASCADE, so the
         // doubles have to model it or they model the very bug this seam prevents.
         projectRepo.Files = fileRepo;
         fileRepo.Resources = resourceRepo;
+        fileRepo.Groups = groupRepo;
+        groupRepo.Resources = resourceRepo;
         var storage = resourceStorage ?? new FakeResourceStorage();
         var aiPermissions = new AiPermissionSettings(settingsStore);
         var aiProvider = new BeBoosted.Infrastructure.Ai.LocalHeuristicAiProvider(resourceRepo, projectRepo);
@@ -538,7 +653,7 @@ public static class TestShell
             aiProvider, new InMemoryAiProvenanceRepository(), repository, aiPermissions, clock);
         var projectService = new ProjectService(
             projectRepo, fileRepo, resourceRepo, storage,
-            new InMemoryProjectMutations(projectRepo, fileRepo, resourceRepo, repository),
+            new InMemoryProjectMutations(projectRepo, fileRepo, resourceRepo, repository, groupRepo),
             new FakeIndexer(resourceRepo, clock), repository, blockRepository,
             completionRepository, clock, aiService);
         return new ShellViewModel(

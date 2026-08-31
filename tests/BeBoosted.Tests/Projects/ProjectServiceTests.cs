@@ -138,7 +138,8 @@ public sealed class ProjectServiceTests : IDisposable
     private sealed class FailAfterMutation(SqliteConnectionFactory factory) : IProjectMutations
     {
         public void Execute(
-            Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository> mutation)
+            Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository,
+                IResourceGroupRepository> mutation)
         {
             using var connection = factory.Open();
             using var transaction = connection.BeginTransaction();
@@ -146,7 +147,8 @@ public sealed class ProjectServiceTests : IDisposable
                 new SqliteProjectRepository(connection, transaction),
                 new SqliteProjectFileRepository(connection, transaction),
                 new SqliteResourceRepository(connection, transaction),
-                new SqliteTaskRepository(connection, transaction));
+                new SqliteTaskRepository(connection, transaction),
+                new SqliteResourceGroupRepository(connection, transaction));
             throw new InvalidOperationException("injected failure");
         }
     }
@@ -657,7 +659,7 @@ public sealed class ProjectServiceTests : IDisposable
         var mutations = new SqliteProjectMutations(_database.Factory);
 
         Assert.Throws<InvalidOperationException>(() =>
-            mutations.Execute((_, fileRepo, resourceRepo, _) =>
+            mutations.Execute((_, fileRepo, resourceRepo, _, _) =>
             {
                 resourceRepo.Delete(link.Id);
                 fileRepo.Delete(file.Id);

@@ -42,6 +42,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectRepository, SqliteProjectRepository>();
         services.AddSingleton<IProjectFileRepository, SqliteProjectFileRepository>();
         services.AddSingleton<IResourceRepository, SqliteResourceRepository>();
+        services.AddSingleton<IResourceGroupRepository, SqliteResourceGroupRepository>();
         services.AddSingleton<IResourceStorage, LocalResourceStorage>();
         services.AddSingleton<IProjectMutations, SqliteProjectMutations>();
         services.AddSingleton<FolderIdentityBackfill>();

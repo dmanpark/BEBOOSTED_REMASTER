@@ -78,7 +78,7 @@ public sealed class ProjectService(
         var paths = doomedResources.Select(r => r.StoredPath).OfType<string>().ToList();
         var orphaned = tasks.GetAll().Where(t => t.ProjectId == id).ToList();
 
-        mutations.Execute((projectRepo, _, _, taskRepo) =>
+        mutations.Execute((projectRepo, _, _, taskRepo, _) =>
         {
             // A rollback undoes the row but not this in-memory unlink, which is safe
             // only because `orphaned` was read fresh here and is discarded on throw.
@@ -201,7 +201,7 @@ public sealed class ProjectService(
         var doomed = resources.GetForFile(id);
         var paths = doomed.Select(r => r.StoredPath).OfType<string>().ToList();
 
-        mutations.Execute((_, fileRepo, _, _) => fileRepo.Delete(id));
+        mutations.Execute((_, fileRepo, _, _, _) => fileRepo.Delete(id));
 
         foreach (var path in paths)
         {
@@ -273,7 +273,7 @@ public sealed class ProjectService(
             return;
         }
 
-        mutations.Execute((_, _, resourceRepo, _) => resourceRepo.Delete(id));
+        mutations.Execute((_, _, resourceRepo, _, _) => resourceRepo.Delete(id));
 
         if (resource.StoredPath is { } storedPath)
         {

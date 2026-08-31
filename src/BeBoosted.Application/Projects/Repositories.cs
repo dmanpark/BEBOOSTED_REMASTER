@@ -29,6 +29,29 @@ public interface IProjectFileRepository
     IReadOnlyList<ProjectFile> GetForProject(ProjectId projectId);
 }
 
+/// <summary>
+/// The one level of containers inside a File. Deliberately the same surface
+/// <see cref="IProjectFileRepository"/> exposes: a group is a row of its own, so rename,
+/// delete, and ordering work the way the rest of the model already works.
+/// </summary>
+public interface IResourceGroupRepository
+{
+    void Add(ResourceGroup group);
+
+    void Update(ResourceGroup group);
+
+    /// <summary>
+    /// Removes the group row only. Its resources survive and become loose — the database
+    /// clears their membership with ON DELETE SET NULL. Destructive deletion of the
+    /// members is a separate, explicit act.
+    /// </summary>
+    void Delete(ResourceGroupId id);
+
+    ResourceGroup? GetById(ResourceGroupId id);
+
+    IReadOnlyList<ResourceGroup> GetForFile(ProjectFileId fileId);
+}
+
 public interface IResourceRepository
 {
     void Add(Resource resource);
