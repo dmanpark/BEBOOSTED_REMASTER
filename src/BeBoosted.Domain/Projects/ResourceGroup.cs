@@ -86,8 +86,10 @@ public sealed class ResourceGroup
     }
 
     private static string ValidateTitle(string title)
-        => string.IsNullOrWhiteSpace(title)
-            ? throw new DomainException("A group needs a title.") : title.Trim();
+    {
+        var trimmed = title?.Trim() ?? string.Empty;
+        return trimmed.Length == 0 ? throw new DomainException("A group needs a title.") : trimmed;
+    }
 
     private static int ValidateOrder(int order)
         => order < 0 ? throw new DomainException("Group order cannot be negative.") : order;
