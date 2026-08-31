@@ -6,6 +6,44 @@
              x:DataType="vm:ProjectsViewModel">
 
   <UserControl.Resources>
+    <!-- ============ Fluent's Expander, repainted onto the workbench palette ============
+         Setting Background/BorderBrush on the Expander itself reaches only its CONTENT
+         border: Fluent draws the header from a separate ExpanderHeader* / ExpanderChevron*
+         resource set, and Controls.axaml's `Selector="Button"` is exact-type so the app's
+         button retemplate never reaches the header's ToggleButton either. Left alone the
+         header is a stock grey card with a #33000000 edge above a body with ours — two
+         border colours meeting mid-card — and a black square behind the chevron on hover.
+         Overriding the theme's own keys is how App.axaml already repaints Fluent's accent;
+         scoped here because these are the app's only Expanders. Key names and defaults
+         were read out of Avalonia 12.1.1 at runtime, not guessed. -->
+    <SolidColorBrush x:Key="ExpanderHeaderBackground" Color="{StaticResource ColorPaperWhite}" />
+    <SolidColorBrush x:Key="ExpanderHeaderBackgroundPointerOver" Color="{StaticResource ColorPaperWhite}" />
+    <SolidColorBrush x:Key="ExpanderHeaderBackgroundPressed" Color="{StaticResource ColorHoverWash}" />
+    <SolidColorBrush x:Key="ExpanderHeaderBackgroundDisabled" Color="{StaticResource ColorPaperWhite}" />
+    <SolidColorBrush x:Key="ExpanderHeaderBorderBrush" Color="{StaticResource ColorRuleLight}" />
+    <!-- Hover darkens the edge and leaves the fill alone — the same move
+         `Button:pointerover` makes at Controls.axaml:70. -->
+    <SolidColorBrush x:Key="ExpanderHeaderBorderBrushPointerOver" Color="{StaticResource ColorGraphite}" />
+    <SolidColorBrush x:Key="ExpanderHeaderBorderBrushPressed" Color="{StaticResource ColorGraphite}" />
+    <SolidColorBrush x:Key="ExpanderHeaderBorderBrushDisabled" Color="{StaticResource ColorRuleLight}" />
+    <SolidColorBrush x:Key="ExpanderHeaderForeground" Color="{StaticResource ColorGraphite}" />
+    <SolidColorBrush x:Key="ExpanderHeaderForegroundPointerOver" Color="{StaticResource ColorGraphite}" />
+    <SolidColorBrush x:Key="ExpanderHeaderForegroundPressed" Color="{StaticResource ColorGraphite}" />
+    <SolidColorBrush x:Key="ExpanderHeaderForegroundDisabled" Color="{StaticResource ColorGraphite55}" />
+    <SolidColorBrush x:Key="ExpanderChevronForeground" Color="{StaticResource ColorPencilGray}" />
+    <SolidColorBrush x:Key="ExpanderChevronForegroundPointerOver" Color="{StaticResource ColorPencilGray}" />
+    <SolidColorBrush x:Key="ExpanderChevronForegroundPressed" Color="{StaticResource ColorPencilGray}" />
+    <SolidColorBrush x:Key="ExpanderChevronForegroundDisabled" Color="{StaticResource ColorGraphite55}" />
+    <!-- Fluent's hover value here is solid Black. -->
+    <SolidColorBrush x:Key="ExpanderChevronBackgroundPointerOver" Color="Transparent" />
+    <SolidColorBrush x:Key="ExpanderChevronBackgroundPressed" Color="Transparent" />
+    <SolidColorBrush x:Key="ExpanderContentBackground" Color="Transparent" />
+    <SolidColorBrush x:Key="ExpanderContentBorderBrush" Color="{StaticResource ColorRuleLight}" />
+    <Thickness x:Key="ExpanderHeaderPadding">14,0,0,0</Thickness>
+    <Thickness x:Key="ExpanderChevronMargin">12,0,10,0</Thickness>
+    <x:Double x:Key="ExpanderMinHeight">40</x:Double>
+    <x:Double x:Key="ExpanderChevronButtonSize">26</x:Double>
+
     <!-- One resource row, keyed because two kinds of list render it: the File's loose
          list and every group's list. Same instance shape, same markup, one place to
          change it. -->
@@ -54,6 +92,17 @@
   </UserControl.Resources>
 
   <UserControl.Styles>
+    <!-- Keyboard focus on a group header. Fluent's expander header shows nothing at all
+         for :focus-visible — not a different ring from the app's, none — and a header that
+         Space collapses has to say when it holds focus. Lime wash plus a graphite edge is
+         what the rest of the app means by focus; it goes on the ToggleButton because the
+         header's fill and edge are template-bound from there, and the state has no theme
+         setter of its own to argue with. -->
+    <Style Selector="Expander /template/ ToggleButton#ExpanderHeader:focus-visible">
+      <Setter Property="Background" Value="{StaticResource BrushLimeWash}" />
+      <Setter Property="BorderBrush" Value="{StaticResource BrushGraphite}" />
+    </Style>
+
     <!-- The tactile folio: the product's one physical motif -->
     <Style Selector="Button.folio">
       <Setter Property="Background" Value="Transparent" />
@@ -666,7 +715,8 @@
                 <!-- ShowEmptyState, not !HasResources: an empty group is a File with
                      something in it, and "Nothing collected yet." underneath a group
                      header the user just made contradicts the header. -->
-                <StackPanel IsVisible="{Binding ShowEmptyState}" Margin="26,20" Spacing="6">
+                <StackPanel DockPanel.Dock="Top" IsVisible="{Binding ShowEmptyState}"
+                            Margin="26,20" Spacing="6">
                   <TextBlock Text="Nothing collected yet." FontWeight="Medium" />
                   <TextBlock Classes="secondary" TextWrapping="Wrap"
                              Text="Add documents, links, notes, or images with the actions above." />
@@ -683,16 +733,14 @@
                     <ItemsControl ItemsSource="{Binding Groups}" IsVisible="{Binding HasGroups}">
                       <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:ResourceGroupViewModel">
-                          <!-- Background/BorderBrush/Padding repaint Fluent's grey expander
-                               card onto the folio's paper, the way App.axaml already
-                               repaints Fluent's accent. Inline rather than a style: this is
-                               the app's only Expander. -->
+                          <!-- Colours come from the ExpanderHeader*/ExpanderContent* overrides
+                               at the top of this file, which reach the header too; only the
+                               geometry is local. The header already stretches — Fluent owns
+                               that through ExpanderHeaderHorizontalContentAlignment. -->
                           <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}"
                                     HorizontalAlignment="Stretch"
-                                    HorizontalContentAlignment="Stretch"
                                     Margin="14,10,14,0" Padding="0,4"
-                                    Background="Transparent"
-                                    BorderBrush="{StaticResource BrushRuleLight}"
+                                    CornerRadius="{StaticResource RadiusControl}"
                                     AutomationProperties.Name="{Binding Title, StringFormat='Group {0}'}">
                             <Expander.Header>
                               <!-- A Grid rather than one horizontal run: at the narrow width
@@ -718,7 +766,8 @@
                                                    AutomationProperties.Name="Group title" />
                                           <Button Classes="primary" Content="Save"
                                                   HorizontalAlignment="Right"
-                                                  Click="OnRenameGroupClick" />
+                                                  Click="OnRenameGroupClick"
+                                                  AutomationProperties.Name="Save group title" />
                                         </StackPanel>
                                       </Flyout>
                                     </Button.Flyout>
@@ -766,7 +815,8 @@
                           DataContext="{Binding Selected}" x:DataType="vm:ResourceRowViewModel">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                   <TextBlock Classes="serif" Text="{Binding Title}" FontSize="20" FontWeight="Medium"
-                             TextWrapping="Wrap" />
+                             TextWrapping="Wrap"
+                             AutomationProperties.Name="Selected resource" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="10">
                   <TextBlock Classes="meta" Text="{Binding PreviewMeta}" VerticalAlignment="Center" />

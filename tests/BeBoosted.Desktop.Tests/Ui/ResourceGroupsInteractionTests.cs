@@ -5,6 +5,8 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using BeBoosted.Desktop.Tests.Support;
@@ -114,15 +116,56 @@ public sealed class ResourceGroupsInteractionTests
             .OfType<TextBlock>()
             .Any(block => block.Text == text && block.IsEffectivelyVisible);
 
-    /// <summary>The reading pane's own title: serif at 20, unlike the File title's 26.</summary>
+    /// <summary>
+    /// The reading pane's title, by accessible name like every other finder here. Located
+    /// by font size it would go null the moment somebody restyled the pane, and four tests
+    /// would fail saying nothing about why.
+    /// </summary>
     private static string? ReadingPaneTitle(MainWindow window)
         => window.GetVisualDescendants()
             .OfType<TextBlock>()
             .Where(block => block.IsEffectivelyVisible
-                && block.Classes.Contains("serif")
-                && Math.Abs(block.FontSize - 20) < 0.01)
+                && AutomationProperties.GetName(block) == "Selected resource")
             .Select(block => block.Text)
             .FirstOrDefault();
+
+    /// <summary>The colour behind a palette token, so tests name the token, not a hex.</summary>
+    private static Color Token(string key)
+    {
+        Assert.True(
+            Avalonia.Application.Current!.TryFindResource(key, ThemeVariant.Light, out var value),
+            $"no such palette token: {key}");
+        return Assert.IsAssignableFrom<ISolidColorBrush>(value).Color;
+    }
+
+    private static Color Painted(IBrush? brush)
+        => Assert.IsAssignableFrom<ISolidColorBrush>(brush).Color;
+
+    private static void Hover(MainWindow window, Control control)
+    {
+        var point = control.TranslatePoint(new Point(12, control.Bounds.Height / 2), window)!.Value;
+        window.MouseMove(point);
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+    }
+
+    /// <summary>
+    /// Fluent draws the expander's header and its body from two unrelated resource sets, so
+    /// these are the parts a repaint has to reach. Named parts, from the 12.1.1 template.
+    /// </summary>
+    private static (Border HeaderFill, Border Body, Border Chevron, ToggleButton Header)
+        HeaderParts(Expander expander)
+    {
+        var header = expander.GetVisualDescendants().OfType<ToggleButton>().First();
+        return (
+            header.GetVisualDescendants().OfType<Border>().Single(b => b.Name == "ToggleButtonBackground"),
+            expander.GetVisualDescendants().OfType<Border>().Single(b => b.Name == "ExpanderContent"),
+            expander.GetVisualDescendants().OfType<Border>().Single(b => b.Name == "ExpandCollapseChevronBorder"),
+            header);
+    }
+
+    private static Control? Focused(MainWindow window)
+        => window.FocusManager?.GetFocusedElement() as Control;
 
     private static ListBoxItem RowItem(MainWindow window, string title)
         => window.GetVisualDescendants()
@@ -454,11 +497,11 @@ public sealed class ResourceGroupsInteractionTests
         fixture.Window.CaptureRenderedFrame();
 
         var (flyout, content) = OpenFlyout(fixture.Window, "Rename group Unit 3");
-        var box = content.GetVisualDescendants().OfType<TextBox>().Single();
+        var box = TextBoxNamed(content, "Group title");
         Assert.Equal("Unit 3", box.Text); // seeded on the way open
         box.Text = "Unit 3 — Federalism";
         Dispatcher.UIThread.RunJobs();
-        ClickInPopup(content.GetVisualDescendants().OfType<Button>().Single());
+        ClickInPopup(ButtonNamed(content, "Save group title"));
         fixture.Window.CaptureRenderedFrame();
 
         Assert.False(flyout.IsOpen);
@@ -479,10 +522,10 @@ public sealed class ResourceGroupsInteractionTests
         fixture.Window.CaptureRenderedFrame();
 
         var (flyout, content) = OpenFlyout(fixture.Window, "Rename group Unit 3");
-        var box = content.GetVisualDescendants().OfType<TextBox>().Single();
+        var box = TextBoxNamed(content, "Group title");
         box.Text = "  ";
         Dispatcher.UIThread.RunJobs();
-        ClickInPopup(content.GetVisualDescendants().OfType<Button>().Single());
+        ClickInPopup(ButtonNamed(content, "Save group title"));
         fixture.Window.CaptureRenderedFrame();
 
         Assert.True(flyout.IsOpen);
@@ -599,6 +642,137 @@ public sealed class ResourceGroupsInteractionTests
         }
 
         Assert.True(ShowsText(fixture.Window, "Unit 3 — Federalism"));
+        fixture.Window.Close();
+    }
+
+    // ---- the header's chrome -------------------------------------------------------
+
+    /// <summary>
+    /// Fluent paints an expander's header and its body from two unrelated resource sets:
+    /// the header from ExpanderHeader*, the body from the control's own Background and
+    /// BorderBrush. A repaint applied only to the Expander therefore lands on half the
+    /// card — a stock grey header with a #33000000 edge above a body with the workbench's
+    /// own, two borders meeting mid-card. Every group header in the app wears this, so it
+    /// is asserted rather than eyeballed.
+    ///
+    /// Property assertions, not pixels: headless renders, but reading back what the parts
+    /// were told to paint is what catches a repaint that never reached them.
+    /// </summary>
+    [AvaloniaFact]
+    public void TheGroupHeader_WearsTheWorkbenchPalette_InEveryState()
+    {
+        var fixture = OpenSpanishFile();
+        AddGroup(fixture.File, "Unit 3");
+        fixture.Window.CaptureRenderedFrame();
+
+        var (headerFill, body, chevron, header) = HeaderParts(GroupHeader(fixture.Window, "Unit 3"));
+
+        Assert.Equal(Token("BrushPaperWhite"), Painted(headerFill.Background));
+        Assert.Equal(Token("BrushRuleLight"), Painted(headerFill.BorderBrush));
+        // One card, so one edge colour top to bottom.
+        Assert.Equal(Painted(body.BorderBrush), Painted(headerFill.BorderBrush));
+        Assert.Equal(Token("BrushPencilGray"), Painted(headerFill.GetVisualDescendants()
+            .OfType<Avalonia.Controls.Shapes.Path>()
+            .Single(path => path.Name == "ExpandCollapseChevron").Stroke
+            ?? headerFill.GetVisualDescendants()
+                .OfType<Avalonia.Controls.Shapes.Path>()
+                .Single(path => path.Name == "ExpandCollapseChevron").Fill));
+
+        // Hover. Fluent drops a solid black square behind the chevron and leaves the
+        // header edge unchanged; this app darkens the edge and never fills the chevron.
+        Hover(fixture.Window, header);
+        Assert.Contains(":pointerover", header.Classes);
+        Assert.NotEqual(Colors.Black, Painted(chevron.Background));
+        Assert.Equal(Token("BrushGraphite"), Painted(headerFill.BorderBrush));
+
+        fixture.Window.Close();
+    }
+
+    /// <summary>
+    /// Fluent's expander header shows nothing at all on keyboard focus — not a different
+    /// ring from the app's, none. A header that can be tabbed to and collapsed with Space
+    /// has to say so, so the focused header takes the lime wash the app uses for exactly
+    /// this everywhere else.
+    /// </summary>
+    [AvaloniaFact]
+    public void AFocusedGroupHeader_ShowsThatItHasFocus()
+    {
+        var fixture = OpenSpanishFile();
+        AddGroup(fixture.File, "Unit 3");
+        fixture.Window.CaptureRenderedFrame();
+
+        var (headerFill, _, _, header) = HeaderParts(GroupHeader(fixture.Window, "Unit 3"));
+        var resting = Painted(headerFill.Background);
+
+        header.Focus(NavigationMethod.Tab);
+        Dispatcher.UIThread.RunJobs();
+        fixture.Window.CaptureRenderedFrame();
+
+        Assert.Contains(":focus-visible", header.Classes);
+        Assert.NotEqual(resting, Painted(headerFill.Background));
+        Assert.Equal(Token("BrushLimeWash"), Painted(headerFill.Background));
+        Assert.Equal(Token("BrushGraphite"), Painted(headerFill.BorderBrush));
+        fixture.Window.Close();
+    }
+
+    // ---- focus survives the rebuild --------------------------------------------------
+
+    /// <summary>
+    /// The refresh behind a move destroys the row and the Move button that had focus with
+    /// it, and Avalonia focuses nothing in its place — so before this, filing a resource
+    /// from the keyboard dropped the user out of the tab order entirely and a File of
+    /// twelve loose resources cost twelve traversals from the top of the window. The
+    /// spec calls this flyout the keyboard-accessible path, so focus follows the resource
+    /// to wherever it landed.
+    /// </summary>
+    [AvaloniaFact]
+    public void AfterAMove_FocusFollowsTheRowToItsNewHome()
+    {
+        var fixture = OpenSpanishFile();
+        AddNote(fixture.File, "Vocab");
+        AddNote(fixture.File, "Syllabus");
+        AddGroup(fixture.File, "Unit 3");
+        fixture.Window.CaptureRenderedFrame();
+
+        var (_, content) = OpenFlyout(fixture.Window, "Move Vocab");
+        ClickInPopup(content.GetVisualDescendants()
+            .OfType<Button>()
+            .Single(button => AutomationProperties.GetName(button) == "Move to Unit 3"));
+        Dispatcher.UIThread.RunJobs();
+        fixture.Window.CaptureRenderedFrame();
+        Dispatcher.UIThread.RunJobs();
+
+        var moved = Assert.Single(fixture.File.Groups.Single().Resources);
+        var focused = Focused(fixture.Window);
+        Assert.True(focused is not null, "nothing holds focus after a move");
+        Assert.Same(moved, Assert.IsType<ListBoxItem>(focused).DataContext);
+        fixture.Window.Close();
+    }
+
+    /// <summary>
+    /// Delete group raises its prompt at the top of the pane while the button that raised
+    /// it sits deep in the list, so without this a keyboard user has to Shift+Tab back
+    /// past every group and every row to answer it. The same card serves the inherited
+    /// File and resource deletions, which gain the same behaviour.
+    /// </summary>
+    [AvaloniaFact]
+    public void RaisingTheDeleteGroupPrompt_FocusesItsConfirmButton()
+    {
+        var fixture = OpenSpanishFile();
+        AddNote(fixture.File, "Vocab");
+        AddGroup(fixture.File, "Unit 3");
+        MoveByViewModel(fixture.File, "Vocab", "Unit 3");
+        fixture.Window.CaptureRenderedFrame();
+
+        ClickByName(fixture.Window, "Delete group Unit 3");
+        Dispatcher.UIThread.RunJobs();
+        fixture.Window.CaptureRenderedFrame();
+        Dispatcher.UIThread.RunJobs();
+
+        var focused = Focused(fixture.Window);
+        Assert.True(focused is not null, "the prompt was raised with nothing focused");
+        Assert.Equal("FilePromptConfirmButton", focused!.Name);
+        Assert.True(focused.IsEffectivelyVisible);
         fixture.Window.Close();
     }
 
