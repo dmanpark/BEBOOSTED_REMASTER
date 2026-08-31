@@ -384,9 +384,6 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         // whose header the user collapsed.
         var expansion = Groups.ToDictionary(group => group.Id, group => group.IsExpanded);
 
-        // The notice describes the list that is about to be replaced, so it goes with it.
-        GroupNotice = null;
-
         // Everything that can throw happens here, into locals, before a single observable
         // collection is touched. A refresh reads twice — resources, then groups — and a
         // failure between the two used to leave the three collections permanently
@@ -440,6 +437,11 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         _refreshingGroups = true;
         try
         {
+            // The notice describes the list being replaced, so it goes with it — and only
+            // once the replacement is certain. Clearing it before the reads above would
+            // discard a message still describing the list left on screen when one throws.
+            GroupNotice = null;
+
             Resources.Clear();
             Groups.Clear();
             LooseResources.Clear();
