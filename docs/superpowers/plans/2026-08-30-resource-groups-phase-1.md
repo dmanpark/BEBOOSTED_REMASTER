@@ -39,6 +39,29 @@ The design predates parts of the merged repair. These are explicit implementatio
 4. FileDetailViewModel.Resources remains an all-resources selection/count index for existing callers and search navigation. The rendered lists become Groups and LooseResources, sharing those row instances rather than creating copies.
 5. A new group folder must not be claimed beneath an unclaimed Project/File. Create/Rename/Move validate both parent segments before changes. Ungroup and Delete remain available to recover/remove existing data; Ungroup defers reconciliation when either parent segment is empty.
 
+### Two execution decisions ruled before Task 1
+
+Both surfaced from checking this plan against the merged code. Neither is a defect in
+the plan; both would otherwise be made silently by whoever hits them first.
+
+6. **Group rename/move wrap the reconcile in AfterCommit; File rename does not.** Merged
+   `RenameFile`/`RenameProject` call `reconciler?.ReconcileProject(...)` directly and let
+   a throw propagate. This plan wraps the group equivalents in `AfterCommit`, which
+   swallows. Keep the plan's version: the row write has already committed, so a throw
+   there cannot undo the rename — it can only misreport a completed operation, which is
+   precisely the defect the PR #1 review found in the delete paths. Do NOT "fix"
+   `RenameFile` to match; that is out of scope for this branch. Record the divergence
+   and leave aligning the two to a follow-up. The reconcile's effects stay pinned by the
+   destination-path assertions in Tasks 3 and 4, so a swallowed failure still fails a test.
+
+7. **Task 7's outer ScrollViewer is a real layout change, accepted deliberately.** Today
+   the resource `ListBox` is the fill child of a `DockPanel`, not inside a `ScrollViewer`.
+   Wrapping groups plus the loose list in one vertical `ScrollViewer` gives each inner
+   `ListBox` unconstrained height, which disables virtualization and inner scrolling.
+   That is the correct interaction model for a sectioned list — one scrollbar for the
+   File, not one per group — and the virtualization cost is immaterial at this app's
+   scale. Say so in a comment at the XAML site so the next reader does not "restore" it.
+
 ### Safety rules inherited from PR #1
 
 - Mutations.Execute stays outside AfterCommit. A failed transaction must throw; no byte deletion or invalidation may run.
@@ -111,8 +134,13 @@ public readonly record struct ResourceGroupId(Guid Value)
 public static ResourceGroup Create(ProjectFileId fileId, string title,
     int sortOrder, DateTimeOffset now);
 public static ResourceGroup Rehydrate(ResourceGroupId id, ProjectFileId fileId,
-    string title, string folderSegment, int sortOrder,
-    DateTimeOffset createdAt, DateTimeOffset modifiedAt);
+    string title, int sortOrder,
+    DateTimeOffset createdAt, DateTimeOffset modifiedAt, string folderSegment);
+// folderSegment is LAST, matching the merged Project.Rehydrate/ProjectFile.Rehydrate
+// convention. PR #1 deliberately moved it there: accentColor/folderSegment and
+// description/folderSegment are adjacent same-type strings, and a mid-signature
+// position is a silent-swap footgun. Parameter order need not track column order;
+// Map passes the values by name-order explicitly.
 public void Rename(string title, DateTimeOffset now);
 public void RelocateTo(string folderSegment, DateTimeOffset now);
 public void Reorder(int sortOrder, DateTimeOffset now);
@@ -187,7 +215,7 @@ private static int ValidateOrder(int order)
 public void MoveToGroup(ResourceGroupId? groupId, DateTimeOffset now)
 {
     GroupId = groupId;
-    ModifiedAt = now;
+    Touch(now);
 }
 ~~~
 
@@ -233,7 +261,7 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
     public string ResourcesDirectory => Path.Combine(DataDirectory, "resources");
     public DateTimeOffset Now { get; set; } =
         DateTimeOffset.Parse("2026-08-30T09:00:00-07:00");
-    public DateOnly Today => DateOnly.FromDateTime(Now.DateTime);
+    public DateOnly Today => DateOnly.FromDateTime(Now.LocalDateTime);
     public SqliteProjectRepository Projects { get; }
     public SqliteProjectFileRepository Files { get; }
     public SqliteResourceRepository Resources { get; }
@@ -298,7 +326,14 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
     public void Dispose()
     {
         Database.Dispose();
-        Directory.Delete(DataDirectory, recursive: true);
+        try
+        {
+            Directory.Delete(DataDirectory, recursive: true);
+        }
+        catch (IOException)
+        {
+            // Matches every existing temp-paths helper: a held handle must not fail the run.
+        }
     }
 }
 ~~~
@@ -363,7 +398,8 @@ ALTER TABLE resources ADD COLUMN group_id TEXT
 CREATE INDEX idx_resources_group ON resources (group_id);
 ~~~
 
-- [ ] Implement SqliteResourceGroupRepository using the same factory/shared-connection/OpenSession pattern as SqliteProjectFileRepository. All five methods must call OpenSession; only OpenSession may open a factory connection. Use these SQL shapes, parameterize all values, map all seven columns in this order, and reject blank FolderSegment before Add/Update:
+- [ ] Implement SqliteResourceGroupRepository using the same factory/shared-connection/OpenSession pattern as SqliteProjectFileRepository. All five methods must call OpenSession; only OpenSession may open a factory connection. Use these SQL shapes, parameterize all values, map all seven columns in this order, and reject blank FolderSegment before Add/Update, throwing
+DomainException("A group needs a reserved folder segment.") so the test can assert the type:
 
 ~~~sql
 INSERT INTO resource_groups (id, file_id, title, folder_segment, sort_order, created_at, modified_at)
@@ -491,7 +527,11 @@ Add a regression named Reconcile_AfterFailedMoveOut_SkipsGroupDirectoryAndAdopts
 
 ### Task 4: Create, rename and move use cases
 
-**Files:** ProjectService.cs; ResourceGroupServiceTests.cs; ResourceGroupFixture.cs. Update ProjectService construction in ProjectServiceTests (including secondary/helper constructors), AiServiceTests and TestShell.
+**Files:** ProjectService.cs; ResourceGroupServiceTests.cs; ResourceGroupFixture.cs. Update ProjectService construction in ProjectServiceTests, AiServiceTests and TestShell.
+There are exactly THREE construction sites in ProjectServiceTests and all three must be
+updated: the field initialiser, the CreateServiceWith helper, and the second service built
+inside the rename/relocate test (the one that stops at `clock` and passes no invalidator).
+Missing the third is a compile break discovered late, not a silent pass.
 
 **Consumes:** Tasks 1–3 interfaces and existing ReserveFolderSegment, AfterCommit and ResourceLayoutReconciler.
 
@@ -502,7 +542,6 @@ public ResourceGroup CreateGroup(ProjectFileId fileId, string title);
 public ResourceGroup RenameGroup(ResourceGroupId id, string title);
 public void MoveResourceToGroup(ResourceId id, ResourceGroupId? groupId);
 public IReadOnlyList<ResourceGroup> GetGroups(ProjectFileId fileId);
-public int CountResourcesInGroup(ResourceGroupId id);
 ~~~
 
 - [ ] Extend ResourceGroupFixture with a factory whose mutations, storage and invalidator are genuinely swappable. Add the relevant Application.Ai/Tasks/Calendar and Infrastructure.Tasks/Calendar imports:
@@ -602,10 +641,6 @@ private (Project Project, ProjectFile File) RequireClaimedGroupParent(ProjectFil
 
 public IReadOnlyList<ResourceGroup> GetGroups(ProjectFileId fileId)
     => groups.GetForFile(fileId);
-
-public int CountResourcesInGroup(ResourceGroupId id)
-    => groups.GetById(id) is { } group
-        ? resources.GetForFile(group.FileId).Count(r => r.GroupId == id) : 0;
 
 public ResourceGroup CreateGroup(ProjectFileId fileId, string title)
 {
