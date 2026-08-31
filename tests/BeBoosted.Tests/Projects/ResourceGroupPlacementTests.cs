@@ -101,6 +101,71 @@ public sealed class ResourceGroupPlacementTests
     }
 
     /// <summary>
+    /// Delegates everything; <see cref="GetForFile"/> throws. The read an import now depends
+    /// on to know which folder names are spoken for.
+    /// </summary>
+    private sealed class FaultingGroups(IResourceGroupRepository inner) : IResourceGroupRepository
+    {
+        public void Add(ResourceGroup group) => inner.Add(group);
+
+        public void Update(ResourceGroup group) => inner.Update(group);
+
+        public void Delete(ResourceGroupId id) => inner.Delete(id);
+
+        public ResourceGroup? GetById(ResourceGroupId id) => inner.GetById(id);
+
+        public IReadOnlyList<ResourceGroup> GetForFile(ProjectFileId fileId)
+            => throw new InvalidOperationException("group read rejected");
+    }
+
+    /// <summary>
+    /// The behaviour change this fix makes to a user-facing operation, pinned so it is a
+    /// decision rather than a side effect.
+    ///
+    /// <c>ImportFile</c> now reads the File's groups to learn which folder names are spoken
+    /// for, so a read that faults makes the import fail where it previously stored the bytes.
+    /// That is the right answer and the one the rest of the design already takes: the claims
+    /// are the fourth argument to <c>Store</c> and are evaluated before it is called, so the
+    /// throw lands before any byte is copied — no row, no bytes, nothing half-done, and a
+    /// clean retry. Storing anyway would mean placing blind, which is the permanent damage
+    /// this whole change exists to prevent.
+    ///
+    /// The alternative failure — swallowing the fault and importing with an empty claim set —
+    /// is what the assertions here rule out: an import that "succeeded" by taking a group's
+    /// folder name as a file leaves that group unable to create its directory ever again.
+    ///
+    /// The batch importer catches per file and reports a notice, so a user sees one failed
+    /// import rather than a crash.
+    /// </summary>
+    [Fact]
+    public void ImportFile_WhenTheGroupReadFaults_LeavesNoBytesAndNoRow()
+    {
+        using var f = new ResourceGroupFixture();
+        var parent = ResourceLayout.FolderFor(f.Project, f.File);
+        var group = f.Group("Notes");
+        var existing = f.Resources.GetForFile(f.File.Id).Count;
+        var source = f.SourceFile("Notes", "loose bytes");
+
+        var service = f.CreateService(groups: new FaultingGroups(f.Groups));
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => service.ImportFile(f.File.Id, ResourceKind.Document, source));
+        Assert.Equal("group read rejected", failure.Message);
+
+        // Nothing half-done: no row, no bytes anywhere the import could have put them, and
+        // above all not on the group's claimed name.
+        Assert.Equal(existing, f.Resources.GetForFile(f.File.Id).Count);
+        Assert.False(f.Storage.Exists(Path.Combine(parent, "Notes")));
+        Assert.False(f.Storage.Exists(Path.Combine(parent, "Notes (2)")));
+        Assert.True(Directory.Exists(Resolve(f, parent, group.FolderSegment)));
+
+        // The source is untouched, so the retry the user is left with is a real one.
+        Assert.Equal("loose bytes", System.IO.File.ReadAllText(source));
+        Assert.Equal(
+            Path.Combine(parent, "Notes (2)"),
+            f.CreateService().ImportFile(f.File.Id, ResourceKind.Document, source).StoredPath);
+    }
+
+    /// <summary>
     /// The defect itself, in all four shapes it takes.
     ///
     /// A group named "Notes" holds its directory; a loose extensionless document of the same

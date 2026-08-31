@@ -76,35 +76,40 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
     }
 
     /// <summary>
-    /// The real reconciler over this fixture's world. The two optional arguments exist so
-    /// a test can substitute a sabotaged storage or resource repository and still keep
-    /// every other collaborator — the project, file and group repositories above all —
+    /// The real reconciler over this fixture's world. The optional arguments exist so a
+    /// test can substitute a sabotaged storage, resource repository or group repository and
+    /// still keep every other collaborator — the project and file repositories above —
     /// pointed at the same durable database.
     /// </summary>
     public ResourceLayoutReconciler Reconciler(
-        IResourceStorage? storage = null, IResourceRepository? resources = null)
-        => new(Projects, Files, resources ?? Resources, storage ?? Storage, this, Groups);
+        IResourceStorage? storage = null,
+        IResourceRepository? resources = null,
+        IResourceGroupRepository? groups = null)
+        => new(Projects, Files, resources ?? Resources, storage ?? Storage, this, groups ?? Groups);
 
     /// <summary>
     /// The real <see cref="ProjectService"/> over this fixture's world, wired to the same
-    /// durable database as every repository above. The three optional arguments are the
+    /// durable database as every repository above. The four optional arguments are the
     /// seams a test needs to sabotage: a mutations double that rolls back, a storage
-    /// double that refuses a reservation or a move, and an invalidator that records. The
-    /// reconciler is built over whichever storage the service itself uses, so a sabotaged
-    /// storage is sabotaged for both — anything else would let the reconcile quietly
-    /// repair what the service was prevented from doing.
+    /// double that refuses a reservation or a move, an invalidator that records, and a
+    /// group repository that faults. The reconciler is built over whichever storage AND
+    /// group repository the service itself uses, so a sabotaged one is sabotaged for both —
+    /// anything else would let the reconcile quietly repair what the service was prevented
+    /// from doing.
     /// </summary>
     public ProjectService CreateService(IProjectMutations? mutations = null,
-        IResourceStorage? storage = null, IProvenanceInvalidator? invalidator = null)
+        IResourceStorage? storage = null, IProvenanceInvalidator? invalidator = null,
+        IResourceGroupRepository? groups = null)
     {
         var bytes = storage ?? Storage;
+        var groupRows = groups ?? Groups;
         return new ProjectService(Projects, Files, Resources, bytes,
             mutations ?? Mutations,
             new SimpleLocalIndexer(Resources, bytes, this),
             new SqliteTaskRepository(Database.Factory),
             new SqliteCalendarBlockRepository(Database.Factory),
-            new SqliteOccurrenceCompletionRepository(Database.Factory), this, Groups,
-            invalidator, Reconciler(bytes));
+            new SqliteOccurrenceCompletionRepository(Database.Factory), this, groupRows,
+            invalidator, Reconciler(bytes, groups: groupRows));
     }
 
     /// <summary>A persisted group with a genuinely claimed folder segment.</summary>

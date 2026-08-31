@@ -316,7 +316,7 @@ public sealed class ResourceGroupLayoutTests
     /// empty directory from outside the app and drop a file at that exact path — the group
     /// row goes on claiming the segment either way. (Placement can no longer produce this
     /// state itself: a claimed name is never handed to a file, which is what
-    /// <see cref="Reconcile_NeverPlacesALooseFileOnAClaimedName_WhenTheDirectoryIsGone"/>
+    /// <see cref="ResourceGroupPlacementTests.RenamingAParent_KeepsAGroupsFolderClaimed_WhicheverResourceMovesFirst"/>
     /// pins. Arriving from outside the app, or from a database written before that rule, is
     /// what leaves it behind now.)
     ///
