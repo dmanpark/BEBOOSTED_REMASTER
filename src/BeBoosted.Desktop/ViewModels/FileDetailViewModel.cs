@@ -37,10 +37,11 @@ public sealed partial class FileDetailViewModel : ViewModelBase
 
     /// <summary>
     /// True while <see cref="Refresh"/> is swapping the three collections. Replacing a
-    /// collection makes the ListBox bound to it clear its own SelectedItem, so a burst of
-    /// selection callbacks arrives mid-rebuild carrying nothing but the fact that the list
-    /// is momentarily empty. The selection restored at the end of the refresh is the only
-    /// one that means anything, so the delegating setters ignore writes until then.
+    /// collection makes the ListBox bound to it clear and rewrite its own SelectedItem, so a
+    /// burst of selection callbacks arrives mid-rebuild describing lists that are
+    /// momentarily half-built. The selection restored at the end of the refresh is the only
+    /// one that means anything, so <see cref="SelectResource"/> — the one path every list
+    /// writes through — ignores them until then.
     /// </summary>
     private bool _refreshingGroups;
 
@@ -61,6 +62,21 @@ public sealed partial class FileDetailViewModel : ViewModelBase
             return;
         }
 
+        SelectAndReveal(row);
+    }
+
+    /// <summary>
+    /// Selects a row and opens whatever group holds it, so the reading pane never shows a
+    /// row no list is displaying. Every selection the user did not make by clicking a
+    /// visible row goes through here — search navigation, a move, and the fallback a
+    /// refresh lands on when the previous selection is gone.
+    ///
+    /// Deliberately not used when a refresh restores a selection that survived it:
+    /// collapsing a group whose member is selected is a legitimate thing to do, and
+    /// re-opening it on the next refresh would undo the user's own collapse.
+    /// </summary>
+    private void SelectAndReveal(ResourceRowViewModel row)
+    {
         foreach (var group in Groups)
         {
             if (group.Resources.Contains(row))
@@ -110,15 +126,25 @@ public sealed partial class FileDetailViewModel : ViewModelBase
     [ObservableProperty]
     public partial string NewGroupTitle { get; set; } = string.Empty;
 
-    /// <summary>Why the last group action did nothing; null when it worked.</summary>
+    /// <summary>
+    /// What went wrong with the last group action; null when it went cleanly. Cleared by
+    /// <see cref="Refresh"/>, so it describes the list currently on screen rather than
+    /// hanging over one that an unrelated add, import or rename has since rebuilt.
+    /// </summary>
     [ObservableProperty]
     public partial string? GroupNotice { get; private set; }
 
     /// <summary>
-    /// The presentation boundary for every group mutation. A throw is a failure and is
-    /// reported as one: the notice says why, the collections are left exactly as they
-    /// were, and nothing is rebuilt around a change that did not land. Only a mutation
-    /// that returned refreshes.
+    /// The presentation boundary for every group mutation. A throw from the mutation is a
+    /// failure and is reported as one: the notice says why, the collections are left
+    /// exactly as they were, and nothing is rebuilt around a change that did not land.
+    ///
+    /// A throw from the refresh *behind* a mutation is a different thing and is not allowed
+    /// to look like the same thing. The write has already committed, so reporting failure
+    /// would be a lie and letting it escape would crash the [RelayCommand] that got here —
+    /// the user seeing an error dialog for an operation that succeeded. Refresh is
+    /// all-or-nothing, so what is left is the previous list, correct as of a moment ago,
+    /// with a notice saying it is stale.
     /// </summary>
     private bool TryGroupMutation(Action mutation)
     {
@@ -133,7 +159,15 @@ public sealed partial class FileDetailViewModel : ViewModelBase
             return false;
         }
 
-        Refresh();
+        try
+        {
+            Refresh();
+        }
+        catch (Exception error)
+        {
+            GroupNotice = $"That worked, but this list couldn't be reloaded: {error.Message}";
+        }
+
         return true;
     }
 
@@ -176,10 +210,16 @@ public sealed partial class FileDetailViewModel : ViewModelBase
     /// Where this row may be filed: every group that is not the one already holding it,
     /// plus the File itself when it is in a group at all. Offering the current container
     /// would be a no-op dressed up as a choice.
+    ///
+    /// Computed once per refresh into <see cref="ResourceRowViewModel.MoveTargets"/>, the
+    /// way that row's stored path and derivations already are. The list the flyout binds to
+    /// is a row datum, and the surrounding ScrollViewer realizes every row, so deriving it
+    /// lazily through the owner would rebuild it for every row on every refresh.
     /// </summary>
-    internal IReadOnlyList<ResourceMoveTargetViewModel> MoveTargetsFor(ResourceRowViewModel row)
+    private IReadOnlyList<ResourceMoveTargetViewModel> MoveTargetsFor(
+        IReadOnlyList<ResourceGroupViewModel> groups, ResourceRowViewModel row)
     {
-        var targets = Groups
+        var targets = groups
             .Where(group => group.Id != row.Resource.GroupId)
             .Select(group => new ResourceMoveTargetViewModel(this, row.Resource.Id, group.Id, group.Title))
             .ToList();
@@ -220,9 +260,11 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         get => Selected is { } row && LooseResources.Contains(row) ? row : null;
         set
         {
-            if (!_refreshingGroups && value is not null)
+            if (value is not null)
             {
-                Selected = value;
+                // Through SelectResource like every other list, so there is one path into
+                // the canonical selection and one place its guards live.
+                SelectResource(value.Resource.Id);
             }
         }
     }
@@ -342,20 +384,62 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         // whose header the user collapsed.
         var expansion = Groups.ToDictionary(group => group.Id, group => group.IsExpanded);
 
+        // The notice describes the list that is about to be replaced, so it goes with it.
+        GroupNotice = null;
+
+        // Everything that can throw happens here, into locals, before a single observable
+        // collection is touched. A refresh reads twice — resources, then groups — and a
+        // failure between the two used to leave the three collections permanently
+        // disagreeing: rows in the canonical list that neither a group nor the loose list
+        // admitted to holding. It is also run behind mutations that have already committed,
+        // where a half-applied rebuild is the worst of the available outcomes.
+        var rows = _service.GetResources(File.Id)
+            .Select(resource => new ResourceRowViewModel(this, resource, _opener)
+            {
+                StoredAbsolutePath = SafeResolve(resource),
+                Derivations = _ai.GetDerivations(resource.Id),
+            })
+            .ToList();
+
+        // One pass to bucket the rows, so filling the groups is linear in the rows rather
+        // than a scan of every row per group.
+        var members = new Dictionary<Domain.ResourceGroupId, List<ResourceRowViewModel>>();
+        var loose = new List<ResourceRowViewModel>();
+        foreach (var row in rows)
+        {
+            if (row.Resource.GroupId is { } groupId)
+            {
+                if (!members.TryGetValue(groupId, out var bucket))
+                {
+                    bucket = [];
+                    members[groupId] = bucket;
+                }
+
+                bucket.Add(row);
+            }
+            else
+            {
+                loose.Add(row);
+            }
+        }
+
+        var groups = _service.GetGroups(File.Id)
+            .Select(group => new ResourceGroupViewModel(
+                this, group, members.TryGetValue(group.Id, out var bucket) ? bucket : [])
+            {
+                // A group that did not exist before this refresh arrives expanded.
+                IsExpanded = !expansion.TryGetValue(group.Id, out var wasExpanded) || wasExpanded,
+            })
+            .ToList();
+
+        foreach (var row in rows)
+        {
+            row.MoveTargets = MoveTargetsFor(groups, row);
+        }
+
         _refreshingGroups = true;
         try
         {
-            // One row per resource, created once and shared by all three collections. A
-            // second instance for the same resource would let the reading pane show
-            // something other than the row the list highlights.
-            var rows = _service.GetResources(File.Id)
-                .Select(resource => new ResourceRowViewModel(this, resource, _opener)
-                {
-                    StoredAbsolutePath = SafeResolve(resource),
-                    Derivations = _ai.GetDerivations(resource.Id),
-                })
-                .ToList();
-
             Resources.Clear();
             Groups.Clear();
             LooseResources.Clear();
@@ -365,22 +449,32 @@ public sealed partial class FileDetailViewModel : ViewModelBase
                 Resources.Add(row);
             }
 
-            foreach (var group in _service.GetGroups(File.Id))
+            foreach (var group in groups)
             {
-                Groups.Add(new ResourceGroupViewModel(
-                    this, group, rows.Where(row => row.Resource.GroupId == group.Id).ToList())
-                {
-                    // A group that did not exist before this refresh arrives expanded.
-                    IsExpanded = !expansion.TryGetValue(group.Id, out var wasExpanded) || wasExpanded,
-                });
+                Groups.Add(group);
             }
 
-            foreach (var row in rows.Where(row => row.Resource.GroupId is null))
+            foreach (var row in loose)
             {
                 LooseResources.Add(row);
             }
 
-            Selected = rows.FirstOrDefault(row => row.Resource.Id == previous) ?? rows.FirstOrDefault();
+            if (rows.FirstOrDefault(row => row.Resource.Id == previous) is { } restored)
+            {
+                // Restored exactly as it was, collapse included — see SelectAndReveal.
+                Selected = restored;
+            }
+            else if (rows.FirstOrDefault() is { } fallback)
+            {
+                // A selection the user never asked for, so it is revealed like any other:
+                // otherwise the reading pane opens on a row inside a collapsed group and no
+                // list reports holding it.
+                SelectAndReveal(fallback);
+            }
+            else
+            {
+                Selected = null;
+            }
         }
         finally
         {
@@ -603,8 +697,12 @@ public sealed partial class ResourceRowViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Where this row may be filed: every group it is not already in, plus the File.</summary>
-    public IReadOnlyList<ResourceMoveTargetViewModel> MoveTargets => _owner.MoveTargetsFor(this);
+    /// <summary>
+    /// Where this row may be filed: every group it is not already in, plus the File.
+    /// Filled by the refresh that built this row, like <see cref="StoredAbsolutePath"/> and
+    /// <see cref="Derivations"/> — a row datum, not a lazy call back into the owner.
+    /// </summary>
+    public IReadOnlyList<ResourceMoveTargetViewModel> MoveTargets { get; internal set; } = [];
 
     public bool HasMoveTargets => MoveTargets.Count != 0;
 

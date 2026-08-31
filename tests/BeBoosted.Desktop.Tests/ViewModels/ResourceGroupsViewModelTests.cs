@@ -220,10 +220,16 @@ public sealed class ResourceGroupsViewModelTests
         Assert.True(file.Groups.Single(g => g.Title == "Unit 3").IsExpanded);
         Assert.False(file.Groups.Single(g => g.Title == "Unit 4").IsExpanded);
 
+        // Collapse the group that does NOT hold the search hit as well, so "expands that
+        // group" can be told apart from "expands every group" — with both closed, dropping
+        // the membership check would open this one too.
+        file.Groups.Single(g => g.Title == "Unit 3").IsExpanded = false;
+
         file.SelectResource(brown);
 
         var unit4 = file.Groups.Single(g => g.Title == "Unit 4");
         Assert.True(unit4.IsExpanded);
+        Assert.False(file.Groups.Single(g => g.Title == "Unit 3").IsExpanded);
         Assert.Equal(brown, file.Selected!.Resource.Id);
         Assert.Same(file.Selected, unit4.SelectedResource);
         Assert.Same(file.Selected, Assert.Single(unit4.Resources));
@@ -423,9 +429,12 @@ public sealed class ResourceGroupsViewModelTests
         Assert.Equal("Unit 3", group.Title);
 
         // A later, unrelated action refreshes from the repository: the persisted title is
-        // still the old one, so nothing was written before the refusal.
+        // still the old one, so nothing was written before the refusal — and the notice
+        // about the refused rename goes with the list it was describing, rather than
+        // hanging over a surface that has since been rebuilt.
         AddNote(file, "Syllabus");
         Assert.Equal("Unit 3", Assert.Single(file.Groups).Title);
+        Assert.Null(file.GroupNotice);
     }
 
     /// <summary>
@@ -488,6 +497,167 @@ public sealed class ResourceGroupsViewModelTests
         Assert.True(moved.MoveTargets.Single(t => t.GroupId is null).TryMove());
         Assert.Equal(id, Assert.Single(file.LooseResources).Resource.Id);
         Assert.Equal("1 resource", file.CountText);
+    }
+
+    /// <summary>
+    /// When the selected resource is gone, the refresh falls back to the first row — a
+    /// selection the user never asked for, which therefore has to be revealed the way any
+    /// other new selection is. Without that, the reading pane shows a row sitting inside a
+    /// collapsed group and no list reports holding it: the exact state
+    /// <see cref="FileDetailViewModel.SelectResource"/>'s expansion loop exists to prevent,
+    /// skipped because the restore path took a different route to the same property.
+    /// </summary>
+    [Fact]
+    public void TheFallbackSelection_RevealsTheGroupItLandsIn()
+    {
+        var file = OpenFile();
+        CreateGroup(file, "Unit 3");
+        var marbury = AddNote(file, "Marbury notes"); // added first, so it is the fallback row
+        MoveInto(file, marbury, "Unit 3");
+        var syllabus = AddNote(file, "Syllabus");
+        file.SelectResource(syllabus);
+        file.Groups.Single(g => g.Title == "Unit 3").IsExpanded = false;
+        Assert.Equal(syllabus, file.Selected!.Resource.Id);
+
+        file.Resources.Single(r => r.Resource.Id == syllabus).DeleteCommand.Execute(null);
+        file.ConfirmPromptCommand.Execute(null);
+
+        var group = Assert.Single(file.Groups);
+        Assert.True(group.IsExpanded);
+        Assert.Equal(marbury, file.Selected!.Resource.Id);
+        Assert.Same(file.Selected, group.SelectedResource);
+        Assert.Same(file.Selected, Assert.Single(group.Resources));
+        Assert.Null(file.LooseSelectedResource);
+    }
+
+    /// <summary>
+    /// A refresh reads twice — resources, then groups. If the second read throws after the
+    /// collections have already been emptied and half refilled, the surface is left
+    /// permanently disagreeing with itself: rows in the canonical list that no group and no
+    /// loose list admits to holding. Nothing observable may be touched until every read has
+    /// landed.
+    /// </summary>
+    [Fact]
+    public void ARefreshWhoseSecondReadFails_LeavesEveryListAsItWas()
+    {
+        var (file, groupRepo) = FileWithFailableGroupReads();
+        var marbury = AddNote(file, "Marbury notes");
+        MoveInto(file, marbury, "Unit 3");
+        AddNote(file, "Syllabus");
+        var groupBefore = Assert.Single(file.Groups);
+        var resourcesBefore = file.Resources.ToList();
+        var looseBefore = file.LooseResources.ToList();
+        var selectedBefore = file.Selected;
+
+        groupRepo.ReadsUntilFailure = 0; // the resources read lands; the groups read does not
+
+        Assert.Throws<IOException>(file.Refresh);
+
+        Assert.Same(groupBefore, Assert.Single(file.Groups));
+        Assert.Equal(resourcesBefore, file.Resources);
+        Assert.Equal(looseBefore, file.LooseResources);
+        Assert.Same(selectedBefore, file.Selected);
+        Assert.Same(
+            resourcesBefore.Single(r => r.Resource.Id == marbury),
+            Assert.Single(groupBefore.Resources));
+    }
+
+    /// <summary>
+    /// The mutation committed; only the rebuild that follows it failed. That cannot be
+    /// allowed to leave a [RelayCommand] throwing — the user would see a crash for an
+    /// operation that succeeded — and it cannot be reported as a failed mutation either,
+    /// because the write really did land. It is a notice over a stale list.
+    /// </summary>
+    [Fact]
+    public void ACommittedMutationWhoseRefreshFails_IsReportedNotThrown()
+    {
+        var (file, groupRepo) = FileWithFailableGroupReads();
+        AddNote(file, "Syllabus");
+        var groupBefore = Assert.Single(file.Groups);
+
+        // CreateGroup reads the siblings first; that one lands. The refresh behind it does not.
+        groupRepo.ReadsUntilFailure = 1;
+        file.NewGroupTitle = "Unit 4";
+
+        Assert.True(file.TryCreateGroup());
+
+        Assert.False(string.IsNullOrWhiteSpace(file.GroupNotice));
+        Assert.Same(groupBefore, Assert.Single(file.Groups));
+        Assert.Equal(string.Empty, file.NewGroupTitle);
+    }
+
+    /// <summary>
+    /// A File detail whose group reads can be armed to fail, reached through the repository
+    /// seams TestShell already exposes.
+    /// </summary>
+    private static (FileDetailViewModel File, InMemoryResourceGroupRepository Groups)
+        FileWithFailableGroupReads()
+    {
+        var projectRepo = new InMemoryProjectRepository();
+        var file = OpenFile(TestShell.Create(projects: projectRepo));
+        CreateGroup(file, "Unit 3");
+        var files = projectRepo.Files;
+        Assert.NotNull(files);
+        var groups = files.Groups;
+        Assert.NotNull(groups);
+        return (file, groups);
+    }
+
+    /// <summary>
+    /// A ListBox that answers its own collection reset by writing a selection straight back
+    /// is the callback storm the refreshing flag exists to swallow. Honoured, the write is
+    /// ignored and the refresh's own restore is the only selection that happens; ignored,
+    /// the stray write drags a collapsed group open behind the user's back.
+    /// </summary>
+    [Fact]
+    public void ASelectionWrittenWhileTheListsRebuild_IsIgnored()
+    {
+        var file = OpenFile();
+        CreateGroup(file, "Unit 3");
+        var marbury = AddNote(file, "Marbury notes");
+        var syllabus = AddNote(file, "Syllabus");
+        MoveInto(file, marbury, "Unit 3");
+        file.SelectResource(syllabus);
+        file.Groups.Single(g => g.Title == "Unit 3").IsExpanded = false;
+        file.Groups.CollectionChanged += (_, _) => file.SelectResource(marbury);
+
+        AddNote(file, "Exam date"); // rebuilds all three collections
+
+        Assert.Equal(syllabus, file.Selected!.Resource.Id);
+        Assert.False(Assert.Single(file.Groups).IsExpanded);
+        Assert.Same(file.Selected, file.LooseSelectedResource);
+    }
+
+    /// <summary>
+    /// Both delegated setters route through <c>SelectResource</c>, which resolves the id
+    /// against the canonical list rather than trusting the object it was handed. So a row
+    /// left over from the generation a refresh replaced — a stale binding, a captured
+    /// reference — selects the resource it names instead of installing a row that no list
+    /// contains and no list would therefore report.
+    /// </summary>
+    [Fact]
+    public void AStaleRowWrittenIntoAList_ResolvesToTheCanonicalRow()
+    {
+        var file = OpenFile();
+        CreateGroup(file, "Unit 3");
+        var marbury = AddNote(file, "Marbury notes");
+        var syllabus = AddNote(file, "Syllabus");
+        MoveInto(file, marbury, "Unit 3");
+        var staleLoose = file.LooseResources.Single(r => r.Resource.Id == syllabus);
+        var staleGrouped = Assert.Single(file.Groups.Single().Resources);
+
+        AddNote(file, "Exam date"); // every row instance is replaced
+
+        file.LooseSelectedResource = staleLoose;
+        Assert.NotSame(staleLoose, file.Selected);
+        Assert.Same(file.Resources.Single(r => r.Resource.Id == syllabus), file.Selected);
+        Assert.Same(file.Selected, file.LooseSelectedResource);
+
+        file.Groups.Single().SelectedResource = staleGrouped;
+        Assert.NotSame(staleGrouped, file.Selected);
+        Assert.Same(file.Resources.Single(r => r.Resource.Id == marbury), file.Selected);
+        Assert.Same(file.Selected, file.Groups.Single().SelectedResource);
+        Assert.Null(file.LooseSelectedResource);
     }
 
     /// <summary>

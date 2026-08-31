@@ -171,10 +171,19 @@ public sealed class InMemoryProjectMutations(
 }
 
 /// <summary>
-/// A mutations seam that refuses every unit of work, throwing before the callback runs so
-/// nothing it would have written is even attempted. SQLite's real rollback is proven in
-/// BeBoosted.Tests; what this double is for is the presentation boundary above it — a
-/// failed mutation must be reported as a failure, never optimistically refreshed around.
+/// A mutations seam that refuses every unit of work routed through it, throwing before the
+/// callback runs so nothing it would have written is even attempted.
+///
+/// Read that literally: it fails only what actually goes through <see cref="IProjectMutations"/>,
+/// which in <see cref="ProjectService"/> is deleting a project, a File, a resource or a
+/// group, and ungrouping. Creating a project, a File or a group, adding a note or a link,
+/// importing, renaming and filing a resource into a group all write through the
+/// repositories directly and still succeed under this double — which is what lets a test
+/// build a real fixture and then fail exactly one action.
+///
+/// SQLite's real rollback is proven in BeBoosted.Tests; what this double is for is the
+/// presentation boundary above it — a failed mutation must be reported as a failure, never
+/// optimistically refreshed around.
 /// </summary>
 public sealed class FailingProjectMutations(string message = "The database is busy.") : IProjectMutations
 {
@@ -383,15 +392,37 @@ public sealed class InMemoryResourceGroupRepository : IResourceGroupRepository
     public ResourceGroup? GetById(ResourceGroupId id)
         => _groups.GetValueOrDefault(id) is { } group ? Clone(group) : null;
 
+    /// <summary>
+    /// How many more <see cref="GetForFile"/> reads succeed before one throws; null
+    /// disarms it, which is the default. A caller that does several reads in a row — the
+    /// File surface reads resources and then groups — can only be caught half-rebuilt by
+    /// failing one of them, and there is no other seam to inject that through. One shot,
+    /// so the surface can be exercised again afterwards.
+    /// </summary>
+    public int? ReadsUntilFailure { get; set; }
+
     /// <summary>The repository's ORDER BY sort_order, created_at, id.</summary>
     public IReadOnlyList<ResourceGroup> GetForFile(ProjectFileId fileId)
-        => _groups.Values
+    {
+        if (ReadsUntilFailure is { } remaining)
+        {
+            if (remaining == 0)
+            {
+                ReadsUntilFailure = null;
+                throw new IOException("The resource_groups table could not be read.");
+            }
+
+            ReadsUntilFailure = remaining - 1;
+        }
+
+        return _groups.Values
             .Where(g => g.FileId == fileId)
             .OrderBy(g => g.SortOrder)
             .ThenBy(g => g.CreatedAt)
             .ThenBy(g => g.Id.ToString(), StringComparer.Ordinal)
             .Select(Clone)
             .ToList();
+    }
 
     /// <summary>
     /// A detached copy, for the same reason the other project doubles make one: handing
