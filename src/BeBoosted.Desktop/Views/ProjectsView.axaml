@@ -814,9 +814,12 @@
               <StackPanel Margin="28,22" Spacing="14"
                           DataContext="{Binding Selected}" x:DataType="vm:ResourceRowViewModel">
                 <StackPanel Orientation="Horizontal" Spacing="10">
-                  <TextBlock Classes="serif" Text="{Binding Title}" FontSize="20" FontWeight="Medium"
-                             TextWrapping="Wrap"
-                             AutomationProperties.Name="Selected resource" />
+                  <!-- x:Name, not AutomationProperties.Name: the latter would override the
+                       automation peer's name and make a screen reader announce the literal
+                       "Selected resource" instead of the resource's own title. -->
+                  <TextBlock x:Name="SelectedResourceTitle"
+                             Classes="serif" Text="{Binding Title}" FontSize="20" FontWeight="Medium"
+                             TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="10">
                   <TextBlock Classes="meta" Text="{Binding PreviewMeta}" VerticalAlignment="Center" />

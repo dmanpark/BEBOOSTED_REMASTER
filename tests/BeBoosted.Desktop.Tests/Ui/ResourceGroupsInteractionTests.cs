@@ -124,8 +124,7 @@ public sealed class ResourceGroupsInteractionTests
     private static string? ReadingPaneTitle(MainWindow window)
         => window.GetVisualDescendants()
             .OfType<TextBlock>()
-            .Where(block => block.IsEffectivelyVisible
-                && AutomationProperties.GetName(block) == "Selected resource")
+            .Where(block => block.IsEffectivelyVisible && block.Name == "SelectedResourceTitle")
             .Select(block => block.Text)
             .FirstOrDefault();
 
