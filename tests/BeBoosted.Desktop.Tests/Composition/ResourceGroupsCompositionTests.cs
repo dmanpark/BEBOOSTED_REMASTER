@@ -1,5 +1,7 @@
 using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Ai;
 using BeBoosted.Application.Projects;
+using BeBoosted.Domain.Ai;
 using BeBoosted.Domain.Projects;
 using BeBoosted.Infrastructure;
 using BeBoosted.Infrastructure.Persistence;
@@ -125,11 +127,34 @@ public sealed class ResourceGroupsCompositionTests
         Assert.NotNull(stored);
         Assert.Equal("composition sentinel", File.ReadAllText(stored));
 
+        // Something derived from the document the group now holds. ProjectService reaches its
+        // invalidator through an OPTIONAL constructor parameter, so a missing
+        // IProvenanceInvalidator registration is not a validation error — the container just
+        // passes null and every invalidation silently stops happening. Only a behavioural
+        // assertion catches that, and this is the only test composing the real graph.
+        //
+        // A hand-built provenance row rather than a real AI round trip: what is under test is
+        // the wiring between DeleteGroup and the registered invalidator, not the AI stack. The
+        // repository and the invalidator on both ends of it are the production singletons.
+        var provenanceStore = provider.GetRequiredService<IAiProvenanceRepository>();
+        var derived = AiProvenance.Create(
+            AiOperationKind.ProjectAnswer, [grouped.Id], provider.GetRequiredService<IClock>().Now);
+        provenanceStore.Add(derived);
+
+        // Filing a document changes nothing anything derived from it cited, so the move must
+        // leave the record alone — otherwise the assertion after the delete proves nothing.
+        Assert.False(provenanceStore.GetById(derived.Id)?.NeedsReview);
+
         service.DeleteGroup(group.Id);
         Assert.Empty(service.GetGroups(file.Id));
         Assert.Empty(service.GetResources(file.Id));
 
         // Rows alone would be a passing test with the user's bytes still on disk.
         Assert.False(File.Exists(stored));
+
+        // ai_provenance_sources deliberately holds no foreign key to resources, so the trail
+        // outlives the row it cites and this reads what the user would see: an answer built on
+        // a document that no longer exists, flagged for review.
+        Assert.True(provenanceStore.GetById(derived.Id)?.NeedsReview);
     }
 }
