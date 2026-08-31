@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Automation;
+using Avalonia.Automation.Peers;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
@@ -165,6 +166,20 @@ public sealed class ResourceGroupsInteractionTests
 
     private static Control? Focused(MainWindow window)
         => window.FocusManager?.GetFocusedElement() as Control;
+
+    /// <summary>
+    /// What a screen reader would actually read off the element Tab lands on. Not
+    /// <c>AutomationProperties.GetName</c>: reading back the attached property a test just
+    /// watched get set proves only that XAML works. The peer is what UIA asks, and the peer
+    /// falls back to the header content's <c>ToString()</c> when nothing named the toggle —
+    /// which is the whole defect.
+    /// </summary>
+    private static string? PeerName(Control control)
+        => ControlAutomationPeer.CreatePeerForElement(control).GetName();
+
+    /// <summary>The Expander's header toggle: the one element in a group header that takes Tab.</summary>
+    private static ToggleButton HeaderToggle(Expander expander)
+        => expander.GetVisualDescendants().OfType<ToggleButton>().First();
 
     private static ListBoxItem RowItem(MainWindow window, string title)
         => window.GetVisualDescendants()
@@ -711,6 +726,86 @@ public sealed class ResourceGroupsInteractionTests
         Assert.NotEqual(resting, Painted(headerFill.Background));
         Assert.Equal(Token("BrushLimeWash"), Painted(headerFill.Background));
         Assert.Equal(Token("BrushGraphite"), Painted(headerFill.BorderBrush));
+        fixture.Window.Close();
+    }
+
+    // ---- what the header announces ---------------------------------------------------
+
+    /// <summary>
+    /// The Expander carries an accessible name, but the element that actually takes Tab is
+    /// the header's ToggleButton inside its template, and a ToggleButton with no name of its
+    /// own falls back to its Content's ToString(). The content here is the header Grid, so
+    /// live UIA read back "Avalonia.Controls.Grid" — a type name where the group's identity
+    /// should be. Asserted through the peer, because the attached property is set on the
+    /// Grid's neighbours and asserting that would not have caught this.
+    ///
+    /// The three actions live inside that same header, so naming their container is exactly
+    /// the change that could swallow their own names; they are checked in the same breath.
+    /// </summary>
+    [AvaloniaFact]
+    public void TheFocusableGroupHeader_AnnouncesItsTitleAndCount()
+    {
+        var fixture = OpenSpanishFile();
+        AddGroup(fixture.File, "Unit 3");
+        fixture.Window.CaptureRenderedFrame();
+
+        var expander = GroupHeader(fixture.Window, "Unit 3");
+        var toggle = HeaderToggle(expander);
+        var peer = ControlAutomationPeer.CreatePeerForElement(toggle);
+
+        Assert.True(peer.IsKeyboardFocusable(), "the header toggle is what Tab lands on");
+        Assert.Equal("Group Unit 3, 0 items", peer.GetName());
+
+        // Naming a parent must not swallow what its descendants report.
+        Assert.Equal("Rename group Unit 3", PeerName(ButtonNamed(fixture.Window, "Rename group Unit 3")));
+        Assert.Equal("Ungroup Unit 3", PeerName(ButtonNamed(fixture.Window, "Ungroup Unit 3")));
+        Assert.Equal(
+            "Delete group Unit 3",
+            PeerName(ButtonNamed(fixture.Window, "Delete group Unit 3")));
+
+        // The Group peer on the Expander keeps the name it already had.
+        Assert.Equal("Group Unit 3", AutomationProperties.GetName(expander));
+        fixture.Window.Close();
+    }
+
+    /// <summary>
+    /// The count is half the name, so it has to be the live count and not the one the header
+    /// was built with. Filing a resource into the group is the cheapest way to move it.
+    /// </summary>
+    [AvaloniaFact]
+    public void TheHeaderName_FollowsTheCount_AfterAMove()
+    {
+        var fixture = OpenSpanishFile();
+        AddNote(fixture.File, "Vocab");
+        AddGroup(fixture.File, "Unit 3");
+        fixture.Window.CaptureRenderedFrame();
+        Assert.Equal("Group Unit 3, 0 items", PeerName(HeaderToggle(GroupHeader(fixture.Window, "Unit 3"))));
+
+        MoveThroughFlyout(fixture.Window, "Move Vocab", "Move to Unit 3");
+
+        Assert.Equal("Group Unit 3, 1 item", PeerName(HeaderToggle(GroupHeader(fixture.Window, "Unit 3"))));
+        fixture.Window.Close();
+    }
+
+    /// <summary>And the title is the other half, through the rename that changes it.</summary>
+    [AvaloniaFact]
+    public void TheHeaderName_FollowsTheTitle_AfterARename()
+    {
+        var fixture = OpenSpanishFile();
+        AddNote(fixture.File, "Vocab");
+        AddGroup(fixture.File, "Unit 3");
+        MoveByViewModel(fixture.File, "Vocab", "Unit 3");
+        fixture.Window.CaptureRenderedFrame();
+
+        var (_, content) = OpenFlyout(fixture.Window, "Rename group Unit 3");
+        TextBoxNamed(content, "Group title").Text = "Unit 3 — Federalism";
+        Dispatcher.UIThread.RunJobs();
+        ClickInPopup(ButtonNamed(content, "Save group title"));
+        fixture.Window.CaptureRenderedFrame();
+
+        Assert.Equal(
+            "Group Unit 3 — Federalism, 1 item",
+            PeerName(HeaderToggle(GroupHeader(fixture.Window, "Unit 3 — Federalism"))));
         fixture.Window.Close();
     }
 

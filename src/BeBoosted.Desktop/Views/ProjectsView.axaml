@@ -92,6 +92,17 @@
   </UserControl.Resources>
 
   <UserControl.Styles>
+    <!-- The name Tab actually lands on. AutomationProperties.Name on the Expander names its
+         Group peer, which is right and still there, but the focusable element is the header
+         toggle inside the template — and an unnamed toggle reports its content's ToString(),
+         which live UIA read back as "Avalonia.Controls.Grid". It has to be set from here
+         because the toggle is a template part; the binding runs against the templated
+         parent's DataContext, which is the group. -->
+    <Style Selector="Expander /template/ ToggleButton#ExpanderHeader"
+           x:DataType="vm:ResourceGroupViewModel">
+      <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
+    </Style>
+
     <!-- Keyboard focus on a group header. Fluent's expander header shows nothing at all
          for :focus-visible — not a different ring from the app's, none — and a header that
          Space collapses has to say when it holds focus. Lime wash plus a graphite edge is

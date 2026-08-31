@@ -36,6 +36,17 @@ public sealed partial class ResourceGroupViewModel : ViewModelBase
 
     public string CountText => $"{Count} item{(Count == 1 ? string.Empty : "s")}";
 
+    /// <summary>
+    /// What the header's toggle announces. The Expander names its own Group peer, but the
+    /// element that takes Tab is the toggle inside its template, and a toggle with no name
+    /// falls back to its content's <c>ToString()</c> — a bare "Avalonia.Controls.Grid" where
+    /// the group should be. The count belongs in it because a collapsed group is otherwise
+    /// silent about how much it is hiding. Derived, like <see cref="Title"/> and
+    /// <see cref="CountText"/>: a rename or a move rebuilds this view model outright, so
+    /// there is nothing here to notify about.
+    /// </summary>
+    public string AccessibleName => $"Group {Title}, {CountText}";
+
     [ObservableProperty]
     public partial bool IsExpanded { get; set; } = true;
 
