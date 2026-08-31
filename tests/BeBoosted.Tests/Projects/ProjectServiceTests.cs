@@ -59,6 +59,7 @@ public sealed class ProjectServiceTests : IDisposable
     private readonly SqliteResourceRepository _resources;
     private readonly LocalResourceStorage _storage;
     private readonly SqliteTaskRepository _tasks;
+    private readonly SqliteResourceGroupRepository _groups;
     private readonly ProjectService _service;
 
     private readonly SqliteOccurrenceCompletionRepository _completions;
@@ -74,13 +75,14 @@ public sealed class ProjectServiceTests : IDisposable
         _tasks = new SqliteTaskRepository(_database.Factory);
         _completions = new SqliteOccurrenceCompletionRepository(_database.Factory);
         var blocks = new SqliteCalendarBlockRepository(_database.Factory);
+        _groups = new SqliteResourceGroupRepository(_database.Factory);
         _service = new ProjectService(
             _projects, _files, _resources, _storage, new SqliteProjectMutations(_database.Factory),
             new SimpleLocalIndexer(_resources, _storage, _clock), _tasks, blocks, _completions, _clock,
+            _groups,
             provenanceInvalidator: null,
             reconciler: new ResourceLayoutReconciler(
-                _projects, _files, _resources, _storage, _clock,
-                new SqliteResourceGroupRepository(_database.Factory)));
+                _projects, _files, _resources, _storage, _clock, _groups));
     }
 
     /// <summary>
@@ -130,7 +132,7 @@ public sealed class ProjectServiceTests : IDisposable
         => new(
             _projects, _files, _resources, _storage, mutations,
             new SimpleLocalIndexer(_resources, _storage, _clock), _tasks,
-            new SqliteCalendarBlockRepository(_database.Factory), _completions, _clock,
+            new SqliteCalendarBlockRepository(_database.Factory), _completions, _clock, _groups,
             invalidator);
 
     /// <summary>
@@ -223,7 +225,7 @@ public sealed class ProjectServiceTests : IDisposable
         => new(
             _projects, _files, _resources, resourceStorage, new SqliteProjectMutations(_database.Factory),
             new SimpleLocalIndexer(_resources, _storage, _clock), _tasks,
-            new SqliteCalendarBlockRepository(_database.Factory), _completions, _clock,
+            new SqliteCalendarBlockRepository(_database.Factory), _completions, _clock, _groups,
             invalidator);
 
     /// <summary>A project holding one File with two imported documents.</summary>
@@ -488,7 +490,8 @@ public sealed class ProjectServiceTests : IDisposable
             new SqliteResourceRepository(_database.Factory), _storage,
             new SqliteProjectMutations(_database.Factory),
             new SimpleLocalIndexer(new SqliteResourceRepository(_database.Factory), _storage, _clock),
-            tasks2, blocks2, new SqliteOccurrenceCompletionRepository(_database.Factory), _clock);
+            tasks2, blocks2, new SqliteOccurrenceCompletionRepository(_database.Factory), _clock,
+            new SqliteResourceGroupRepository(_database.Factory));
 
         var reloaded = projects2.GetAll().Single(p => p.Name == "Schoolwork");
         var scheduled = service2.GetScheduledBlocks(reloaded.Id);

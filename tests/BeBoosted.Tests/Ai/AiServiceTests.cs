@@ -68,7 +68,8 @@ public sealed class AiServiceTests : IDisposable
             new SqliteProjectMutations(_database.Factory),
             new SimpleLocalIndexer(_resources, storage, _clock),
             _tasks, new SqliteCalendarBlockRepository(_database.Factory),
-            new SqliteOccurrenceCompletionRepository(_database.Factory), _clock, _service);
+            new SqliteOccurrenceCompletionRepository(_database.Factory), _clock,
+            new SqliteResourceGroupRepository(_database.Factory), _service);
 
         _project = _projectService.CreateProject("College Admissions");
         _file = _projectService.CreateFile(_project.Id, "Metric Proof", null);

@@ -21,6 +21,7 @@ public sealed class ProjectService(
     ICalendarBlockRepository blocks,
     IOccurrenceCompletionRepository completions,
     IClock clock,
+    IResourceGroupRepository groups,
     IProvenanceInvalidator? provenanceInvalidator = null,
     ResourceLayoutReconciler? reconciler = null)
 {
@@ -212,6 +213,124 @@ public sealed class ProjectService(
         {
             AfterCommit(() => provenanceInvalidator?.InvalidateForResource(resource.Id));
         }
+    }
+
+    /// <summary>
+    /// The Project and File a group may be claimed under, refusing while either still
+    /// holds the empty sentinel. Nothing else stops it: <c>Path.Combine</c> swallows an
+    /// empty part, so an unclaimed File would put a group's directory straight into the
+    /// Project folder and an unclaimed Project would put it in the resources root — a
+    /// folder no part of the layout agrees with, recorded on the row for good.
+    ///
+    /// Deliberately group-specific. <see cref="ImportFile"/> keeps storing a document
+    /// somewhere findable under an unclaimed parent, because refusing an import outright
+    /// is a worse answer than a folder the next reconcile tidies. A group's segment is
+    /// persisted rather than recomputed, so the same tolerance would be permanent.
+    /// </summary>
+    private (Project Project, ProjectFile File) RequireClaimedGroupParent(ProjectFileId fileId)
+    {
+        var file = files.GetById(fileId)
+            ?? throw new DomainException("That file no longer exists.");
+        var project = Require(file.ProjectId);
+        if (project.FolderSegment.Length == 0 || file.FolderSegment.Length == 0)
+        {
+            throw new DomainException(
+                "This File's storage folders are not ready. Reopen the app and try again.");
+        }
+
+        return (project, file);
+    }
+
+    public IReadOnlyList<ResourceGroup> GetGroups(ProjectFileId fileId)
+        => groups.GetForFile(fileId);
+
+    public ResourceGroup CreateGroup(ProjectFileId fileId, string title)
+    {
+        var (project, file) = RequireClaimedGroupParent(fileId);
+        var siblings = groups.GetForFile(fileId);
+        var order = siblings.Count == 0 ? 0 : checked(siblings.Max(g => g.SortOrder) + 1);
+        var group = ResourceGroup.Create(fileId, title, order, clock.Now);
+        var claimed = siblings.Select(g => g.FolderSegment).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Two-argument FolderFor on purpose: this is the group's PARENT folder, and the
+        // group's own directory is what the reservation is about to create inside it.
+        // FolderFor's group parameter is optional and omitting it silently yields the
+        // loose folder, so every call site has to be read deliberately.
+        var segment = storage.ReserveFolderSegment(ResourceLayout.FolderFor(project, file),
+            ResourceLayout.Sanitize(group.Title, group.Id.ToString()), claimed);
+        group.RelocateTo(segment, clock.Now);
+        groups.Add(group);
+        return group;
+    }
+
+    public ResourceGroup RenameGroup(ResourceGroupId id, string title)
+    {
+        var group = groups.GetById(id) ?? throw new DomainException("That group no longer exists.");
+        var (project, file) = RequireClaimedGroupParent(group.FileId);
+
+        // Read before RelocateTo overwrites it. Reservation creates the directory it
+        // returns, so without this the group's OWN folder reads as occupied and a
+        // case-only or otherwise sanitization-equivalent rename is displaced to " (2)" —
+        // moving every byte in the group to say the same thing a different way.
+        var owned = group.FolderSegment;
+        group.Rename(title, clock.Now);
+        // Only the OTHER groups' segments; this one's is passed as `owned` instead.
+        var claimed = groups.GetForFile(file.Id).Where(g => g.Id != id)
+            .Select(g => g.FolderSegment).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Two-argument FolderFor again: the parent this group's directory sits in.
+        var segment = storage.ReserveFolderSegment(ResourceLayout.FolderFor(project, file),
+            ResourceLayout.Sanitize(group.Title, group.Id.ToString()), claimed, owned);
+        group.RelocateTo(segment, clock.Now);
+        groups.Update(group);
+
+        // AfterCommit, deliberately unlike RenameFile/RenameProject: the row write has
+        // already committed, so a throw from the reconcile cannot undo the rename — it can
+        // only misreport an operation that fully succeeded. Recorded in the phase-1 plan
+        // under "Two execution decisions ruled before Task 1"; aligning RenameFile with
+        // this is a follow-up, not part of this branch.
+        AfterCommit(() => reconciler?.ReconcileProject(project.Id));
+        return group;
+    }
+
+    public void MoveResourceToGroup(ResourceId id, ResourceGroupId? groupId)
+    {
+        var resource = resources.GetById(id)
+            ?? throw new DomainException("That resource no longer exists.");
+        var (project, _) = RequireClaimedGroupParent(resource.FileId);
+
+        // Only the service can see both sides. Resource.MoveToGroup takes a bare id, and
+        // resources.group_id requires only that the group row exist — not that it belong to
+        // this resource's File — so a cross-File assignment commits happily and is then
+        // silent and permanent: the reconciler refuses to resolve a group from another
+        // File, so this document is skipped on every run and its bytes never move again.
+        if (groupId is { } target)
+        {
+            var group = groups.GetById(target)
+                ?? throw new DomainException("That group no longer exists.");
+            if (group.FileId != resource.FileId)
+            {
+                throw new DomainException("Resources can only move to groups in the same File.");
+            }
+        }
+
+        if (resource.GroupId == groupId)
+        {
+            return;
+        }
+
+        resource.MoveToGroup(groupId, clock.Now);
+        resources.Update(resource);
+
+        // No indexer and no provenance invalidation, deliberately: filing changes neither
+        // the bytes, the extracted text, nor the resource's identity, so anything derived
+        // from it still cites exactly what it cited before.
+        //
+        // The single-row membership write is atomic on its own and has already committed.
+        // Moving the bytes to match is best-effort from here: a failure leaves the resource
+        // filed, at its old and still-openable path, for the next reconcile to converge —
+        // reporting a filing that genuinely happened as failed would be the worse answer.
+        AfterCommit(() => reconciler?.ReconcileProject(project.Id));
     }
 
     public Resource AddLink(ProjectFileId fileId, string title, string url)

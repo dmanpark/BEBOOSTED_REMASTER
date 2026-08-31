@@ -1,10 +1,13 @@
 using System.Globalization;
 using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Ai;
 using BeBoosted.Application.Projects;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Projects;
+using BeBoosted.Infrastructure.Calendar;
 using BeBoosted.Infrastructure.Persistence;
 using BeBoosted.Infrastructure.Projects;
+using BeBoosted.Infrastructure.Tasks;
 
 namespace BeBoosted.Tests.Support;
 
@@ -81,6 +84,28 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
     public ResourceLayoutReconciler Reconciler(
         IResourceStorage? storage = null, IResourceRepository? resources = null)
         => new(Projects, Files, resources ?? Resources, storage ?? Storage, this, Groups);
+
+    /// <summary>
+    /// The real <see cref="ProjectService"/> over this fixture's world, wired to the same
+    /// durable database as every repository above. The three optional arguments are the
+    /// seams a test needs to sabotage: a mutations double that rolls back, a storage
+    /// double that refuses a reservation or a move, and an invalidator that records. The
+    /// reconciler is built over whichever storage the service itself uses, so a sabotaged
+    /// storage is sabotaged for both — anything else would let the reconcile quietly
+    /// repair what the service was prevented from doing.
+    /// </summary>
+    public ProjectService CreateService(IProjectMutations? mutations = null,
+        IResourceStorage? storage = null, IProvenanceInvalidator? invalidator = null)
+    {
+        var bytes = storage ?? Storage;
+        return new ProjectService(Projects, Files, Resources, bytes,
+            mutations ?? new SqliteProjectMutations(Database.Factory),
+            new SimpleLocalIndexer(Resources, bytes, this),
+            new SqliteTaskRepository(Database.Factory),
+            new SqliteCalendarBlockRepository(Database.Factory),
+            new SqliteOccurrenceCompletionRepository(Database.Factory), this, Groups,
+            invalidator, Reconciler(bytes));
+    }
 
     /// <summary>A persisted group with a genuinely claimed folder segment.</summary>
     public ResourceGroup Group(string title = "Notes")

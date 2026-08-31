@@ -175,6 +175,25 @@ public sealed class LocalResourceStorageTests : IDisposable
         Assert.Equal("Notes", segment);
     }
 
+    /// <summary>
+    /// Ownership is matched case-insensitively, so a case-only rename lands on the owned
+    /// segment — and what comes back must be the name the directory actually has, not the
+    /// requested spelling of it. Returning "notes" would persist a folder_segment that no
+    /// directory is called: harmless on this filesystem only by luck, and on a
+    /// case-sensitive one it names a second, empty directory beside the group's bytes.
+    /// </summary>
+    [Fact]
+    public void ReserveFolderSegment_ReturnsTheOwnedSpelling_WhenOnlyTheCaseChanged()
+    {
+        const string parent = "College";
+        Directory.CreateDirectory(_storage.ResolvePath(Path.Combine(parent, "Notes")));
+
+        var segment = _storage.ReserveFolderSegment(parent, "notes", new HashSet<string>(), ownedSegment: "Notes");
+
+        Assert.Equal("Notes", segment);
+        Assert.False(Directory.Exists(_storage.ResolvePath(Path.Combine(parent, "notes (2)"))));
+    }
+
     /// <summary>A sibling's in-flight claim outranks this entity's own remembered segment.</summary>
     [Fact]
     public void ReserveFolderSegment_ClaimedBeatsOwnedSegment()

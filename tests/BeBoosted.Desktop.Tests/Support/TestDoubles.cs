@@ -483,13 +483,22 @@ public sealed class FakeResourceStorage : IResourceStorage
                 continue;
             }
 
-            var isOwned = ownedSegment is not null
-                && string.Equals(candidate, ownedSegment, StringComparison.OrdinalIgnoreCase);
-            var storedPath = Path.Combine(relativeParent, candidate);
+            // Matches LocalResourceStorage: an owned segment comes back in the spelling it
+            // already has, so a case-only rename keeps naming the directory that exists.
+            var reserved = candidate;
+            var isOwned = false;
+            if (ownedSegment is { } owned
+                && string.Equals(candidate, owned, StringComparison.OrdinalIgnoreCase))
+            {
+                reserved = owned;
+                isOwned = true;
+            }
+
+            var storedPath = Path.Combine(relativeParent, reserved);
             if (isOwned || (!_stored.Contains(storedPath) && !_folders.Contains(storedPath)))
             {
                 _folders.Add(storedPath);
-                return candidate;
+                return reserved;
             }
         }
     }
@@ -655,7 +664,7 @@ public static class TestShell
             projectRepo, fileRepo, resourceRepo, storage,
             new InMemoryProjectMutations(projectRepo, fileRepo, resourceRepo, repository, groupRepo),
             new FakeIndexer(resourceRepo, clock), repository, blockRepository,
-            completionRepository, clock, aiService);
+            completionRepository, clock, groupRepo, aiService);
         return new ShellViewModel(
             new CalendarViewModel(
                 settings, clock, calendarService, repository, planning, projectRepo,

@@ -120,13 +120,25 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
                 continue;
             }
 
-            var isOwned = ownedSegment is not null
-                && string.Equals(candidate, ownedSegment, StringComparison.OrdinalIgnoreCase);
-            var absolute = ResolvePath(Path.Combine(relativeParent, candidate));
+            // Ownership is matched case-insensitively, so what comes back is the spelling
+            // the directory already has, never the requested one: persisting "notes" for a
+            // folder called "Notes" names a directory that exists under no such name, and
+            // on a case-sensitive filesystem CreateDirectory would make a second, empty one
+            // beside the entity's bytes.
+            var reserved = candidate;
+            var isOwned = false;
+            if (ownedSegment is { } owned
+                && string.Equals(candidate, owned, StringComparison.OrdinalIgnoreCase))
+            {
+                reserved = owned;
+                isOwned = true;
+            }
+
+            var absolute = ResolvePath(Path.Combine(relativeParent, reserved));
             if (isOwned || (!File.Exists(absolute) && !Directory.Exists(absolute)))
             {
                 Directory.CreateDirectory(absolute);
-                return candidate;
+                return reserved;
             }
         }
     }
