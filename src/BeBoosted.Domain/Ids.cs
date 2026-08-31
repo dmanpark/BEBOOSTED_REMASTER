@@ -36,6 +36,15 @@ public readonly record struct ResourceId(Guid Value)
     public override string ToString() => Value.ToString();
 }
 
+public readonly record struct ResourceGroupId(Guid Value)
+{
+    public static ResourceGroupId New() => new(Guid.NewGuid());
+
+    public static ResourceGroupId Parse(string value) => new(Guid.Parse(value));
+
+    public override string ToString() => Value.ToString();
+}
+
 public readonly record struct CalendarBlockId(Guid Value)
 {
     public static CalendarBlockId New() => new(Guid.NewGuid());

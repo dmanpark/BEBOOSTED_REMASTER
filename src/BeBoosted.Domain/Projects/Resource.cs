@@ -33,7 +33,8 @@ public sealed class Resource
         string? storedPath,
         DateTimeOffset addedAt,
         ResourceIndexState indexState,
-        DateTimeOffset modifiedAt)
+        DateTimeOffset modifiedAt,
+        ResourceGroupId? groupId)
     {
         Id = id;
         FileId = fileId;
@@ -46,6 +47,7 @@ public sealed class Resource
         AddedAt = addedAt;
         IndexState = indexState;
         ModifiedAt = modifiedAt;
+        GroupId = groupId;
     }
 
     public ResourceId Id { get; }
@@ -74,6 +76,9 @@ public sealed class Resource
 
     public DateTimeOffset ModifiedAt { get; private set; }
 
+    /// <summary>The group this resource belongs to, or null when it is loose.</summary>
+    public ResourceGroupId? GroupId { get; private set; }
+
     public static Resource CreateLink(ProjectFileId fileId, string title, string url, DateTimeOffset now)
     {
         var trimmedUrl = url?.Trim() ?? string.Empty;
@@ -84,13 +89,13 @@ public sealed class Resource
 
         return new Resource(
             ResourceId.New(), fileId, ResourceKind.Link, ValidateTitle(title),
-            trimmedUrl, null, null, null, now, ResourceIndexState.Pending, now);
+            trimmedUrl, null, null, null, now, ResourceIndexState.Pending, now, null);
     }
 
     public static Resource CreateNote(ProjectFileId fileId, string title, string content, DateTimeOffset now)
         => new(
             ResourceId.New(), fileId, ResourceKind.Note, ValidateTitle(title),
-            null, content ?? string.Empty, null, null, now, ResourceIndexState.Pending, now);
+            null, content ?? string.Empty, null, null, now, ResourceIndexState.Pending, now, null);
 
     public static Resource CreateStored(
         ProjectFileId fileId,
@@ -107,7 +112,7 @@ public sealed class Resource
 
         return new Resource(
             ResourceId.New(), fileId, kind, ValidateTitle(title),
-            null, null, originalFileName, storedPath, now, ResourceIndexState.Pending, now);
+            null, null, originalFileName, storedPath, now, ResourceIndexState.Pending, now, null);
     }
 
     public static Resource Rehydrate(
@@ -121,8 +126,9 @@ public sealed class Resource
         string? storedPath,
         DateTimeOffset addedAt,
         ResourceIndexState indexState,
-        DateTimeOffset modifiedAt)
-        => new(id, fileId, kind, title, url, content, originalFileName, storedPath, addedAt, indexState, modifiedAt);
+        DateTimeOffset modifiedAt,
+        ResourceGroupId? groupId = null)
+        => new(id, fileId, kind, title, url, content, originalFileName, storedPath, addedAt, indexState, modifiedAt, groupId);
 
     public void Rename(string title, DateTimeOffset now)
     {
@@ -172,6 +178,13 @@ public sealed class Resource
     public void MarkIndexFailed(DateTimeOffset now)
     {
         IndexState = ResourceIndexState.Failed;
+        Touch(now);
+    }
+
+    /// <summary>Moves this resource into a group, or back to loose when null.</summary>
+    public void MoveToGroup(ResourceGroupId? groupId, DateTimeOffset now)
+    {
+        GroupId = groupId;
         Touch(now);
     }
 
