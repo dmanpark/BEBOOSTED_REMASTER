@@ -5,6 +5,54 @@
              x:Class="BeBoosted.Desktop.Views.ProjectsView"
              x:DataType="vm:ProjectsViewModel">
 
+  <UserControl.Resources>
+    <!-- One resource row, keyed because two kinds of list render it: the File's loose
+         list and every group's list. Same instance shape, same markup, one place to
+         change it. -->
+    <DataTemplate x:Key="ResourceRowTemplate" x:DataType="vm:ResourceRowViewModel">
+      <DockPanel Margin="12,3">
+        <Border DockPanel.Dock="Left" Width="36" Padding="0,2"
+                BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
+                CornerRadius="3" VerticalAlignment="Center">
+          <TextBlock Classes="mono" Text="{Binding KindChip}"
+                     FontSize="{StaticResource TextSizeMeta}"
+                     HorizontalAlignment="Center" />
+        </Border>
+        <!-- Hidden until the File has somewhere to file this row, so a File with no
+             groups keeps exactly the row it has always had. -->
+        <Button DockPanel.Dock="Right" Content="Move to…" Margin="8,0,0,0"
+                Height="26" Padding="10,0" VerticalAlignment="Center"
+                FontSize="{StaticResource TextSizeSmall}"
+                IsVisible="{Binding HasMoveTargets}"
+                AutomationProperties.Name="{Binding Title, StringFormat='Move {0}'}">
+          <Button.Flyout>
+            <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+              <ItemsControl ItemsSource="{Binding MoveTargets}" MinWidth="200">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Spacing="6" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ResourceMoveTargetViewModel">
+                    <Button Content="{Binding Title}" Click="OnMoveResourceClick"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            AutomationProperties.Name="{Binding Title, StringFormat='Move to {0}'}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </Flyout>
+          </Button.Flyout>
+        </Button>
+        <StackPanel Margin="12,0,0,0" Spacing="2" VerticalAlignment="Center">
+          <TextBlock Text="{Binding Title}" FontWeight="Medium"
+                     TextTrimming="CharacterEllipsis" />
+          <TextBlock Classes="meta" Text="{Binding MetaText}" />
+        </StackPanel>
+      </DockPanel>
+    </DataTemplate>
+  </UserControl.Resources>
+
   <UserControl.Styles>
     <!-- The tactile folio: the product's one physical motif -->
     <Style Selector="Button.folio">
@@ -508,6 +556,23 @@
             </Button>
             <Button Height="30" Padding="12,0" Content="Image" Click="OnAddImageClick"
                     AutomationProperties.Name="Add an image" />
+            <!-- Beside the other things a File can gain, not among the Rename/Delete
+                 actions that act on the File itself. -->
+            <Button Height="30" Padding="12,0" Content="New group"
+                    AutomationProperties.Name="New resource group">
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+                  <StackPanel Width="260" Spacing="10" Margin="4">
+                    <TextBlock Text="New group" FontWeight="SemiBold" />
+                    <TextBox Text="{Binding NewGroupTitle}" PlaceholderText="Group title"
+                             AutomationProperties.Name="New group title" />
+                    <Button Classes="primary" Content="Create group" HorizontalAlignment="Right"
+                            Click="OnCreateGroupClick"
+                            AutomationProperties.Name="Create resource group" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+            </Button>
             <Border Width="1" Margin="4,6" Background="{StaticResource BrushRuleDefault}" />
             <Button Height="30" Padding="12,0" Content="Rename" Click="OnBeginFileRenameClick"
                     AutomationProperties.Name="Rename this File">
@@ -592,33 +657,106 @@
                            FontSize="{StaticResource TextSizeSmall}" Margin="26,8,26,0"
                            Text="{Binding ImportNotice}" TextWrapping="Wrap"
                            IsVisible="{Binding ImportNotice, Converter={x:Static ObjectConverters.IsNotNull}}" />
-                <StackPanel IsVisible="{Binding !HasResources}" Margin="26,20" Spacing="6">
+                <!-- Group actions report their own failures; the import notice above says
+                     nothing about them and must not be overwritten by them. -->
+                <TextBlock DockPanel.Dock="Top" Foreground="{StaticResource BrushInkHover}"
+                           FontSize="{StaticResource TextSizeSmall}" Margin="26,8,26,0"
+                           Text="{Binding GroupNotice}" TextWrapping="Wrap"
+                           IsVisible="{Binding GroupNotice, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                <!-- ShowEmptyState, not !HasResources: an empty group is a File with
+                     something in it, and "Nothing collected yet." underneath a group
+                     header the user just made contradicts the header. -->
+                <StackPanel IsVisible="{Binding ShowEmptyState}" Margin="26,20" Spacing="6">
                   <TextBlock Text="Nothing collected yet." FontWeight="Medium" />
                   <TextBlock Classes="secondary" TextWrapping="Wrap"
                              Text="Add documents, links, notes, or images with the actions above." />
                 </StackPanel>
-                <ListBox ItemsSource="{Binding Resources}" SelectedItem="{Binding Selected}"
-                         IsVisible="{Binding HasResources}"
-                         Background="Transparent" Padding="0">
-                  <ListBox.ItemTemplate>
-                    <DataTemplate x:DataType="vm:ResourceRowViewModel">
-                      <DockPanel Margin="12,3">
-                        <Border DockPanel.Dock="Left" Width="36" Padding="0,2"
-                                BorderBrush="{StaticResource BrushBorderEmphasis}" BorderThickness="1"
-                                CornerRadius="3" VerticalAlignment="Center">
-                          <TextBlock Classes="mono" Text="{Binding KindChip}"
-                                     FontSize="{StaticResource TextSizeMeta}"
-                                     HorizontalAlignment="Center" />
-                        </Border>
-                        <StackPanel Margin="12,0,0,0" Spacing="2" VerticalAlignment="Center">
-                          <TextBlock Text="{Binding Title}" FontWeight="Medium"
-                                     TextTrimming="CharacterEllipsis" />
-                          <TextBlock Classes="meta" Text="{Binding MetaText}" />
-                        </StackPanel>
-                      </DockPanel>
-                    </DataTemplate>
-                  </ListBox.ItemTemplate>
-                </ListBox>
+                <!-- One ScrollViewer for the whole File, wrapping the groups and the loose
+                     list together. This is deliberate and replaces the single filling
+                     ListBox: a sectioned list scrolls as one column, so a File gets one
+                     scrollbar rather than one per group. The cost is that each inner
+                     ListBox is measured unconstrained, which turns its virtualization off;
+                     at a File's scale that is immaterial. Do not "restore" the ListBox to
+                     the fill slot — that gives every group its own scrollbar. -->
+                <ScrollViewer>
+                  <StackPanel>
+                    <ItemsControl ItemsSource="{Binding Groups}" IsVisible="{Binding HasGroups}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ResourceGroupViewModel">
+                          <!-- Background/BorderBrush/Padding repaint Fluent's grey expander
+                               card onto the folio's paper, the way App.axaml already
+                               repaints Fluent's accent. Inline rather than a style: this is
+                               the app's only Expander. -->
+                          <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    Margin="14,10,14,0" Padding="0,4"
+                                    Background="Transparent"
+                                    BorderBrush="{StaticResource BrushRuleLight}"
+                                    AutomationProperties.Name="{Binding Title, StringFormat='Group {0}'}">
+                            <Expander.Header>
+                              <!-- A Grid rather than one horizontal run: at the narrow width
+                                   the title gives way so the three actions stay inside the
+                                   pane instead of being pushed out and clipped. -->
+                              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                <TextBlock Grid.Column="0" Text="{Binding Title}" FontWeight="SemiBold"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="1" Text="{Binding CountText}" Classes="meta"
+                                           VerticalAlignment="Center" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                                            VerticalAlignment="Center">
+                                  <Button Content="Rename" Height="26" Padding="10,0"
+                                          FontSize="{StaticResource TextSizeSmall}"
+                                          Click="OnBeginGroupRenameClick"
+                                          AutomationProperties.Name="{Binding Title, StringFormat='Rename group {0}'}">
+                                    <Button.Flyout>
+                                      <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
+                                        <StackPanel Width="260" Spacing="10" Margin="4">
+                                          <TextBlock Text="Rename group" FontWeight="SemiBold" />
+                                          <TextBox Text="{Binding RenameTitle}" PlaceholderText="Group title"
+                                                   AutomationProperties.Name="Group title" />
+                                          <Button Classes="primary" Content="Save"
+                                                  HorizontalAlignment="Right"
+                                                  Click="OnRenameGroupClick" />
+                                        </StackPanel>
+                                      </Flyout>
+                                    </Button.Flyout>
+                                  </Button>
+                                  <!-- Ungroup destroys nothing, so no prompt; Delete group
+                                       goes through the File surface's own confirmation. -->
+                                  <Button Content="Ungroup" Height="26" Padding="10,0"
+                                          FontSize="{StaticResource TextSizeSmall}"
+                                          Command="{Binding UngroupCommand}"
+                                          AutomationProperties.Name="{Binding Title, StringFormat='Ungroup {0}'}" />
+                                  <Button Content="Delete group" Height="26" Padding="10,0"
+                                          FontSize="{StaticResource TextSizeSmall}"
+                                          Command="{Binding RequestDeleteCommand}"
+                                          AutomationProperties.Name="{Binding Title, StringFormat='Delete group {0}'}" />
+                                </StackPanel>
+                              </Grid>
+                            </Expander.Header>
+                            <!-- SelectedResource, never Selected: every list that does not
+                                 hold the selection clears its own SelectedItem, and the
+                                 delegated property is the one that refuses to write that
+                                 null back over the selection another list owns. -->
+                            <ListBox ItemsSource="{Binding Resources}"
+                                     SelectedItem="{Binding SelectedResource, Mode=TwoWay}"
+                                     ItemTemplate="{StaticResource ResourceRowTemplate}"
+                                     Background="Transparent" Padding="0" />
+                          </Expander>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="loose in this File" Classes="meta" Margin="26,12"
+                               IsVisible="{Binding ShowLooseHeader}" />
+                    <ListBox ItemsSource="{Binding LooseResources}"
+                             SelectedItem="{Binding LooseSelectedResource, Mode=TwoWay}"
+                             ItemTemplate="{StaticResource ResourceRowTemplate}"
+                             IsVisible="{Binding HasLooseResources}"
+                             Background="Transparent" Padding="0" />
+                  </StackPanel>
+                </ScrollViewer>
               </DockPanel>
             </Border>
 

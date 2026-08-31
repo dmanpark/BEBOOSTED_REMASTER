@@ -77,6 +77,46 @@ public partial class ProjectsView : UserControl
         }
     }
 
+    // Every group handler marks the click handled. The Rename/Save buttons sit inside the
+    // Expander's own header toggle, and a move rebuilds the list underneath the row that
+    // was clicked — an unhandled press would collapse the group it was asked to rename, or
+    // land on whatever ListBoxItem has taken the old one's place and reset the selection.
+    private void OnCreateGroupClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (Vm?.FileDetail?.TryCreateGroup() == true)
+        {
+            CloseFlyout(sender);
+        }
+    }
+
+    private void OnBeginGroupRenameClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is Control { DataContext: ResourceGroupViewModel group })
+        {
+            group.BeginRename();
+        }
+    }
+
+    private void OnRenameGroupClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is Control { DataContext: ResourceGroupViewModel group } && group.TryCommitRename())
+        {
+            CloseFlyout(sender);
+        }
+    }
+
+    private void OnMoveResourceClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is Control { DataContext: ResourceMoveTargetViewModel target } && target.TryMove())
+        {
+            CloseFlyout(sender);
+        }
+    }
+
     private void OnAddLinkClick(object? sender, RoutedEventArgs e)
     {
         if (Vm?.FileDetail?.TryAddLink() == true)
