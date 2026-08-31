@@ -355,6 +355,121 @@ public sealed class ProjectService(
         AfterCommit(() => reconciler?.ReconcileProject(project.Id));
     }
 
+    /// <summary>
+    /// Removes the grouping and keeps everything in it: every member becomes loose in the
+    /// File, then the group row goes. Nothing is destroyed, so there is no confirmation
+    /// and — deliberately — no provenance invalidation: the resources, their bytes and
+    /// their indexed text are all exactly what they were, so nothing derived from them has
+    /// become stale.
+    ///
+    /// Membership is cleared explicitly even though <c>resources.group_id</c> is
+    /// <c>ON DELETE SET NULL</c> and deleting the group row alone would loosen the members
+    /// anyway. Saying it at the call site makes the intent legible and does not rest on the
+    /// order the two statements happen to run in. The same <c>SET NULL</c> is why
+    /// <see cref="DeleteGroup"/> must delete its member rows itself.
+    ///
+    /// One transaction for all of it: a failure part-way must not leave some members loose
+    /// and others still filed under a group the user was told had gone.
+    /// </summary>
+    public void UngroupGroup(ResourceGroupId id)
+    {
+        var group = groups.GetById(id);
+        if (group is null)
+        {
+            // Already gone — the second click of a double-click, or another window that got
+            // there first. Nothing to undo and nothing to report.
+            return;
+        }
+
+        var file = files.GetById(group.FileId);
+        var project = file is null ? null : projects.GetById(file.ProjectId);
+
+        mutations.Execute((_, _, resourceRepo, _, groupRepo) =>
+        {
+            // Read through the transaction-bound repository, not the service's own: these
+            // rows are about to be updated inside this unit of work, and reading them from
+            // a second connection would block on the write lock this one already holds.
+            foreach (var resource in resourceRepo.GetForFile(group.FileId).Where(r => r.GroupId == id))
+            {
+                resource.MoveToGroup(null, clock.Now);
+                resourceRepo.Update(resource);
+            }
+
+            groupRepo.Delete(id);
+        });
+
+        // Deferred rather than refused when either parent has claimed nothing. Ungroup is a
+        // recovery action and must stay available on data in that state — but reconciling
+        // there is the hazard RenameFile also defers around: the reconciler deliberately
+        // lets a both-empty Project/File through as the pre-0012 legacy shape, so an
+        // unclaimed Project resolves its Files' folders to the File segment alone and drags
+        // every newly loosened document out into the resources root. The rows are already
+        // correct; the bytes stay put and converge once the backfill claims the Project.
+        if (file is { FolderSegment.Length: > 0 } && project is { FolderSegment.Length: > 0 } owner)
+        {
+            // AfterCommit for the same reason RenameGroup uses it: the rows have landed and
+            // a failed reconcile cannot undo them, only misreport an operation that fully
+            // succeeded. The members stay openable at their recorded paths meanwhile.
+            AfterCommit(() => reconciler?.ReconcileProject(owner.Id));
+        }
+    }
+
+    /// <summary>
+    /// Removes the group and the resources in it, bytes included. The destructive half of
+    /// the pair, behind a confirmation at the UI.
+    ///
+    /// The member rows are deleted here rather than through <see cref="DeleteResource"/>,
+    /// which the original design called for: that method opens and commits its own
+    /// transaction per call, so a failure part-way through a group would leave some members
+    /// destroyed, some alive, and the group row in either state — with no record of which.
+    /// Every row goes in one callback instead, so they commit together or not at all.
+    ///
+    /// Deleting only the group row would be the opposite failure and a quieter one:
+    /// <c>resources.group_id</c> is <c>ON DELETE SET NULL</c>, not <c>CASCADE</c>, so it
+    /// would preserve every document the user asked to destroy, loose in the File.
+    ///
+    /// Bytes and provenance follow the commit, one <see cref="AfterCommit"/> each, so a
+    /// path that refuses to be deleted costs only itself — the remaining paths and every
+    /// invalidation still run.
+    /// </summary>
+    public void DeleteGroup(ResourceGroupId id)
+    {
+        var group = groups.GetById(id);
+        if (group is null)
+        {
+            return;
+        }
+
+        // Snapshotted before the commit, deliberately: afterwards the rows are gone and
+        // neither the ids to invalidate nor the paths to delete can be read back.
+        var doomed = resources.GetForFile(group.FileId).Where(r => r.GroupId == id).ToList();
+        var paths = doomed.Select(r => r.StoredPath).OfType<string>().ToList();
+
+        mutations.Execute((_, _, resourceRepo, _, groupRepo) =>
+        {
+            foreach (var resource in doomed)
+            {
+                resourceRepo.Delete(resource.Id);
+            }
+
+            groupRepo.Delete(id);
+        });
+
+        // Outside the callback: filesystem work never runs inside a transaction, because a
+        // rollback cannot put the bytes back.
+        foreach (var path in paths)
+        {
+            AfterCommit(() => storage.Delete(path));
+        }
+
+        // Every member, not only the ones with bytes: an answer citing a deleted note is
+        // exactly as stale as one citing deleted bytes.
+        foreach (var resource in doomed)
+        {
+            AfterCommit(() => provenanceInvalidator?.InvalidateForResource(resource.Id));
+        }
+    }
+
     public Resource AddLink(ProjectFileId fileId, string title, string url)
         => AddAndIndex(Resource.CreateLink(fileId, title, url, clock.Now));
 
