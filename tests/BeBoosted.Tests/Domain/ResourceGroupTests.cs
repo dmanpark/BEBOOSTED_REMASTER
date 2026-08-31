@@ -1,3 +1,4 @@
+using System.Globalization;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Projects;
 
@@ -121,7 +122,7 @@ public sealed class ResourceGroupTests
     [Fact]
     public void Rename_DoesNotChangeTheClaimedFolder()
     {
-        var now = DateTimeOffset.Parse("2026-08-30T09:00:00-07:00");
+        var now = DateTimeOffset.Parse("2026-08-30T09:00:00-07:00", CultureInfo.InvariantCulture);
         var group = ResourceGroup.Create(ProjectFileId.New(), "  Notes  ", 0, now);
         Assert.Equal("Notes", group.Title);
         Assert.Equal(string.Empty, group.FolderSegment);
@@ -159,7 +160,7 @@ public sealed class ResourceGroupTests
     [InlineData(ResourceKind.Note)]
     public void MembershipChanges_KeepContentPathAndIndexState(ResourceKind kind)
     {
-        var now = DateTimeOffset.Parse("2026-08-30T09:00:00-07:00");
+        var now = DateTimeOffset.Parse("2026-08-30T09:00:00-07:00", CultureInfo.InvariantCulture);
         var fileId = ProjectFileId.New();
         var resource = kind switch
         {
@@ -193,12 +194,16 @@ public sealed class ResourceGroupTests
         Assert.Equal(groupId, resource.GroupId);
     }
 
+    /// <summary>
+    /// Loose membership is stated, never inferred from an omitted argument: groupId is a
+    /// required parameter, so every mapper has to say which it means.
+    /// </summary>
     [Fact]
-    public void Rehydrate_LegacyCallOmittingGroupId_LeavesItNull()
+    public void Rehydrate_WithAnExplicitNullGroupId_LeavesTheResourceLoose()
     {
         var resource = Resource.Rehydrate(
             ResourceId.New(), ProjectFileId.New(), ResourceKind.Note, "Source",
-            null, "body", null, null, Now, ResourceIndexState.Pending, Now);
+            null, "body", null, null, Now, ResourceIndexState.Pending, Now, null);
 
         Assert.Null(resource.GroupId);
     }

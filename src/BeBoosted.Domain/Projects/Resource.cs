@@ -127,7 +127,10 @@ public sealed class Resource
         DateTimeOffset addedAt,
         ResourceIndexState indexState,
         DateTimeOffset modifiedAt,
-        ResourceGroupId? groupId = null)
+        // Deliberately not defaulted. A mapper that forgets this argument would compile
+        // and silently unfile the resource — the read/write mismatch this feature is
+        // most exposed to, and one no test near the mapper would catch.
+        ResourceGroupId? groupId)
         => new(id, fileId, kind, title, url, content, originalFileName, storedPath, addedAt, indexState, modifiedAt, groupId);
 
     public void Rename(string title, DateTimeOffset now)

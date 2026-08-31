@@ -89,6 +89,45 @@ public sealed class ResourceGroupsMigrationTests : IDisposable
         Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM resources WHERE group_id IS NOT NULL;"));
     }
 
+    /// <summary>
+    /// STRICT is what makes the column types real rather than advisory: without it SQLite
+    /// happily stores a string in sort_order, and the mismatch surfaces far away as a
+    /// cast failure in Map. Every other table in this schema is STRICT; nothing else in
+    /// the suite would notice the keyword going missing from a future edit of 0013.
+    /// </summary>
+    [Fact]
+    public void Upgrade_CreatesTheGroupTableAsStrict()
+    {
+        BuildPre0013DatabaseWithAStoredResource();
+
+        ApplyEverythingTwice();
+
+        var ddl = Assert.IsType<string>(Scalar(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'resource_groups';"));
+        Assert.Contains("STRICT", ddl, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Both lookups the feature makes on every File render — its groups, and a group's
+    /// members. An index is invisible to correctness, so only this pins it; and an index
+    /// on the wrong column is as useless as a missing one, hence the column assertions.
+    /// </summary>
+    [Theory]
+    [InlineData("idx_resource_groups_file", "resource_groups", "file_id")]
+    [InlineData("idx_resources_group", "resources", "group_id")]
+    public void Upgrade_CreatesTheLookupIndex(string indexName, string tableName, string columnName)
+    {
+        BuildPre0013DatabaseWithAStoredResource();
+
+        ApplyEverythingTwice();
+
+        var ddl = Scalar(
+            $"SELECT sql FROM sqlite_master WHERE type = 'index' AND name = '{indexName}';");
+        Assert.IsType<string>(ddl);
+        Assert.Contains(tableName, (string)ddl, StringComparison.Ordinal);
+        Assert.Contains(columnName, (string)ddl, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Upgrade_CreatesAnEmptyResourceGroupsTable()
     {

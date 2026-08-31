@@ -1,6 +1,6 @@
+using BeBoosted.Application.Projects;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Projects;
-using BeBoosted.Infrastructure.Persistence;
 using BeBoosted.Tests.Support;
 using Microsoft.Data.Sqlite;
 
@@ -23,6 +23,32 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     private const string IndexOnlyToken = "quetzalcoatlus";
 
     private readonly ResourceGroupFixture _fixture = new();
+
+    /// <summary>
+    /// Not a repository assertion — it pins the fixture's own contract, which Tasks 3-5
+    /// build reconciler and move tests on. A document has to land exactly where
+    /// ResourceLayout would put it; a fixture that stores under the raw name hands those
+    /// tests a path the reconciler judges misplaced on every run, and the failure surfaces
+    /// nowhere near its cause. Pinned with a name that actually needs sanitizing, since an
+    /// already-safe name is identical either way and would not notice the regression.
+    /// </summary>
+    [Fact]
+    public void FixtureDocuments_AreStoredWhereTheLayoutWouldPutThem()
+    {
+        // Legal on disk as a source file, so the fixture can genuinely create it, but
+        // still rewritten by Sanitize (whitespace runs collapse to one space). A name
+        // carrying characters Windows forbids could not be written in the first place.
+        const string Awkward = "Ch  5    notes.txt";
+
+        var resource = _fixture.Document(Awkward);
+
+        Assert.Equal(
+            Path.Combine(
+                ResourceLayout.FolderFor(_fixture.Project, _fixture.File),
+                ResourceLayout.FileNameFor(Awkward, resource.Id.ToString())),
+            resource.StoredPath);
+        Assert.True(_fixture.Storage.Exists(resource.StoredPath!));
+    }
 
     /// <summary>The INSERT path: Columns, the VALUES list, and Bind.</summary>
     [Fact]
@@ -177,15 +203,16 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     [Fact]
     public void DirectGroupDelete_UngroupsWithoutDeletingTheResource()
     {
-        using var f = new ResourceGroupFixture();
-        var g = f.Group();
-        var r = f.Document();
-        f.Assign(r, g.Id);
-        f.Groups.Delete(g.Id);
-        var remaining = Assert.IsType<Resource>(f.Resources.GetById(r.Id));
+        var group = _fixture.Group();
+        var resource = _fixture.Document();
+        _fixture.Assign(resource, group.Id);
+
+        _fixture.Groups.Delete(group.Id);
+
+        var remaining = Assert.IsType<Resource>(_fixture.Resources.GetById(resource.Id));
         Assert.Null(remaining.GroupId);
-        Assert.True(f.Storage.Exists(remaining.StoredPath!));
-        Assert.Null(f.Groups.GetById(g.Id));
+        Assert.True(_fixture.Storage.Exists(remaining.StoredPath!));
+        Assert.Null(_fixture.Groups.GetById(group.Id));
     }
 
     /// <summary>Deleting the File removes both, through two independent CASCADEs.</summary>
@@ -225,22 +252,23 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     [Fact]
     public void GroupAndResourceWrites_ActuallyRollBackTogether()
     {
-        using var f = new ResourceGroupFixture();
-        var g = f.Group();
-        var r = f.Document();
-        f.Assign(r, g.Id);
+        var group = _fixture.Group();
+        var resource = _fixture.Document();
+        _fixture.Assign(resource, group.Id);
+
         Assert.Throws<InvalidOperationException>(() =>
-            new SqliteProjectMutations(f.Database.Factory).Execute((_, _, resources, _, groups) =>
+            _fixture.Mutations.Execute((_, _, resources, _, groups) =>
             {
-                resources.Delete(r.Id);
-                groups.Delete(g.Id);
-                Assert.Null(resources.GetById(r.Id));
-                Assert.Null(groups.GetById(g.Id));
+                resources.Delete(resource.Id);
+                groups.Delete(group.Id);
+                Assert.Null(resources.GetById(resource.Id));
+                Assert.Null(groups.GetById(group.Id));
                 throw new InvalidOperationException("before commit");
             }));
-        Assert.NotNull(f.Groups.GetById(g.Id));
-        Assert.Equal(g.Id, f.Resources.GetById(r.Id)!.GroupId);
-        Assert.True(f.Storage.Exists(r.StoredPath!));
+
+        Assert.NotNull(_fixture.Groups.GetById(group.Id));
+        Assert.Equal(group.Id, _fixture.Resources.GetById(resource.Id)!.GroupId);
+        Assert.True(_fixture.Storage.Exists(resource.StoredPath!));
     }
 
     public void Dispose() => _fixture.Dispose();

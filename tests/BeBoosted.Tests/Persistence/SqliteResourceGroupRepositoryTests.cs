@@ -46,24 +46,35 @@ public sealed class SqliteResourceGroupRepositoryTests : IDisposable
     public void GetById_ForAnUnknownGroup_ReturnsNull()
         => Assert.Null(_fixture.Groups.GetById(ResourceGroupId.New()));
 
+    /// <summary>
+    /// The UPDATE reaches title, folder_segment, sort_order and modified_at, and nothing
+    /// else — created_at in particular is write-once.
+    ///
+    /// The edit is applied through a DETACHED instance carrying a created_at the row does
+    /// not hold. Updating from the instance the row was written from would make the
+    /// created_at assertion unfalsifiable: CreatedAt is get-only, so adding
+    /// created_at = $createdAt to the statement would write the identical value back and
+    /// the test would pass on the defect it claims to catch.
+    /// </summary>
     [Fact]
     public void Update_PersistsTheRenameTheSegmentAndTheOrder_AndLeavesCreatedAtAlone()
     {
         var group = _fixture.Group("Unit 3");
         var created = group.CreatedAt;
-        _fixture.Now = _fixture.Now.AddHours(3);
-        group.Rename("Unit 3 — Federalism", _fixture.Now);
-        group.Reorder(7, _fixture.Now);
-        group.RelocateTo("Unit 3 (2)", _fixture.Now);
+        var modified = _fixture.Now.AddHours(3);
+        var edit = ResourceGroup.Rehydrate(
+            group.Id, group.FileId, "Unit 3 — Federalism", 7,
+            created.AddYears(-1), modified, "Unit 3 (2)");
 
-        _fixture.Groups.Update(group);
+        _fixture.Groups.Update(edit);
 
         var stored = _fixture.Groups.GetById(group.Id)!;
         Assert.Equal("Unit 3 — Federalism", stored.Title);
         Assert.Equal("Unit 3 (2)", stored.FolderSegment);
         Assert.Equal(7, stored.SortOrder);
-        Assert.Equal(_fixture.Now, stored.ModifiedAt);
+        Assert.Equal(modified, stored.ModifiedAt);
         Assert.Equal(created, stored.CreatedAt);
+        Assert.NotEqual(edit.CreatedAt, stored.CreatedAt);
     }
 
     /// <summary>

@@ -1,3 +1,4 @@
+using System.Globalization;
 using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Projects;
 using BeBoosted.Domain;
@@ -25,7 +26,7 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
     public string ResourcesDirectory => Path.Combine(DataDirectory, "resources");
 
     public DateTimeOffset Now { get; set; } =
-        DateTimeOffset.Parse("2026-08-30T09:00:00-07:00");
+        DateTimeOffset.Parse("2026-08-30T09:00:00-07:00", CultureInfo.InvariantCulture);
 
     public DateOnly Today => DateOnly.FromDateTime(Now.LocalDateTime);
 
@@ -38,6 +39,12 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
     public SqliteResourceGroupRepository Groups { get; }
 
     public LocalResourceStorage Storage { get; }
+
+    /// <summary>
+    /// The real transaction seam, on this fixture's database. Here so an atomic-delete
+    /// test does not have to hand-roll one and risk pointing it at a different database.
+    /// </summary>
+    public SqliteProjectMutations Mutations { get; }
 
     public Project Project { get; }
 
@@ -54,6 +61,7 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
         Resources = new(Database.Factory);
         Groups = new(Database.Factory);
         Storage = new(this);
+        Mutations = new(Database.Factory);
         Project = BeBoosted.Domain.Projects.Project.Create("Schoolwork", "#5B8DEF", Now);
         Project.RelocateTo(Storage.ReserveFolderSegment("", "Schoolwork",
             new HashSet<string>()), Now);
@@ -64,7 +72,7 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
         Files.Add(File);
     }
 
-    /// <summary>A persisted group with a genuinely reserved folder segment.</summary>
+    /// <summary>A persisted group with a genuinely claimed folder segment.</summary>
     public ResourceGroup Group(string title = "Notes")
     {
         var siblings = Groups.GetForFile(File.Id);
@@ -87,8 +95,20 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
         var source = Path.Combine(DataDirectory, "inputs", Guid.NewGuid().ToString("N"), name);
         Directory.CreateDirectory(Path.GetDirectoryName(source)!);
         System.IO.File.WriteAllText(source, content);
-        var stored = Storage.Store(ResourceLayout.FolderFor(Project, File), name, source);
-        var resource = Resource.CreateStored(File.Id, ResourceKind.Document, name, name, stored, Now);
+
+        // The id is minted first and the name routed through ResourceLayout.FileNameFor,
+        // exactly as ProjectService.ImportFile does. Storing under the raw name is
+        // identical for "source.txt" but diverges the moment a name needs sanitizing,
+        // and a resource parked at a path the layout would never choose is one the
+        // reconciler judges misplaced on every run — a failure far from its cause.
+        var id = ResourceId.New();
+        var stored = Storage.Store(
+            ResourceLayout.FolderFor(Project, File),
+            ResourceLayout.FileNameFor(name, id.ToString()),
+            source);
+        var resource = Resource.Rehydrate(
+            id, File.Id, ResourceKind.Document, name, null, null, name, stored,
+            Now, ResourceIndexState.Pending, Now, null);
         resource.MarkIndexed(Now);
         Resources.Add(resource);
         Resources.SetIndexText(resource.Id, content);

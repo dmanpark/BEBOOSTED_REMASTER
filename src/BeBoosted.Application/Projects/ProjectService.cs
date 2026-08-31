@@ -243,7 +243,8 @@ public sealed class ProjectService(
         var resource = Resource.Rehydrate(
             id, fileId, kind,
             string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(originalName) : title.Trim(),
-            null, null, originalName, storedPath, clock.Now, ResourceIndexState.Pending, clock.Now);
+            null, null, originalName, storedPath, clock.Now, ResourceIndexState.Pending, clock.Now,
+            groupId: null); // A newly imported resource arrives loose in the File.
         return AddAndIndex(resource);
     }
 
