@@ -518,10 +518,20 @@ public sealed class ProjectService(
         // the reconcile that runs once the Project is claimed relocates it. Guarding here
         // would mean refusing the import outright, which is a worse answer than storing it
         // somewhere findable.
+        //
+        // The File's group folders go with it, for the same reason the reconciler passes
+        // them: an import arrives loose, and a loose document must never be handed a folder
+        // name a group has claimed. Store's own disk probe cannot cover this — the group's
+        // directory is missing exactly when it matters, straight after a parent rename or
+        // while the group is still empty — and an import that took the name would leave the
+        // group unable to create its directory ever again. Under the unclaimed parent above
+        // there is normally nothing to name — CreateGroup refuses beneath one — so this
+        // costs that path a query and changes nothing about it.
         var storedPath = storage.Store(
             ResourceLayout.FolderFor(project, file),
             ResourceLayout.FileNameFor(originalName, id.ToString()),
-            sourcePath);
+            sourcePath,
+            ResourceLayout.ClaimedFolders(project, file, groups.GetForFile(fileId)));
         var resource = Resource.Rehydrate(
             id, fileId, kind,
             string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(originalName) : title.Trim(),

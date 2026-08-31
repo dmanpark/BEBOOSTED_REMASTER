@@ -61,20 +61,31 @@ public sealed class ResourceLayoutReconciler(
             Dictionary<ResourceGroupId, ResourceGroup>? fileGroups = null;
             IReadOnlySet<string>? directoryClaims = null;
 
-            // Loaded on first need, from inside the per-resource try below. Lazily,
-            // because a File that never resolves a membership and never reaches the
-            // adoption path skips the query entirely — note adoption needs the claims for
-            // loose resources too, so "all loose" alone does not mean "never queried".
-            // And from inside the try, because this class's contract is per-resource
+            // Loaded on first need and cached for the File, from inside the per-resource try
+            // below. From inside the try because this class's contract is per-resource
             // recovery — an eager load at File scope turns one repository fault into an
-            // abort of every remaining File and Project.
+            // abort of every remaining File and Project. Cached because every resource with
+            // bytes now needs the claims below, so an uncached read would be one query per
+            // resource rather than one per File.
             Dictionary<ResourceGroupId, ResourceGroup> Groups()
                 => fileGroups ??= groups.GetForFile(file.Id).ToDictionary(g => g.Id);
 
-            // The directories this File's groups have reserved. A loose resource's desired
-            // name can be one of them, in which case its bytes were parked at the numbered
-            // candidate beside it — and FindUnrecordedPlacement, probing with a file-only
-            // Exists, would read the directory as "nothing here" and stop one slot short.
+            // The folders this File's groups have claimed. Read for every resource that has
+            // bytes, loose ones included, because it answers two questions and the second
+            // has nothing to do with grouping:
+            //
+            //  - Adoption. A loose resource's desired name can be one of these, in which case
+            //    its bytes were parked at the numbered candidate beside it — and
+            //    FindUnrecordedPlacement, probing with a file-only Exists, would read the
+            //    directory as "nothing here" and stop one slot short.
+            //  - Placement. A claimed folder name is never available to a file, so the mover
+            //    must be told the names before it hands one out, and IsAlreadyPlaced must be
+            //    told them before it blesses a file already sitting on one. Neither can be
+            //    left to the disk: after a rename the destination folders do not exist yet,
+            //    and an empty group has no member to create one.
+            //
+            // A fault here therefore skips the resource rather than placing it — the only
+            // safe reading of "I cannot tell which names are spoken for" is to touch nothing.
             //
             // Narrow on purpose: this is a list of names, not a directory check. It covers
             // only directories the File's *group rows* claim. It does not cover a directory
@@ -83,9 +94,7 @@ public sealed class ResourceLayoutReconciler(
             // those still end a probe short. Widening it means reading the disk, which is
             // what keeps Exists file-only and out of the business of adopting folders.
             IReadOnlySet<string> DirectoryClaims()
-                => directoryClaims ??= Groups().Values.Where(g => g.FolderSegment.Length > 0)
-                    .Select(g => ResourceLayout.FolderFor(project, file, g))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                => directoryClaims ??= ResourceLayout.ClaimedFolders(project, file, Groups().Values);
 
             var fileResources = resources.GetForFile(file.Id);
             foreach (var resource in fileResources)
@@ -115,22 +124,26 @@ public sealed class ResourceLayoutReconciler(
                         }
                     }
 
+                    // Read before anything is judged or moved, so a group-read fault lands
+                    // in the catch below with nothing done rather than after a placement
+                    // made without knowing which names were spoken for.
+                    var claims = DirectoryClaims();
                     var folder = ResourceLayout.FolderFor(project, file, group);
                     var desired = ResourceLayout.FileNameFor(
                         resource.OriginalFileName, resource.Id.ToString());
-                    if (ResourceLayout.IsAlreadyPlaced(current, folder, desired))
+                    if (ResourceLayout.IsAlreadyPlaced(current, folder, desired, claims))
                     {
                         continue;
                     }
 
-                    var relocated = storage.MoveInto(current, folder, desired);
+                    var relocated = storage.MoveInto(current, folder, desired, claims);
                     if (relocated is null && !storage.Exists(current))
                     {
                         // The bytes are gone from the recorded path. A move that was
                         // completed but never recorded left them at the desired
                         // location — adopt that file rather than stranding it, but
                         // never a slot another resource's recorded path claims.
-                        relocated = FindUnrecordedPlacement(folder, desired, claimed, DirectoryClaims());
+                        relocated = FindUnrecordedPlacement(folder, desired, claimed, claims);
                     }
 
                     if (relocated is null)

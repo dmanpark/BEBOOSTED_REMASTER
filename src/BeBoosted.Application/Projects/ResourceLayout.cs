@@ -77,6 +77,32 @@ public static partial class ResourceLayout
             : Path.Combine(project.FolderSegment, file.FolderSegment, group.FolderSegment);
 
     /// <summary>
+    /// The folder paths <paramref name="groups"/> have claimed inside
+    /// <paramref name="file"/> — each relative to the resources root, exactly as
+    /// <see cref="FolderFor(Project, ProjectFile, ResourceGroup?)"/> renders it, and
+    /// compared <c>OrdinalIgnoreCase</c> to match every other segment comparison here.
+    ///
+    /// This is the set that makes a group's folder name unavailable to a *file*. The claim
+    /// lives on the group row, so it holds whether or not the directory currently exists on
+    /// disk — which is the whole point. A directory check alone protects nothing in the two
+    /// moments that matter: straight after a parent rename, when the destination folders do
+    /// not exist yet, and for an empty group, whose members cannot create the directory
+    /// first. Hand a loose file a group's folder path in either moment and the group is
+    /// split for good: <c>Directory.CreateDirectory</c> throws onto the file, the move
+    /// returns null, and every member is skipped silently on this and every later reconcile.
+    ///
+    /// A group still holding the empty sentinel claims nothing. Combining it would name the
+    /// File's own folder — <c>Path.Combine</c> swallows an empty part — and forbid every
+    /// loose file in the File from being placed at all.
+    /// </summary>
+    public static IReadOnlySet<string> ClaimedFolders(
+        Project project, ProjectFile file, IEnumerable<ResourceGroup> groups)
+        => groups
+            .Where(group => group.FolderSegment.Length > 0)
+            .Select(group => FolderFor(project, file, group))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// The user's own file name, made safe. The extension is protected from the length
     /// cap and from sanitizing so a document stays openable by its type.
     /// </summary>
@@ -107,8 +133,32 @@ public static partial class ResourceLayout
     /// counts as placed, so a resource that had to be disambiguated once is not shuffled
     /// on every later reconcile.
     /// </summary>
-    public static bool IsAlreadyPlaced(string storedPath, string desiredFolder, string desiredFileName)
+    /// <param name="claimedFolders">
+    /// Folder paths a group of this File has claimed, from
+    /// <see cref="ClaimedFolders"/>. A file sitting at one of them is never placed, however
+    /// well it matches — this is the recovery half of the claim rule, and without it a
+    /// stranded state can only be prevented, never healed. A loose file that reached
+    /// <c>&lt;file&gt;/Notes</c> while <c>Notes</c> is a group's segment wants exactly that
+    /// folder and exactly that name, so the plain comparison below blesses it, it is never
+    /// moved, and the group's directory can never be created where a file already sits.
+    ///
+    /// Optional only because the pure-layout tests and any caller with no File in hand have
+    /// no claims to offer; null means "no claim is known", which is the pre-group answer.
+    /// The reconciler always passes the File's real set — read every call site deliberately.
+    /// </param>
+    public static bool IsAlreadyPlaced(
+        string storedPath,
+        string desiredFolder,
+        string desiredFileName,
+        IReadOnlySet<string>? claimedFolders = null)
     {
+        // First, and independent of what this resource wants: a path a group claims as its
+        // directory is not a place a file belongs, so no comparison below can rescue it.
+        if (claimedFolders is not null && claimedFolders.Contains(storedPath))
+        {
+            return false;
+        }
+
         var folder = Path.GetDirectoryName(storedPath) ?? string.Empty;
         if (!string.Equals(folder, desiredFolder, StringComparison.OrdinalIgnoreCase))
         {

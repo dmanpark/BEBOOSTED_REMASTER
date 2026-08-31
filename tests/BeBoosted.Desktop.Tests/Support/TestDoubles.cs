@@ -492,21 +492,25 @@ public sealed class FakeResourceStorage : IResourceStorage
     private readonly HashSet<string> _stored = [];
     private readonly HashSet<string> _folders = [];
 
-    public string Store(string relativeFolder, string preferredFileName, string sourcePath)
+    public string Store(
+        string relativeFolder, string preferredFileName, string sourcePath,
+        IReadOnlySet<string> claimedFolders)
     {
-        var storedPath = FreePath(relativeFolder, preferredFileName);
+        var storedPath = FreePath(relativeFolder, preferredFileName, claimedFolders);
         _stored.Add(storedPath);
         return storedPath;
     }
 
-    public string? MoveInto(string currentStoredPath, string relativeFolder, string preferredFileName)
+    public string? MoveInto(
+        string currentStoredPath, string relativeFolder, string preferredFileName,
+        IReadOnlySet<string> claimedFolders)
     {
         if (!_stored.Remove(currentStoredPath))
         {
             return null;
         }
 
-        var storedPath = FreePath(relativeFolder, preferredFileName);
+        var storedPath = FreePath(relativeFolder, preferredFileName, claimedFolders);
         _stored.Add(storedPath);
         return storedPath;
     }
@@ -548,7 +552,13 @@ public sealed class FakeResourceStorage : IResourceStorage
         }
     }
 
-    private string FreePath(string relativeFolder, string preferredFileName)
+    /// <summary>
+    /// Matches LocalResourceStorage: a folder a group has claimed is taken even when
+    /// nothing occupies it — <c>_folders</c> is this fake's disk, and
+    /// <paramref name="claimedFolders"/> covers the claims that have no directory yet.
+    /// </summary>
+    private string FreePath(
+        string relativeFolder, string preferredFileName, IReadOnlySet<string> claimedFolders)
     {
         var stem = Path.GetFileNameWithoutExtension(preferredFileName);
         var extension = Path.GetExtension(preferredFileName);
@@ -556,7 +566,8 @@ public sealed class FakeResourceStorage : IResourceStorage
         {
             var candidate = attempt == 1 ? preferredFileName : $"{stem} ({attempt}){extension}";
             var storedPath = Path.Combine(relativeFolder, candidate);
-            if (!_stored.Contains(storedPath))
+            if (!_stored.Contains(storedPath) && !_folders.Contains(storedPath)
+                && !claimedFolders.Contains(storedPath))
             {
                 return storedPath;
             }

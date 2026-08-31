@@ -25,6 +25,14 @@ public sealed class LocalResourceStorageTests : IDisposable
         public string ResourcesDirectory => Path.Combine(DataDirectory, "resources");
     }
 
+    /// <summary>
+    /// "No group has claimed a folder here" — the honest answer for every test below that is
+    /// not about the claim rule. Spelled out rather than defaulted, because a placement made
+    /// without the claims is exactly the bug the parameter exists to prevent.
+    /// </summary>
+    private static readonly IReadOnlySet<string> NoClaims =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     private readonly TestPaths _paths = new();
     private readonly LocalResourceStorage _storage;
 
@@ -42,7 +50,7 @@ public sealed class LocalResourceStorageTests : IDisposable
     {
         var folder = Path.Combine("College", "Metric Proof");
 
-        var stored = _storage.Store(folder, "Transcript.pdf", CreateSource("src.pdf"));
+        var stored = _storage.Store(folder, "Transcript.pdf", CreateSource("src.pdf"), NoClaims);
 
         Assert.Equal(Path.Combine(folder, "Transcript.pdf"), stored);
         Assert.True(_storage.Exists(stored));
@@ -69,15 +77,15 @@ public sealed class LocalResourceStorageTests : IDisposable
         Assert.False(_storage.Exists(escaped));
         _storage.Delete(escaped);
         Assert.True(File.Exists(probe));
-        Assert.Null(_storage.MoveInto(escaped, "College", "probe.txt"));
+        Assert.Null(_storage.MoveInto(escaped, "College", "probe.txt", NoClaims));
     }
 
     [Fact]
     public void Store_DisambiguatesACollision()
     {
         const string folder = "College";
-        var first = _storage.Store(folder, "Transcript.pdf", CreateSource("a.pdf", "first"));
-        var second = _storage.Store(folder, "Transcript.pdf", CreateSource("b.pdf", "second"));
+        var first = _storage.Store(folder, "Transcript.pdf", CreateSource("a.pdf", "first"), NoClaims);
+        var second = _storage.Store(folder, "Transcript.pdf", CreateSource("b.pdf", "second"), NoClaims);
 
         Assert.Equal(Path.Combine(folder, "Transcript.pdf"), first);
         Assert.Equal(Path.Combine(folder, "Transcript (2).pdf"), second);
@@ -88,15 +96,16 @@ public sealed class LocalResourceStorageTests : IDisposable
     [Fact]
     public void Store_RejectsAMissingSource()
         => Assert.Throws<DomainException>(
-            () => _storage.Store("College", "x.pdf", Path.Combine(_paths.DataDirectory, "nope.pdf")));
+            () => _storage.Store(
+                "College", "x.pdf", Path.Combine(_paths.DataDirectory, "nope.pdf"), NoClaims));
 
     [Fact]
     public void MoveInto_RelocatesBytes_AndReturnsTheNewPath()
     {
-        var original = _storage.Store(string.Empty, "guid.pdf", CreateSource("src.pdf", "payload"));
+        var original = _storage.Store(string.Empty, "guid.pdf", CreateSource("src.pdf", "payload"), NoClaims);
         var folder = Path.Combine("College", "Metric Proof");
 
-        var moved = _storage.MoveInto(original, folder, "Transcript.pdf");
+        var moved = _storage.MoveInto(original, folder, "Transcript.pdf", NoClaims);
 
         Assert.Equal(Path.Combine(folder, "Transcript.pdf"), moved);
         Assert.False(_storage.Exists(original));
@@ -107,10 +116,10 @@ public sealed class LocalResourceStorageTests : IDisposable
     public void MoveInto_DisambiguatesAgainstAnExistingFile()
     {
         const string folder = "College";
-        _storage.Store(folder, "Transcript.pdf", CreateSource("a.pdf", "first"));
-        var other = _storage.Store(string.Empty, "guid.pdf", CreateSource("b.pdf", "second"));
+        _storage.Store(folder, "Transcript.pdf", CreateSource("a.pdf", "first"), NoClaims);
+        var other = _storage.Store(string.Empty, "guid.pdf", CreateSource("b.pdf", "second"), NoClaims);
 
-        var moved = _storage.MoveInto(other, folder, "Transcript.pdf");
+        var moved = _storage.MoveInto(other, folder, "Transcript.pdf", NoClaims);
 
         Assert.Equal(Path.Combine(folder, "Transcript (2).pdf"), moved);
         Assert.Equal("second", File.ReadAllText(_storage.ResolvePath(moved!)));
@@ -118,7 +127,7 @@ public sealed class LocalResourceStorageTests : IDisposable
 
     [Fact]
     public void MoveInto_ReturnsNullWhenTheSourceIsGone()
-        => Assert.Null(_storage.MoveInto("missing.pdf", "College", "Transcript.pdf"));
+        => Assert.Null(_storage.MoveInto("missing.pdf", "College", "Transcript.pdf", NoClaims));
 
     /// <summary>A file occupying the candidate name must not be handed out as a folder segment.</summary>
     [Fact]
@@ -143,10 +152,63 @@ public sealed class LocalResourceStorageTests : IDisposable
         const string folder = "College";
         Directory.CreateDirectory(_storage.ResolvePath(Path.Combine(folder, "Notes")));
 
-        var stored = _storage.Store(folder, "Notes", CreateSource("src.notes"));
+        var stored = _storage.Store(folder, "Notes", CreateSource("src.notes"), NoClaims);
 
         Assert.Equal(Path.Combine(folder, "Notes (2)"), stored);
         Assert.True(File.Exists(_storage.ResolvePath(stored)));
+    }
+
+    /// <summary>
+    /// The claim, not the disk. Nothing occupies the path — this is the state straight after
+    /// a parent rename, and the permanent state of an empty group — and the name must still
+    /// be unavailable to a file. A disk-only check hands it over, and the group can then
+    /// never create its directory: every member's move throws onto the file and returns null.
+    ///
+    /// Both directions are pinned, because a claim that is never consulted and a claim that
+    /// swallows every name are equally wrong: "Transcript.pdf" is a sibling, not the claim,
+    /// and must still be handed out.
+    /// </summary>
+    [Fact]
+    public void StoreAndMoveInto_SkipAClaimedFolderName_ThatNothingOccupiesOnDisk()
+    {
+        const string folder = "College";
+        var claims = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(folder, "Notes"),
+        };
+        Assert.False(Directory.Exists(_storage.ResolvePath(Path.Combine(folder, "Notes"))));
+
+        var stored = _storage.Store(folder, "Notes", CreateSource("a.notes", "first"), claims);
+        Assert.Equal(Path.Combine(folder, "Notes (2)"), stored);
+
+        var loose = _storage.Store(string.Empty, "guid.notes", CreateSource("b.notes", "second"), claims);
+        var moved = _storage.MoveInto(loose, folder, "Notes", claims);
+        Assert.Equal(Path.Combine(folder, "Notes (3)"), moved);
+        Assert.Equal("second", File.ReadAllText(_storage.ResolvePath(moved!)));
+
+        // The claim covers one name, not the folder: an unclaimed sibling still lands first.
+        Assert.Equal(
+            Path.Combine(folder, "Transcript.pdf"),
+            _storage.Store(folder, "Transcript.pdf", CreateSource("c.pdf"), claims));
+    }
+
+    /// <summary>
+    /// The claim is matched case-insensitively. Windows would catch "notes" against a real
+    /// "Notes" directory by luck of the filesystem, but this app also publishes osx-arm64,
+    /// where only the comparer stands between a loose file and a group's folder.
+    /// </summary>
+    [Fact]
+    public void Store_SkipsAClaimedFolderName_WhateverItsCase()
+    {
+        const string folder = "College";
+        var claims = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(folder, "NOTES"),
+        };
+
+        Assert.Equal(
+            Path.Combine(folder, "Notes (2)"),
+            _storage.Store(folder, "Notes", CreateSource("src.notes"), claims));
     }
 
     /// <summary>Reserving a folder segment IS the claim: the directory must exist afterward.</summary>
@@ -251,7 +313,7 @@ public sealed class LocalResourceStorageTests : IDisposable
             !OperatingSystem.IsWindows(),
             "A read-only file is deletable on POSIX; unlink permission comes from the directory.");
 
-        var stored = _storage.Store("Notes", "Locked.pdf", CreateSource("Locked.pdf"));
+        var stored = _storage.Store("Notes", "Locked.pdf", CreateSource("Locked.pdf"), NoClaims);
         var absolute = _storage.ResolvePath(stored);
         File.SetAttributes(absolute, FileAttributes.ReadOnly);
 

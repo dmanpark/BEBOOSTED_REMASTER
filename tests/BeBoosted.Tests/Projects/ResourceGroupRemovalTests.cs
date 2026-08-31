@@ -41,11 +41,15 @@ public sealed class ResourceGroupRemovalTests
     private sealed class RefusingGroupDeleteStorage(IResourceStorage inner, string refused)
         : IResourceStorage
     {
-        public string Store(string relativeFolder, string preferredFileName, string sourcePath)
-            => inner.Store(relativeFolder, preferredFileName, sourcePath);
+        public string Store(
+            string relativeFolder, string preferredFileName, string sourcePath,
+            IReadOnlySet<string> claimedFolders)
+            => inner.Store(relativeFolder, preferredFileName, sourcePath, claimedFolders);
 
-        public string? MoveInto(string currentStoredPath, string relativeFolder, string preferredFileName)
-            => inner.MoveInto(currentStoredPath, relativeFolder, preferredFileName);
+        public string? MoveInto(
+            string currentStoredPath, string relativeFolder, string preferredFileName,
+            IReadOnlySet<string> claimedFolders)
+            => inner.MoveInto(currentStoredPath, relativeFolder, preferredFileName, claimedFolders);
 
         public string ReserveFolderSegment(
             string relativeParent, string preferredSegment, IReadOnlySet<string> claimed,

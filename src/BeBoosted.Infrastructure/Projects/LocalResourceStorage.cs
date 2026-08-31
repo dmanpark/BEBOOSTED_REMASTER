@@ -12,21 +12,29 @@ namespace BeBoosted.Infrastructure.Projects;
 /// </summary>
 public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
 {
-    public string Store(string relativeFolder, string preferredFileName, string sourcePath)
+    public string Store(
+        string relativeFolder,
+        string preferredFileName,
+        string sourcePath,
+        IReadOnlySet<string> claimedFolders)
     {
         if (!File.Exists(sourcePath))
         {
             throw new DomainException($"The file '{sourcePath}' could not be found.");
         }
 
-        var storedPath = ReserveFreePath(relativeFolder, preferredFileName);
+        var storedPath = ReserveFreePath(relativeFolder, preferredFileName, claimedFolders);
         var destination = ResolvePath(storedPath);
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         File.Copy(sourcePath, destination);
         return storedPath;
     }
 
-    public string? MoveInto(string currentStoredPath, string relativeFolder, string preferredFileName)
+    public string? MoveInto(
+        string currentStoredPath,
+        string relativeFolder,
+        string preferredFileName,
+        IReadOnlySet<string> claimedFolders)
     {
         string source;
         try
@@ -44,7 +52,7 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
             return null;
         }
 
-        var storedPath = ReserveFreePath(relativeFolder, preferredFileName);
+        var storedPath = ReserveFreePath(relativeFolder, preferredFileName, claimedFolders);
         var destination = ResolvePath(storedPath);
         try
         {
@@ -175,8 +183,23 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
         }
     }
 
-    /// <summary>First free name in the folder: "report.pdf", then "report (2).pdf", …</summary>
-    private string ReserveFreePath(string relativeFolder, string preferredFileName)
+    /// <summary>
+    /// First free name in the folder: "report.pdf", then "report (2).pdf", …
+    ///
+    /// Two independent reasons a candidate is taken, and they answer different moments.
+    /// Anything occupying the path on disk — a file OR a directory — is taken, which is
+    /// what stops a document being copied onto a group's existing folder. And any path in
+    /// <paramref name="claimedFolders"/> is taken even when the disk is empty there, which
+    /// is what stops one being handed a group's folder name in the two moments the disk
+    /// cannot speak for it: straight after a parent rename, before the destination
+    /// directories exist, and for an empty group, whose members cannot create the directory
+    /// first. See <see cref="IResourceStorage.MoveInto"/> for what a lost claim costs.
+    ///
+    /// The claim is tested before <see cref="ResolvePath"/> so a claimed name is skipped on
+    /// its own terms, without depending on the path resolving.
+    /// </summary>
+    private string ReserveFreePath(
+        string relativeFolder, string preferredFileName, IReadOnlySet<string> claimedFolders)
     {
         var stem = Path.GetFileNameWithoutExtension(preferredFileName);
         var extension = Path.GetExtension(preferredFileName);
@@ -186,6 +209,11 @@ public sealed class LocalResourceStorage(IAppDataPaths paths) : IResourceStorage
                 ? preferredFileName
                 : string.Create(CultureInfo.InvariantCulture, $"{stem} ({attempt}){extension}");
             var storedPath = Path.Combine(relativeFolder, candidate);
+            if (claimedFolders.Contains(storedPath))
+            {
+                continue;
+            }
+
             var absolute = ResolvePath(storedPath);
             if (!File.Exists(absolute) && !Directory.Exists(absolute))
             {

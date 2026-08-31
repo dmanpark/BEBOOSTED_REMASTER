@@ -34,11 +34,17 @@ public sealed class ResourceGroupServiceTests
 
         public bool RefuseMoves { get; set; }
 
-        public string Store(string relativeFolder, string preferredFileName, string sourcePath)
-            => inner.Store(relativeFolder, preferredFileName, sourcePath);
+        public string Store(
+            string relativeFolder, string preferredFileName, string sourcePath,
+            IReadOnlySet<string> claimedFolders)
+            => inner.Store(relativeFolder, preferredFileName, sourcePath, claimedFolders);
 
-        public string? MoveInto(string currentStoredPath, string relativeFolder, string preferredFileName)
-            => RefuseMoves ? null : inner.MoveInto(currentStoredPath, relativeFolder, preferredFileName);
+        public string? MoveInto(
+            string currentStoredPath, string relativeFolder, string preferredFileName,
+            IReadOnlySet<string> claimedFolders)
+            => RefuseMoves
+                ? null
+                : inner.MoveInto(currentStoredPath, relativeFolder, preferredFileName, claimedFolders);
 
         public string ReserveFolderSegment(
             string relativeParent, string preferredSegment, IReadOnlySet<string> claimed, string? ownedSegment = null)

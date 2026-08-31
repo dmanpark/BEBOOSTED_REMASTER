@@ -149,11 +149,15 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
         // identical for "source.txt" but diverges the moment a name needs sanitizing,
         // and a resource parked at a path the layout would never choose is one the
         // reconciler judges misplaced on every run — a failure far from its cause.
+        // The claimed folders go in for the same reason ImportFile passes them: a loose
+        // document must never be handed a folder name one of this File's groups has claimed,
+        // and the claim holds whether or not that directory exists yet.
         var id = ResourceId.New();
         var stored = Storage.Store(
             ResourceLayout.FolderFor(Project, File),
             ResourceLayout.FileNameFor(name, id.ToString()),
-            source);
+            source,
+            ResourceLayout.ClaimedFolders(Project, File, Groups.GetForFile(File.Id)));
         var resource = Resource.Rehydrate(
             id, File.Id, ResourceKind.Document, name, null, null, name, stored,
             Now, ResourceIndexState.Pending, Now, null);

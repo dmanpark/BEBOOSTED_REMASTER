@@ -12,7 +12,12 @@ public interface IResourceStorage
     /// <paramref name="preferredFileName"/>, disambiguating on collision. Returns the
     /// stored path actually used, relative to the resources root.
     /// </summary>
-    string Store(string relativeFolder, string preferredFileName, string sourcePath);
+    /// <param name="claimedFolders">See <see cref="MoveInto"/>; the rule is identical.</param>
+    string Store(
+        string relativeFolder,
+        string preferredFileName,
+        string sourcePath,
+        IReadOnlySet<string> claimedFolders);
 
     /// <summary>
     /// Moves an already-stored file into <paramref name="relativeFolder"/> under
@@ -20,7 +25,32 @@ public interface IResourceStorage
     /// null when the move could not be performed — a locked or missing file leaves the
     /// resource exactly where it was.
     /// </summary>
-    string? MoveInto(string currentStoredPath, string relativeFolder, string preferredFileName);
+    /// <param name="claimedFolders">
+    /// Stored paths — relative to the resources root, as
+    /// <c>ResourceLayout.ClaimedFolders</c> renders them — that the destination File's
+    /// groups have claimed as their directories. A candidate equal to one of these is never
+    /// handed out, **whether or not anything currently occupies it on disk**. That is the
+    /// whole difference between this and the disk probe beside it: after a parent rename the
+    /// destination directories do not exist yet, and an empty group has no members to create
+    /// one, so the disk has nothing to say in exactly the two moments a loose file could
+    /// take a group's folder name. When it does, the group is split permanently —
+    /// <c>Directory.CreateDirectory</c> throws onto the file, the member's move returns null,
+    /// and every member is skipped silently on this and every later reconcile.
+    ///
+    /// Required rather than defaulted, and never inferred here: only the caller can see the
+    /// File whose groups these are. Pass an empty set to mean "nothing is claimed", and mean
+    /// it. The set is expected to compare <c>OrdinalIgnoreCase</c>, as
+    /// <c>ResourceLayout.ClaimedFolders</c> builds it — this app also publishes osx-arm64,
+    /// where an ordinal set would hand out "Notes" beside a group's "notes".
+    ///
+    /// This is prevention only. Nothing here moves a file already sitting at a claimed path;
+    /// <c>ResourceLayout.IsAlreadyPlaced</c> is the half that heals that.
+    /// </param>
+    string? MoveInto(
+        string currentStoredPath,
+        string relativeFolder,
+        string preferredFileName,
+        IReadOnlySet<string> claimedFolders);
 
     /// <summary>
     /// Reserves a folder name inside <paramref name="relativeParent"/>, disambiguating on

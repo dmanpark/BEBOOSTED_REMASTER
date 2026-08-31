@@ -77,13 +77,17 @@ public sealed class FileDetailViewModelTests
     {
         private readonly FakeResourceStorage _inner = new();
 
-        public string Store(string relativeFolder, string preferredFileName, string sourcePath)
+        public string Store(
+            string relativeFolder, string preferredFileName, string sourcePath,
+            IReadOnlySet<string> claimedFolders)
             => Path.GetFileName(sourcePath) == failingSourceName
                 ? throw new IOException("disk full")
-                : _inner.Store(relativeFolder, preferredFileName, sourcePath);
+                : _inner.Store(relativeFolder, preferredFileName, sourcePath, claimedFolders);
 
-        public string? MoveInto(string currentStoredPath, string relativeFolder, string preferredFileName)
-            => _inner.MoveInto(currentStoredPath, relativeFolder, preferredFileName);
+        public string? MoveInto(
+            string currentStoredPath, string relativeFolder, string preferredFileName,
+            IReadOnlySet<string> claimedFolders)
+            => _inner.MoveInto(currentStoredPath, relativeFolder, preferredFileName, claimedFolders);
 
         public string ResolvePath(string storedPath) => _inner.ResolvePath(storedPath);
 
