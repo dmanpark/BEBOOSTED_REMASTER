@@ -35,8 +35,42 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         Refresh();
     }
 
+    /// <summary>
+    /// True while <see cref="Refresh"/> is swapping the three collections. Replacing a
+    /// collection makes the ListBox bound to it clear its own SelectedItem, so a burst of
+    /// selection callbacks arrives mid-rebuild carrying nothing but the fact that the list
+    /// is momentarily empty. The selection restored at the end of the refresh is the only
+    /// one that means anything, so the delegating setters ignore writes until then.
+    /// </summary>
+    private bool _refreshingGroups;
+
+    /// <summary>
+    /// Selects a resource by id — the search/citation path, which may land on a row inside
+    /// a collapsed group. Opening that group is part of the job: a reading pane showing a
+    /// row the user cannot see in any list is worse than not navigating at all.
+    /// </summary>
     public void SelectResource(Domain.ResourceId resourceId)
-        => Selected = Resources.FirstOrDefault(r => r.Resource.Id == resourceId) ?? Selected;
+    {
+        if (_refreshingGroups)
+        {
+            return;
+        }
+
+        if (Resources.FirstOrDefault(r => r.Resource.Id == resourceId) is not { } row)
+        {
+            return;
+        }
+
+        foreach (var group in Groups)
+        {
+            if (group.Resources.Contains(row))
+            {
+                group.IsExpanded = true;
+            }
+        }
+
+        Selected = row;
+    }
 
     public Project Project { get; }
 
@@ -50,9 +84,160 @@ public sealed partial class FileDetailViewModel : ViewModelBase
 
     public IBrush AccentBrush => ProjectsViewModel.BrushFor(Project.AccentColor);
 
+    /// <summary>
+    /// Every resource in this File, grouped or not — the canonical index. The count, the
+    /// deletion prompt and selection by id all read it, and <see cref="Groups"/> and
+    /// <see cref="LooseResources"/> project the very same row instances out of it.
+    /// </summary>
     public ObservableCollection<ResourceRowViewModel> Resources { get; } = [];
 
+    public ObservableCollection<ResourceGroupViewModel> Groups { get; } = [];
+
+    /// <summary>The rows no group holds. Shares its instances with <see cref="Resources"/>.</summary>
+    public ObservableCollection<ResourceRowViewModel> LooseResources { get; } = [];
+
     public bool HasResources => Resources.Count > 0;
+
+    public bool HasGroups => Groups.Count != 0;
+
+    public bool HasLooseResources => LooseResources.Count != 0;
+
+    public bool ShowEmptyState => !HasGroups && !HasResources;
+
+    public bool ShowLooseHeader => HasGroups && HasLooseResources;
+
+    // New-group flyout
+    [ObservableProperty]
+    public partial string NewGroupTitle { get; set; } = string.Empty;
+
+    /// <summary>Why the last group action did nothing; null when it worked.</summary>
+    [ObservableProperty]
+    public partial string? GroupNotice { get; private set; }
+
+    /// <summary>
+    /// The presentation boundary for every group mutation. A throw is a failure and is
+    /// reported as one: the notice says why, the collections are left exactly as they
+    /// were, and nothing is rebuilt around a change that did not land. Only a mutation
+    /// that returned refreshes.
+    /// </summary>
+    private bool TryGroupMutation(Action mutation)
+    {
+        GroupNotice = null;
+        try
+        {
+            mutation();
+        }
+        catch (Exception error)
+        {
+            GroupNotice = error.Message;
+            return false;
+        }
+
+        Refresh();
+        return true;
+    }
+
+    /// <summary>Returns true when the group was created (the view closes its flyout).</summary>
+    public bool TryCreateGroup()
+    {
+        if (!TryGroupMutation(() => _service.CreateGroup(File.Id, NewGroupTitle)))
+        {
+            // The typed text stays: a refused title is one the user still has to fix.
+            return false;
+        }
+
+        NewGroupTitle = string.Empty;
+        return true;
+    }
+
+    internal bool TryRenameGroup(Domain.ResourceGroupId id, string title)
+        => TryGroupMutation(() => _service.RenameGroup(id, title));
+
+    internal bool TryUngroup(Domain.ResourceGroupId id)
+        => TryGroupMutation(() => _service.UngroupGroup(id));
+
+    /// <summary>
+    /// Files a resource into a group, or back out to loose. The moved row is reselected by
+    /// id afterwards, because the refresh has just replaced the instance the caller held
+    /// and the reading pane should still be showing the resource the user just filed.
+    /// </summary>
+    internal bool TryMoveResource(Domain.ResourceId id, Domain.ResourceGroupId? groupId)
+    {
+        if (!TryGroupMutation(() => _service.MoveResourceToGroup(id, groupId)))
+        {
+            return false;
+        }
+
+        SelectResource(id);
+        return true;
+    }
+
+    /// <summary>
+    /// Where this row may be filed: every group that is not the one already holding it,
+    /// plus the File itself when it is in a group at all. Offering the current container
+    /// would be a no-op dressed up as a choice.
+    /// </summary>
+    internal IReadOnlyList<ResourceMoveTargetViewModel> MoveTargetsFor(ResourceRowViewModel row)
+    {
+        var targets = Groups
+            .Where(group => group.Id != row.Resource.GroupId)
+            .Select(group => new ResourceMoveTargetViewModel(this, row.Resource.Id, group.Id, group.Title))
+            .ToList();
+        if (row.Resource.GroupId is not null)
+        {
+            targets.Add(new ResourceMoveTargetViewModel(
+                this, row.Resource.Id, null, "loose in this File"));
+        }
+
+        return targets;
+    }
+
+    /// <summary>
+    /// Deleting a group destroys the documents in it, bytes included, so it asks first and
+    /// counts what goes — the same two-step prompt a File deletion uses, through the same
+    /// pending-action slot. Ungroup, which destroys nothing, deliberately asks nothing.
+    /// </summary>
+    internal void RequestDeleteGroup(ResourceGroupViewModel group)
+    {
+        var count = group.Count;
+        Confirmation = new ConfirmationPrompt(
+            $"Delete '{group.Title}'? Its {count} resource{(count == 1 ? string.Empty : "s")} "
+                + "and any stored files are deleted too.",
+            "Delete group",
+            IsTaskDeletion: false);
+        _pendingConfirmedAction = () => TryGroupMutation(() => _service.DeleteGroup(group.Id));
+    }
+
+    /// <summary>
+    /// The loose list's view of the one canonical selection, and the mirror of
+    /// <see cref="ResourceGroupViewModel.SelectedResource"/>. It reports the selection only
+    /// while it holds it, and refuses a null write: several ListBoxes bind to the same
+    /// selection, and each one that does not hold it clears its own SelectedItem — which
+    /// would otherwise wipe the reading pane the instant another list won the click.
+    /// </summary>
+    public ResourceRowViewModel? LooseSelectedResource
+    {
+        get => Selected is { } row && LooseResources.Contains(row) ? row : null;
+        set
+        {
+            if (!_refreshingGroups && value is not null)
+            {
+                Selected = value;
+            }
+        }
+    }
+
+    partial void OnSelectedChanged(ResourceRowViewModel? value) => NotifySelectionAcrossLists();
+
+    /// <summary>Every list re-reads whether it is the one holding the selection.</summary>
+    private void NotifySelectionAcrossLists()
+    {
+        OnPropertyChanged(nameof(LooseSelectedResource));
+        foreach (var group in Groups)
+        {
+            group.NotifySelectionChanged();
+        }
+    }
 
     public string CountText
         => $"{Resources.Count} resource{(Resources.Count == 1 ? string.Empty : "s")}";
@@ -151,19 +336,69 @@ public sealed partial class FileDetailViewModel : ViewModelBase
     public void Refresh()
     {
         var previous = Selected?.Resource.Id;
-        Resources.Clear();
-        foreach (var resource in _service.GetResources(File.Id))
+
+        // By group id, never by position: these view models are thrown away and rebuilt
+        // here, so an index would follow whatever moved into the slot instead of the group
+        // whose header the user collapsed.
+        var expansion = Groups.ToDictionary(group => group.Id, group => group.IsExpanded);
+
+        _refreshingGroups = true;
+        try
         {
-            Resources.Add(new ResourceRowViewModel(this, resource, _opener)
+            // One row per resource, created once and shared by all three collections. A
+            // second instance for the same resource would let the reading pane show
+            // something other than the row the list highlights.
+            var rows = _service.GetResources(File.Id)
+                .Select(resource => new ResourceRowViewModel(this, resource, _opener)
+                {
+                    StoredAbsolutePath = SafeResolve(resource),
+                    Derivations = _ai.GetDerivations(resource.Id),
+                })
+                .ToList();
+
+            Resources.Clear();
+            Groups.Clear();
+            LooseResources.Clear();
+
+            foreach (var row in rows)
             {
-                StoredAbsolutePath = SafeResolve(resource),
-                Derivations = _ai.GetDerivations(resource.Id),
-            });
+                Resources.Add(row);
+            }
+
+            foreach (var group in _service.GetGroups(File.Id))
+            {
+                Groups.Add(new ResourceGroupViewModel(
+                    this, group, rows.Where(row => row.Resource.GroupId == group.Id).ToList())
+                {
+                    // A group that did not exist before this refresh arrives expanded.
+                    IsExpanded = !expansion.TryGetValue(group.Id, out var wasExpanded) || wasExpanded,
+                });
+            }
+
+            foreach (var row in rows.Where(row => row.Resource.GroupId is null))
+            {
+                LooseResources.Add(row);
+            }
+
+            Selected = rows.FirstOrDefault(row => row.Resource.Id == previous) ?? rows.FirstOrDefault();
+        }
+        finally
+        {
+            _refreshingGroups = false;
         }
 
-        Selected = Resources.FirstOrDefault(r => r.Resource.Id == previous) ?? Resources.FirstOrDefault();
         OnPropertyChanged(nameof(HasResources));
         OnPropertyChanged(nameof(CountText));
+        OnPropertyChanged(nameof(HasGroups));
+        OnPropertyChanged(nameof(HasLooseResources));
+        OnPropertyChanged(nameof(ShowEmptyState));
+        OnPropertyChanged(nameof(ShowLooseHeader));
+
+        // Explicitly, not only through OnSelectedChanged: when the selected value stayed
+        // null — an empty File, or one whose last resource just went — nothing changed and
+        // no change notification is raised, yet every list underneath it was rebuilt and
+        // still has to re-read the selection it reports.
+        NotifySelectionAcrossLists();
     }
 
     /// <summary>A tampered stored path resolves to nothing rather than breaking the view.</summary>
@@ -367,6 +602,11 @@ public sealed partial class ResourceRowViewModel : ViewModelBase
             }
         }
     }
+
+    /// <summary>Where this row may be filed: every group it is not already in, plus the File.</summary>
+    public IReadOnlyList<ResourceMoveTargetViewModel> MoveTargets => _owner.MoveTargetsFor(this);
+
+    public bool HasMoveTargets => MoveTargets.Count != 0;
 
     public string? StoredAbsolutePath { get; internal set; }
 

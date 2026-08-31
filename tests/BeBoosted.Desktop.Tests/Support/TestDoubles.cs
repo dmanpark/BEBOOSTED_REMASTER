@@ -170,6 +170,20 @@ public sealed class InMemoryProjectMutations(
         => mutation(projects, files, resources, tasks, groups);
 }
 
+/// <summary>
+/// A mutations seam that refuses every unit of work, throwing before the callback runs so
+/// nothing it would have written is even attempted. SQLite's real rollback is proven in
+/// BeBoosted.Tests; what this double is for is the presentation boundary above it — a
+/// failed mutation must be reported as a failure, never optimistically refreshed around.
+/// </summary>
+public sealed class FailingProjectMutations(string message = "The database is busy.") : IProjectMutations
+{
+    public void Execute(
+        Action<IProjectRepository, IProjectFileRepository, IResourceRepository, ITaskRepository,
+            IResourceGroupRepository> mutation)
+        => throw new DomainException(message);
+}
+
 public sealed class InMemoryPlanningProposalRepository : IPlanningProposalRepository
 {
     private readonly Dictionary<PlanningProposalId, PlanningProposal> _proposals = [];
@@ -623,7 +637,8 @@ public static class TestShell
         DateOnly? today = null,
         InMemoryPrioritizationRepository? ranks = null,
         BeBoosted.Desktop.Platform.IFileRevealService? reveal = null,
-        IResourceStorage? resourceStorage = null)
+        IResourceStorage? resourceStorage = null,
+        IProjectMutations? projectMutations = null)
     {
         var settingsStore = store ?? new InMemorySettingsStore();
         var settings = new AppSettings(settingsStore);
@@ -662,7 +677,8 @@ public static class TestShell
             aiProvider, new InMemoryAiProvenanceRepository(), repository, aiPermissions, clock);
         var projectService = new ProjectService(
             projectRepo, fileRepo, resourceRepo, storage,
-            new InMemoryProjectMutations(projectRepo, fileRepo, resourceRepo, repository, groupRepo),
+            projectMutations
+                ?? new InMemoryProjectMutations(projectRepo, fileRepo, resourceRepo, repository, groupRepo),
             new FakeIndexer(resourceRepo, clock), repository, blockRepository,
             completionRepository, clock, groupRepo, aiService);
         return new ShellViewModel(
