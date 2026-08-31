@@ -16,10 +16,20 @@ public sealed class ResourceGroupLayoutTests
 {
     /// <summary>
     /// Delegates everything; <see cref="GetForFile"/> answers with whatever the test hands
-    /// it. The database's own foreign key and NOT NULL constraints make a corrupt group
-    /// read unreachable through the real repository, so the shapes the reconciler has to
-    /// defend against — a group it cannot see, one belonging to another File, one with no
-    /// claimed segment — can only be built by lying about the read.
+    /// it, which is the only way to *construct* these shapes in one step. It is not
+    /// evidence that they are unreachable, and the guards it exercises must not be pruned
+    /// as defence against nothing:
+    ///
+    /// <list type="bullet">
+    /// <item>A group the read does not return is genuinely reachable. The foreign key
+    /// requires only that the group row exist, not that it belong to this resource's File,
+    /// so a cross-File assignment is FK-legal and lands in exactly this branch.</item>
+    /// <item>An unclaimed parent needs no lying at all — it is live today, and
+    /// <see cref="Reconcile_SkipsAGroupedResource_WhenItsProjectAndFileNeverClaimedSegments"/>
+    /// builds it with real repositories.</item>
+    /// <item>Only the blank segment is genuinely blocked, by the domain's
+    /// <c>RelocateTo</c> and the repository's own refusal.</item>
+    /// </list>
     /// </summary>
     private sealed class LyingGroups(
         IResourceGroupRepository inner,
@@ -102,8 +112,8 @@ public sealed class ResourceGroupLayoutTests
         Assert.Equal("Notes (2)", group.FolderSegment);
         var one = f.Document("one.txt", "one");
         var two = f.Document("two.txt", "two");
-        f.Assign(one, group.Id);
-        f.Assign(two, group.Id);
+        f.Assign(one.Id, group.Id);
+        f.Assign(two.Id, group.Id);
         Assert.Equal(2, f.Reconciler().ReconcileProject(f.Project.Id));
         var destination = Path.Combine(f.Project.FolderSegment, f.File.FolderSegment, "Notes (2)");
         foreach (var id in new[] { one.Id, two.Id })
@@ -131,7 +141,7 @@ public sealed class ResourceGroupLayoutTests
         using var f = new ResourceGroupFixture();
         var group = f.Group("Notes");
         var stranded = LegacyDocument(f, f.File.Id, "Stranded.pdf", "stranded bytes");
-        f.Assign(stranded, group.Id);
+        f.Assign(stranded.Id, group.Id);
         var loose = LegacyDocument(f, f.File.Id, "Loose.pdf", "loose bytes");
 
         var blind = new LyingGroups(f.Groups, _ => []);
@@ -166,7 +176,7 @@ public sealed class ResourceGroupLayoutTests
         f.Groups.Add(foreign);
 
         var stranded = LegacyDocument(f, f.File.Id, "Stranded.pdf", "stranded bytes");
-        f.Assign(stranded, foreign.Id);
+        f.Assign(stranded.Id, foreign.Id);
         var loose = LegacyDocument(f, f.File.Id, "Loose.pdf", "loose bytes");
 
         var lying = new LyingGroups(
@@ -195,7 +205,7 @@ public sealed class ResourceGroupLayoutTests
         using var f = new ResourceGroupFixture();
         var group = f.Group("Notes");
         var stranded = LegacyDocument(f, f.File.Id, "Stranded.pdf", "stranded bytes");
-        f.Assign(stranded, group.Id);
+        f.Assign(stranded.Id, group.Id);
         var loose = LegacyDocument(f, f.File.Id, "Loose.pdf", "loose bytes");
 
         var unclaimed = ResourceGroup.Rehydrate(
@@ -236,7 +246,7 @@ public sealed class ResourceGroupLayoutTests
         f.Groups.Add(group);
 
         var stranded = LegacyDocument(f, file.Id, "Stranded.pdf", "stranded bytes");
-        f.Assign(stranded, group.Id);
+        f.Assign(stranded.Id, group.Id);
         var loose = LegacyDocument(f, file.Id, "Loose.pdf", "loose bytes");
 
         Assert.Equal(1, f.Reconciler().ReconcileProject(project.Id));
@@ -276,14 +286,13 @@ public sealed class ResourceGroupLayoutTests
         Assert.Equal("Sources", sources.FolderSegment);
 
         var document = f.Document("Notes", "payload");
-        f.Assign(document, sources.Id);
+        f.Assign(document.Id, sources.Id);
         Assert.Equal(1, f.Reconciler().ReconcileProject(f.Project.Id));
         var settled = Path.Combine(parent, "Sources", "Notes");
         Assert.Equal(settled, f.Resources.GetById(document.Id)!.StoredPath);
 
-        // Re-read before mutating: the reconcile updated the row, and writing back the
-        // stale in-memory instance would silently restore its old stored path.
-        f.Assign(f.Resources.GetById(document.Id)!, null);
+        // Assign re-reads, so the path the reconcile just recorded survives this.
+        f.Assign(document.Id, null);
 
         var sabotaged = new SabotagedResources(f.Resources, r => r.Id == document.Id);
         Assert.Equal(0, f.Reconciler(resources: sabotaged).ReconcileProject(f.Project.Id));
@@ -299,6 +308,107 @@ public sealed class ResourceGroupLayoutTests
         Assert.True(Directory.Exists(f.Storage.ResolvePath(Path.Combine(parent, "Notes"))));
 
         Assert.Equal(0, f.Reconciler().ReconcileProject(f.Project.Id));
+    }
+
+    /// <summary>
+    /// The claim is a hint about a directory, never a substitute for looking. The resources
+    /// tree is browsable on purpose, so a user can delete a group's empty directory from
+    /// outside the app — the group row goes on claiming the segment while nothing occupies
+    /// it. A loose extensionless document named "Notes" then moves into the now-free path,
+    /// and its record fails in the documented crash window.
+    ///
+    /// The bytes are now a real *file* at the exact path the group still claims. A probe
+    /// that consults the claim before looking at the disk steps straight over them, and the
+    /// damage is not merely a missed repair: the next candidate is an unrelated unrecorded
+    /// orphan, so the row is pointed at another document's bytes and its own are left
+    /// stranded. Physical reality has to win — the claim may only explain an absence.
+    /// </summary>
+    [Fact]
+    public void Reconcile_WhenAClaimedGroupDirectoryIsGone_AdoptsTheRealFileNowAtThatPath()
+    {
+        using var f = new ResourceGroupFixture();
+        var parent = ResourceLayout.FolderFor(f.Project, f.File);
+        var group = f.Group("Notes");
+        Assert.Equal("Notes", group.FolderSegment);
+
+        // Deleted from outside the app while browsing; the row still claims "Notes".
+        Directory.Delete(f.Storage.ResolvePath(Path.Combine(parent, "Notes")));
+
+        // An unrelated orphan at the next candidate — what a claim-first probe would reach.
+        System.IO.File.WriteAllText(f.Storage.ResolvePath(Path.Combine(parent, "Notes (2)")), "not mine");
+
+        var document = LegacyDocument(f, f.File.Id, "Notes", "my bytes");
+        var sabotaged = new SabotagedResources(f.Resources, r => r.Id == document.Id);
+        Assert.Equal(0, f.Reconciler(resources: sabotaged).ReconcileProject(f.Project.Id));
+
+        // The bytes reached the freed path as a file; the row still names the legacy path.
+        Assert.Equal("my bytes", Read(f, Path.Combine(parent, "Notes")));
+        Assert.False(Directory.Exists(f.Storage.ResolvePath(Path.Combine(parent, "Notes"))));
+        Assert.Equal(document.StoredPath, f.Resources.GetById(document.Id)!.StoredPath);
+
+        Assert.Equal(1, f.Reconciler().ReconcileProject(f.Project.Id));
+
+        var repaired = f.Resources.GetById(document.Id)!;
+        Assert.Equal(Path.Combine(parent, "Notes"), repaired.StoredPath);
+        Assert.Equal("my bytes", Read(f, repaired.StoredPath));
+        Assert.Equal("not mine", Read(f, Path.Combine(parent, "Notes (2)")));
+
+        Assert.Equal(0, f.Reconciler().ReconcileProject(f.Project.Id));
+    }
+
+    /// <summary>
+    /// The group read obeys the same per-resource recovery contract as everything else in
+    /// the loop. Loading it once per File, outside the try, would turn a single repository
+    /// fault into an abort of every remaining File and Project — including the loose
+    /// resources in this very File, which never needed the groups at all.
+    /// </summary>
+    [Fact]
+    public void Reconcile_WhenTheGroupReadFaults_LosesOnlyTheGroupedResource()
+    {
+        using var f = new ResourceGroupFixture();
+        var group = f.Group("Notes");
+        var stranded = LegacyDocument(f, f.File.Id, "Stranded.pdf", "stranded bytes");
+        f.Assign(stranded.Id, group.Id);
+        var loose = LegacyDocument(f, f.File.Id, "Loose.pdf", "loose bytes");
+
+        var faulting = new LyingGroups(
+            f.Groups, _ => throw new InvalidOperationException("group read rejected"));
+        var moved = new ResourceLayoutReconciler(
+            f.Projects, f.Files, f.Resources, f.Storage, f, faulting).ReconcileProject(f.Project.Id);
+
+        Assert.Equal(1, moved);
+        var parent = ResourceLayout.FolderFor(f.Project, f.File);
+        Assert.Equal(Path.Combine(parent, "Loose.pdf"), f.Resources.GetById(loose.Id)!.StoredPath);
+        Assert.Equal(stranded.StoredPath, f.Resources.GetById(stranded.Id)!.StoredPath);
+        Assert.Equal("stranded bytes", Read(f, stranded.StoredPath));
+    }
+
+    /// <summary>
+    /// A File whose resources are all loose never needs its groups, so it must not pay for
+    /// the query. Lazy rather than eager, which is also what puts the read inside the
+    /// per-resource try above.
+    /// </summary>
+    [Fact]
+    public void Reconcile_WithNoGroupedResources_NeverReadsTheGroups()
+    {
+        using var f = new ResourceGroupFixture();
+        f.Group("Notes"); // a group exists; nothing is filed into it
+        var loose = LegacyDocument(f, f.File.Id, "Loose.pdf", "loose bytes");
+
+        var reads = 0;
+        var counting = new LyingGroups(f.Groups, fileId =>
+        {
+            reads++;
+            return f.Groups.GetForFile(fileId);
+        });
+        var moved = new ResourceLayoutReconciler(
+            f.Projects, f.Files, f.Resources, f.Storage, f, counting).ReconcileProject(f.Project.Id);
+
+        Assert.Equal(1, moved);
+        Assert.Equal(
+            Path.Combine(ResourceLayout.FolderFor(f.Project, f.File), "Loose.pdf"),
+            f.Resources.GetById(loose.Id)!.StoredPath);
+        Assert.Equal(0, reads);
     }
 
     /// <summary>
@@ -337,7 +447,7 @@ public sealed class ResourceGroupLayoutTests
 
         Assert.Equal(expectedGroupSegment, group.FolderSegment);
         var member = f.Document("member.txt", "member bytes");
-        f.Assign(member, group.Id);
+        f.Assign(member.Id, group.Id);
 
         Assert.Equal(1, f.Reconciler().ReconcileProject(f.Project.Id));
 
@@ -399,9 +509,9 @@ public sealed class ResourceGroupLayoutTests
         Assert.Equal("Notes (2)", second.FolderSegment);
 
         var alpha = f.Document("alpha.txt", "alpha bytes");
-        f.Assign(alpha, first.Id);
+        f.Assign(alpha.Id, first.Id);
         var beta = f.Document("beta.txt", "beta bytes");
-        f.Assign(beta, second.Id);
+        f.Assign(beta.Id, second.Id);
 
         Assert.Equal(2, f.Reconciler().ReconcileProject(f.Project.Id));
 
@@ -428,9 +538,9 @@ public sealed class ResourceGroupLayoutTests
         var parent = ResourceLayout.FolderFor(f.Project, f.File);
         var group = f.Group("Notes");
         var victim = f.Document("victim.txt", "victim bytes");
-        f.Assign(victim, group.Id);
+        f.Assign(victim.Id, group.Id);
         var sibling = f.Document("sibling.txt", "sibling bytes");
-        f.Assign(sibling, group.Id);
+        f.Assign(sibling.Id, group.Id);
 
         var sabotaged = new SabotagedResources(f.Resources, r => r.Id == victim.Id);
         Assert.Equal(1, f.Reconciler(resources: sabotaged).ReconcileProject(f.Project.Id));
@@ -463,7 +573,7 @@ public sealed class ResourceGroupLayoutTests
         var parent = ResourceLayout.FolderFor(f.Project, f.File);
         var group = f.Group("Notes");
         var member = f.Document("shared.txt", "mine");
-        f.Assign(member, group.Id);
+        f.Assign(member.Id, group.Id);
 
         // Its own bytes vanish: the exact shape that sends the reconciler looking for an
         // already-moved file to adopt at the desired location.

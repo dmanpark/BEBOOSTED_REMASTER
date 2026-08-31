@@ -78,7 +78,7 @@ public sealed class ResourceGroupMembershipTests : IDisposable
         var group = _fixture.Group();
         var resource = _fixture.Document();
 
-        _fixture.Assign(resource, group.Id);
+        _fixture.Assign(resource.Id, group.Id);
 
         Assert.Equal(group.Id, _fixture.Resources.GetById(resource.Id)!.GroupId);
     }
@@ -88,9 +88,9 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     {
         var group = _fixture.Group();
         var resource = _fixture.Document();
-        _fixture.Assign(resource, group.Id);
+        _fixture.Assign(resource.Id, group.Id);
 
-        _fixture.Assign(resource, null);
+        _fixture.Assign(resource.Id, null);
 
         Assert.Null(_fixture.Resources.GetById(resource.Id)!.GroupId);
     }
@@ -101,9 +101,9 @@ public sealed class ResourceGroupMembershipTests : IDisposable
         var first = _fixture.Group("Unit 3");
         var second = _fixture.Group("Unit 4");
         var resource = _fixture.Document();
-        _fixture.Assign(resource, first.Id);
+        _fixture.Assign(resource.Id, first.Id);
 
-        _fixture.Assign(resource, second.Id);
+        _fixture.Assign(resource.Id, second.Id);
 
         Assert.Equal(second.Id, _fixture.Resources.GetById(resource.Id)!.GroupId);
     }
@@ -119,7 +119,7 @@ public sealed class ResourceGroupMembershipTests : IDisposable
         var group = _fixture.Group();
         var resource = _fixture.Document("source.txt", IndexOnlyToken);
 
-        _fixture.Assign(resource, group.Id);
+        _fixture.Assign(resource.Id, group.Id);
 
         var hit = Assert.Single(_fixture.Resources.SearchInProject(_fixture.Project.Id, IndexOnlyToken));
         Assert.Equal(resource.Id, hit.Id);
@@ -136,7 +136,7 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     {
         var group = _fixture.Group();
         var resource = _fixture.Document();
-        _fixture.Assign(resource, group.Id);
+        _fixture.Assign(resource.Id, group.Id);
 
         var reloaded = _fixture.Resources.GetById(resource.Id)!;
         reloaded.Rename("Renamed", _fixture.Now.AddMinutes(5));
@@ -153,7 +153,7 @@ public sealed class ResourceGroupMembershipTests : IDisposable
         var group = _fixture.Group();
         var grouped = _fixture.Document("grouped.txt");
         var loose = _fixture.Document("loose.txt");
-        _fixture.Assign(grouped, group.Id);
+        _fixture.Assign(grouped.Id, group.Id);
 
         var byId = _fixture.Resources.GetForFile(_fixture.File.Id).ToDictionary(r => r.Id, r => r.GroupId);
 
@@ -167,7 +167,7 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     {
         var group = _fixture.Group();
         var resource = _fixture.Document("source.txt", IndexOnlyToken);
-        _fixture.Assign(resource, group.Id);
+        _fixture.Assign(resource.Id, group.Id);
 
         var hit = Assert.Single(_fixture.Resources.SearchInProject(_fixture.Project.Id, IndexOnlyToken));
 
@@ -193,7 +193,7 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     {
         var resource = _fixture.Document();
 
-        Assert.Throws<SqliteException>(() => _fixture.Assign(resource, ResourceGroupId.New()));
+        Assert.Throws<SqliteException>(() => _fixture.Assign(resource.Id, ResourceGroupId.New()));
     }
 
     /// <summary>
@@ -205,7 +205,7 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     {
         var group = _fixture.Group();
         var resource = _fixture.Document();
-        _fixture.Assign(resource, group.Id);
+        _fixture.Assign(resource.Id, group.Id);
 
         _fixture.Groups.Delete(group.Id);
 
@@ -221,7 +221,7 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     {
         var group = _fixture.Group();
         var resource = _fixture.Document();
-        _fixture.Assign(resource, group.Id);
+        _fixture.Assign(resource.Id, group.Id);
 
         _fixture.Files.Delete(_fixture.File.Id);
 
@@ -234,7 +234,7 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     {
         var group = _fixture.Group();
         var resource = _fixture.Document();
-        _fixture.Assign(resource, group.Id);
+        _fixture.Assign(resource.Id, group.Id);
 
         _fixture.Projects.Delete(_fixture.Project.Id);
 
@@ -254,7 +254,7 @@ public sealed class ResourceGroupMembershipTests : IDisposable
     {
         var group = _fixture.Group();
         var resource = _fixture.Document();
-        _fixture.Assign(resource, group.Id);
+        _fixture.Assign(resource.Id, group.Id);
 
         Assert.Throws<InvalidOperationException>(() =>
             _fixture.Mutations.Execute((_, _, resources, _, groups) =>

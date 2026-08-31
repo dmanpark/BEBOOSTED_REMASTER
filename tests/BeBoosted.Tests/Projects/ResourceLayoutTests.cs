@@ -71,9 +71,13 @@ public sealed class ResourceLayoutTests
     }
 
     /// <summary>
-    /// FolderFor combines the persisted segments as-is: both were already sanitized and
-    /// claimed when they were reserved, so re-sanitizing here would be redundant at best
-    /// and could silently disagree with what was actually claimed on disk.
+    /// FolderFor combines the persisted segments as-is: all three were already sanitized
+    /// and claimed when they were reserved, so re-sanitizing here would be redundant at
+    /// best and could silently disagree with what was actually claimed on disk.
+    ///
+    /// Every segment used elsewhere in the suite ("Notes", "Notes (2)", "Sources") is a
+    /// Sanitize fixpoint, so a re-sanitizing FolderFor would leave the whole suite green.
+    /// These values are deliberately not fixpoints — that is the entire point of them.
     /// </summary>
     [Fact]
     public void FolderFor_TrustsThePersistedSegments_WithoutSanitizingThemAgain()
@@ -82,10 +86,20 @@ public sealed class ResourceLayoutTests
         project.RelocateTo("Not: Sanitized", Now);
         var file = ProjectFile.Create(project.Id, "Metric Proof", null, Now);
         file.RelocateTo("Also raw...", Now);
+        var group = ResourceGroup.Create(file.Id, "Unit 3", 0, Now);
+        group.RelocateTo("Raw: Group...", Now);
 
-        var folder = ResourceLayout.FolderFor(project, file);
+        Assert.Equal(
+            Path.Combine("Not: Sanitized", "Also raw..."), ResourceLayout.FolderFor(project, file));
+        Assert.Equal(
+            Path.Combine("Not: Sanitized", "Also raw...", "Raw: Group..."),
+            ResourceLayout.FolderFor(project, file, group));
 
-        Assert.Equal(Path.Combine("Not: Sanitized", "Also raw..."), folder);
+        // Guards the guard: if these ever became fixpoints the assertions above would still
+        // pass under a re-sanitizing FolderFor, and would be pinning nothing.
+        Assert.NotEqual("Not: Sanitized", ResourceLayout.Sanitize("Not: Sanitized", "fallback"));
+        Assert.NotEqual("Also raw...", ResourceLayout.Sanitize("Also raw...", "fallback"));
+        Assert.NotEqual("Raw: Group...", ResourceLayout.Sanitize("Raw: Group...", "fallback"));
     }
 
     [Fact]

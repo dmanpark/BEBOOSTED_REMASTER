@@ -7,7 +7,8 @@ namespace BeBoosted.Application.Projects;
 
 /// <summary>
 /// Where a stored resource belongs on disk: one folder per Project, one subfolder per
-/// File, and the user's own file name inside it. Pure — every rule here is decidable
+/// File, one more for the group holding the resource if it is in one, and the user's own
+/// file name inside that. Pure — every rule here is decidable
 /// without touching the filesystem, which is what makes it testable and what keeps
 /// collision handling (the one genuinely filesystem-dependent part) in the storage layer.
 /// </summary>
@@ -58,10 +59,11 @@ public static partial class ResourceLayout
     }
 
     /// <summary>
-    /// The folder for one File: &lt;project&gt;/&lt;file&gt;, relative to the resources root.
-    /// Combines the already-claimed segments verbatim — both were sanitized and reserved
-    /// against collision when they were stored, so re-sanitizing here would be redundant
-    /// at best and could disagree with what was actually claimed on disk.
+    /// The folder a resource's bytes belong in, relative to the resources root:
+    /// &lt;project&gt;/&lt;file&gt; for a loose resource, &lt;project&gt;/&lt;file&gt;/&lt;group&gt;
+    /// for one held by a group. Combines the already-claimed segments verbatim — each was
+    /// sanitized and reserved against collision when it was stored, so re-sanitizing here
+    /// would be redundant at best and could disagree with what was actually claimed on disk.
     /// </summary>
     /// <param name="group">
     /// The group owning the resource, or null for a loose one. Its segment is appended

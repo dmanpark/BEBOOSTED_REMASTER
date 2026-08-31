@@ -125,8 +125,21 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
         return resource;
     }
 
-    public void Assign(Resource resource, ResourceGroupId? groupId)
+    /// <summary>
+    /// Files a resource into a group, or back to loose, by id.
+    ///
+    /// Deliberately NOT by entity. <c>Update</c> writes the whole row, so assigning a
+    /// caller-held instance writes back every field that instance still holds — including
+    /// a <c>StoredPath</c> the reconciler has since changed. A test that reconciles and
+    /// then re-assigns would silently restore the pre-reconcile path and go on to assert
+    /// the path the fixture itself had just written back. Re-reading here makes that
+    /// impossible rather than merely documented, which matters because assign-then-
+    /// reconcile-then-assign is the ordinary shape of a group move test.
+    /// </summary>
+    public void Assign(ResourceId resourceId, ResourceGroupId? groupId)
     {
+        var resource = Resources.GetById(resourceId)
+            ?? throw new InvalidOperationException($"No resource {resourceId} to assign.");
         resource.MoveToGroup(groupId, Now);
         Resources.Update(resource);
     }

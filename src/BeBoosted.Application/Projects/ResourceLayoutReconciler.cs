@@ -58,17 +58,32 @@ public sealed class ResourceLayoutReconciler(
                 continue;
             }
 
-            var fileGroups = groups.GetForFile(file.Id).ToDictionary(g => g.Id);
+            Dictionary<ResourceGroupId, ResourceGroup>? fileGroups = null;
+            IReadOnlySet<string>? directoryClaims = null;
+
+            // Loaded on first need, from inside the per-resource try below. Lazily,
+            // because a File whose resources are all loose never needs the query at all;
+            // and from inside the try, because this class's contract is per-resource
+            // recovery — an eager load at File scope turns one repository fault into an
+            // abort of every remaining File and Project.
+            Dictionary<ResourceGroupId, ResourceGroup> Groups()
+                => fileGroups ??= groups.GetForFile(file.Id).ToDictionary(g => g.Id);
 
             // The directories this File's groups have reserved. A loose resource's desired
             // name can be one of them, in which case its bytes were parked at the numbered
             // candidate beside it — and FindUnrecordedPlacement, probing with a file-only
             // Exists, would read the directory as "nothing here" and stop one slot short.
-            // Naming the claims outright lets the probe step over them; it stays a probe of
-            // known reserved paths, not a scan for orphans and never an adoption of a folder.
-            var directoryClaims = fileGroups.Values.Where(g => g.FolderSegment.Length > 0)
-                .Select(g => ResourceLayout.FolderFor(project, file, g))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            //
+            // Narrow on purpose: this is a list of names, not a directory check. It covers
+            // only directories the File's *group rows* claim. It does not cover a directory
+            // whose group row rolled back or was deleted, nor the Project/File directories
+            // themselves (visible as candidates when the folder is the resources root), and
+            // those still end a probe short. Widening it means reading the disk, which is
+            // what keeps Exists file-only and out of the business of adopting folders.
+            IReadOnlySet<string> DirectoryClaims()
+                => directoryClaims ??= Groups().Values.Where(g => g.FolderSegment.Length > 0)
+                    .Select(g => ResourceLayout.FolderFor(project, file, g))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             var fileResources = resources.GetForFile(file.Id);
             foreach (var resource in fileResources)
@@ -78,33 +93,34 @@ public sealed class ResourceLayoutReconciler(
                     continue; // links and notes have no bytes
                 }
 
-                ResourceGroup? group = null;
-                if (resource.GroupId is { } groupId)
+                try
                 {
-                    // A membership the layout cannot resolve is never treated as loose.
-                    // Every branch here would otherwise combine into a folder no
-                    // reservation ever claimed — and, because Path.Combine swallows an
-                    // empty part, the unclaimed-parent and unclaimed-segment branches
-                    // collapse silently onto the File root, moving a filed document out
-                    // of its group. Leaving it exactly where it is costs nothing: it
-                    // stays openable, and the next run retries once the row is repaired.
-                    if (project.FolderSegment.Length == 0 || file.FolderSegment.Length == 0
-                        || !fileGroups.TryGetValue(groupId, out group)
-                        || group.FileId != file.Id || group.FolderSegment.Length == 0)
+                    ResourceGroup? group = null;
+                    if (resource.GroupId is { } groupId)
+                    {
+                        // A membership the layout cannot resolve is never treated as loose.
+                        // Every branch here would otherwise combine into a folder no
+                        // reservation ever claimed — and, because Path.Combine swallows an
+                        // empty part, the unclaimed-parent and unclaimed-segment branches
+                        // collapse silently onto the File root, moving a filed document out
+                        // of its group. Leaving it exactly where it is costs nothing: it
+                        // stays openable, and the next run retries once the row is repaired.
+                        if (project.FolderSegment.Length == 0 || file.FolderSegment.Length == 0
+                            || !Groups().TryGetValue(groupId, out group)
+                            || group.FileId != file.Id || group.FolderSegment.Length == 0)
+                        {
+                            continue;
+                        }
+                    }
+
+                    var folder = ResourceLayout.FolderFor(project, file, group);
+                    var desired = ResourceLayout.FileNameFor(
+                        resource.OriginalFileName, resource.Id.ToString());
+                    if (ResourceLayout.IsAlreadyPlaced(current, folder, desired))
                     {
                         continue;
                     }
-                }
 
-                var folder = ResourceLayout.FolderFor(project, file, group);
-                var desired = ResourceLayout.FileNameFor(resource.OriginalFileName, resource.Id.ToString());
-                if (ResourceLayout.IsAlreadyPlaced(current, folder, desired))
-                {
-                    continue;
-                }
-
-                try
-                {
                     var relocated = storage.MoveInto(current, folder, desired);
                     if (relocated is null && !storage.Exists(current))
                     {
@@ -112,7 +128,7 @@ public sealed class ResourceLayoutReconciler(
                         // completed but never recorded left them at the desired
                         // location — adopt that file rather than stranding it, but
                         // never a slot another resource's recorded path claims.
-                        relocated = FindUnrecordedPlacement(folder, desired, claimed, directoryClaims);
+                        relocated = FindUnrecordedPlacement(folder, desired, claimed, DirectoryClaims());
                     }
 
                     if (relocated is null)
@@ -128,10 +144,10 @@ public sealed class ResourceLayoutReconciler(
                 }
                 catch (Exception)
                 {
-                    // A per-resource failure (a rejected update, a repository error)
-                    // must never abort the pass: earlier moves stay recorded, later
-                    // resources still get their turn, and this one is retried — or
-                    // adopted — on the next run.
+                    // A per-resource failure (a rejected update, a repository error, a
+                    // group read that faults) must never abort the pass: earlier moves
+                    // stay recorded, later resources still get their turn, and this one is
+                    // retried — or adopted — on the next run.
                 }
             }
         }
@@ -153,18 +169,20 @@ public sealed class ResourceLayoutReconciler(
         for (var attempt = 1; ; attempt++)
         {
             var candidate = Path.Combine(folder, ResourceLayout.CandidateName(desired, attempt));
-            if (directoryClaims.Contains(candidate))
-            {
-                // A group reserved this exact name as a directory, so the mover skipped
-                // past it too. Step over rather than stop: the bytes are at a later
-                // candidate, and the file-only Exists below would read a directory as
-                // "missing" and end the probe short of them.
-                continue;
-            }
-
             if (!storage.Exists(candidate))
             {
-                return null;
+                // Nothing adoptable here. A claim may explain the absence — a group
+                // reserved this name as a directory, so the mover skipped past it and the
+                // bytes are at a later candidate — but it may never overrule the disk. The
+                // tree is browsable, so a claimed directory can be deleted and a real file
+                // can take its path; consulting the claim first would step over those
+                // bytes and adopt whatever unrecorded file sat at the next candidate.
+                if (directoryClaims.Contains(candidate))
+                {
+                    continue;
+                }
+
+                return null; // genuinely free: the contiguous probe ends here
             }
 
             if (!claimed.Contains(candidate))
