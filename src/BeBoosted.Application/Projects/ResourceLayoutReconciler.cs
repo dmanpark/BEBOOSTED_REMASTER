@@ -20,7 +20,8 @@ public sealed class ResourceLayoutReconciler(
     IProjectFileRepository files,
     IResourceRepository resources,
     IResourceStorage storage,
-    IClock clock)
+    IClock clock,
+    IResourceGroupRepository groups)
 {
     /// <summary>Reconciles every project. Returns how many resources actually moved.</summary>
     public int Reconcile() => projects.GetAll().Sum(Reconcile);
@@ -57,7 +58,18 @@ public sealed class ResourceLayoutReconciler(
                 continue;
             }
 
-            var folder = ResourceLayout.FolderFor(project, file);
+            var fileGroups = groups.GetForFile(file.Id).ToDictionary(g => g.Id);
+
+            // The directories this File's groups have reserved. A loose resource's desired
+            // name can be one of them, in which case its bytes were parked at the numbered
+            // candidate beside it — and FindUnrecordedPlacement, probing with a file-only
+            // Exists, would read the directory as "nothing here" and stop one slot short.
+            // Naming the claims outright lets the probe step over them; it stays a probe of
+            // known reserved paths, not a scan for orphans and never an adoption of a folder.
+            var directoryClaims = fileGroups.Values.Where(g => g.FolderSegment.Length > 0)
+                .Select(g => ResourceLayout.FolderFor(project, file, g))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
             var fileResources = resources.GetForFile(file.Id);
             foreach (var resource in fileResources)
             {
@@ -66,6 +78,25 @@ public sealed class ResourceLayoutReconciler(
                     continue; // links and notes have no bytes
                 }
 
+                ResourceGroup? group = null;
+                if (resource.GroupId is { } groupId)
+                {
+                    // A membership the layout cannot resolve is never treated as loose.
+                    // Every branch here would otherwise combine into a folder no
+                    // reservation ever claimed — and, because Path.Combine swallows an
+                    // empty part, the unclaimed-parent and unclaimed-segment branches
+                    // collapse silently onto the File root, moving a filed document out
+                    // of its group. Leaving it exactly where it is costs nothing: it
+                    // stays openable, and the next run retries once the row is repaired.
+                    if (project.FolderSegment.Length == 0 || file.FolderSegment.Length == 0
+                        || !fileGroups.TryGetValue(groupId, out group)
+                        || group.FileId != file.Id || group.FolderSegment.Length == 0)
+                    {
+                        continue;
+                    }
+                }
+
+                var folder = ResourceLayout.FolderFor(project, file, group);
                 var desired = ResourceLayout.FileNameFor(resource.OriginalFileName, resource.Id.ToString());
                 if (ResourceLayout.IsAlreadyPlaced(current, folder, desired))
                 {
@@ -81,7 +112,7 @@ public sealed class ResourceLayoutReconciler(
                         // completed but never recorded left them at the desired
                         // location — adopt that file rather than stranding it, but
                         // never a slot another resource's recorded path claims.
-                        relocated = FindUnrecordedPlacement(folder, desired, claimed);
+                        relocated = FindUnrecordedPlacement(folder, desired, claimed, directoryClaims);
                     }
 
                     if (relocated is null)
@@ -116,11 +147,21 @@ public sealed class ResourceLayoutReconciler(
             .OfType<string>()
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    private string? FindUnrecordedPlacement(string folder, string desired, HashSet<string> claimed)
+    private string? FindUnrecordedPlacement(
+        string folder, string desired, HashSet<string> claimed, IReadOnlySet<string> directoryClaims)
     {
         for (var attempt = 1; ; attempt++)
         {
             var candidate = Path.Combine(folder, ResourceLayout.CandidateName(desired, attempt));
+            if (directoryClaims.Contains(candidate))
+            {
+                // A group reserved this exact name as a directory, so the mover skipped
+                // past it too. Step over rather than stop: the bytes are at a later
+                // candidate, and the file-only Exists below would read a directory as
+                // "missing" and end the probe short of them.
+                continue;
+            }
+
             if (!storage.Exists(candidate))
             {
                 return null;

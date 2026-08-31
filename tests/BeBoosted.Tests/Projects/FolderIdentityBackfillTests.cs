@@ -46,6 +46,7 @@ public sealed class FolderIdentityBackfillTests : IDisposable
     private readonly SqliteProjectRepository _projects;
     private readonly SqliteProjectFileRepository _files;
     private readonly SqliteResourceRepository _resources;
+    private readonly SqliteResourceGroupRepository _groups;
     private readonly LocalResourceStorage _storage;
 
     public FolderIdentityBackfillTests()
@@ -55,6 +56,7 @@ public sealed class FolderIdentityBackfillTests : IDisposable
         _projects = new SqliteProjectRepository(_database.Factory);
         _files = new SqliteProjectFileRepository(_database.Factory);
         _resources = new SqliteResourceRepository(_database.Factory);
+        _groups = new SqliteResourceGroupRepository(_database.Factory);
         _storage = new LocalResourceStorage(_paths);
         Directory.CreateDirectory(_paths.ResourcesDirectory);
     }
@@ -97,7 +99,7 @@ public sealed class FolderIdentityBackfillTests : IDisposable
     }
 
     private ResourceLayoutReconciler CreateReconciler()
-        => new(_projects, _files, _resources, _storage, _clock);
+        => new(_projects, _files, _resources, _storage, _clock, _groups);
 
     /// <summary>
     /// The real startup layout pass — the same object <c>App.axaml.cs</c> resolves and
@@ -107,7 +109,7 @@ public sealed class FolderIdentityBackfillTests : IDisposable
     private ResourceLayoutStartupResult RunStartupLayoutPass(IResourceStorage storage)
         => new ResourceLayoutStartup(
             new FolderIdentityBackfill(_projects, _files, storage, _clock),
-            new ResourceLayoutReconciler(_projects, _files, _resources, storage, _clock)).Run();
+            new ResourceLayoutReconciler(_projects, _files, _resources, storage, _clock, _groups)).Run();
 
     [Fact]
     public void Backfill_ClaimsTheDirectoryALegacyProjectsBytesAlreadyOccupy()

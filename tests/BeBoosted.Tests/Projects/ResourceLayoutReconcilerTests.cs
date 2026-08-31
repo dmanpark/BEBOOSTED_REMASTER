@@ -44,6 +44,7 @@ public sealed class ResourceLayoutReconcilerTests : IDisposable
     private readonly SqliteProjectRepository _projects;
     private readonly SqliteProjectFileRepository _files;
     private readonly SqliteResourceRepository _resources;
+    private readonly SqliteResourceGroupRepository _groups;
     private readonly LocalResourceStorage _storage;
 
     public ResourceLayoutReconcilerTests()
@@ -53,11 +54,12 @@ public sealed class ResourceLayoutReconcilerTests : IDisposable
         _projects = new SqliteProjectRepository(_database.Factory);
         _files = new SqliteProjectFileRepository(_database.Factory);
         _resources = new SqliteResourceRepository(_database.Factory);
+        _groups = new SqliteResourceGroupRepository(_database.Factory);
         _storage = new LocalResourceStorage(_paths);
     }
 
     private ResourceLayoutReconciler CreateReconciler()
-        => new(_projects, _files, _resources, _storage, _clock);
+        => new(_projects, _files, _resources, _storage, _clock, _groups);
 
     /// <summary>
     /// A project/file pair — each with a claimed folder segment, exactly as
@@ -228,7 +230,7 @@ public sealed class ResourceLayoutReconcilerTests : IDisposable
         _resources.Add(sibling);
 
         var sabotaged = new SabotagedResources(_resources, r => r.Id == victim.Resource.Id);
-        var firstRun = new ResourceLayoutReconciler(_projects, _files, sabotaged, _storage, _clock)
+        var firstRun = new ResourceLayoutReconciler(_projects, _files, sabotaged, _storage, _clock, _groups)
             .Reconcile();
 
         // The victim's bytes moved but its row kept the stale path; the sibling still migrated.

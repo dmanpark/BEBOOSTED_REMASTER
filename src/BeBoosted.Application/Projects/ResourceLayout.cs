@@ -63,8 +63,16 @@ public static partial class ResourceLayout
     /// against collision when they were stored, so re-sanitizing here would be redundant
     /// at best and could disagree with what was actually claimed on disk.
     /// </summary>
-    public static string FolderFor(Project project, ProjectFile file)
-        => Path.Combine(project.FolderSegment, file.FolderSegment);
+    /// <param name="group">
+    /// The group owning the resource, or null for a loose one. Its segment is appended
+    /// verbatim for the same reason the other two are: it was sanitized and reserved —
+    /// and its directory created — when the group claimed it, so re-deriving it here
+    /// could name a folder nothing ever claimed.
+    /// </param>
+    public static string FolderFor(Project project, ProjectFile file, ResourceGroup? group = null)
+        => group is null
+            ? Path.Combine(project.FolderSegment, file.FolderSegment)
+            : Path.Combine(project.FolderSegment, file.FolderSegment, group.FolderSegment);
 
     /// <summary>
     /// The user's own file name, made safe. The extension is protected from the length

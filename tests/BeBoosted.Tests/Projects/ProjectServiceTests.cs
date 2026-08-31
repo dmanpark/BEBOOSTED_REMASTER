@@ -78,7 +78,9 @@ public sealed class ProjectServiceTests : IDisposable
             _projects, _files, _resources, _storage, new SqliteProjectMutations(_database.Factory),
             new SimpleLocalIndexer(_resources, _storage, _clock), _tasks, blocks, _completions, _clock,
             provenanceInvalidator: null,
-            reconciler: new ResourceLayoutReconciler(_projects, _files, _resources, _storage, _clock));
+            reconciler: new ResourceLayoutReconciler(
+                _projects, _files, _resources, _storage, _clock,
+                new SqliteResourceGroupRepository(_database.Factory)));
     }
 
     /// <summary>

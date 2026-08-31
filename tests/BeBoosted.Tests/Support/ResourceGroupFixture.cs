@@ -72,6 +72,16 @@ public sealed class ResourceGroupFixture : IDisposable, IAppDataPaths, IClock
         Files.Add(File);
     }
 
+    /// <summary>
+    /// The real reconciler over this fixture's world. The two optional arguments exist so
+    /// a test can substitute a sabotaged storage or resource repository and still keep
+    /// every other collaborator — the project, file and group repositories above all —
+    /// pointed at the same durable database.
+    /// </summary>
+    public ResourceLayoutReconciler Reconciler(
+        IResourceStorage? storage = null, IResourceRepository? resources = null)
+        => new(Projects, Files, resources ?? Resources, storage ?? Storage, this, Groups);
+
     /// <summary>A persisted group with a genuinely claimed folder segment.</summary>
     public ResourceGroup Group(string title = "Notes")
     {
