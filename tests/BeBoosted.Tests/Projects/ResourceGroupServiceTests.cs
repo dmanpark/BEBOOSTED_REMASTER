@@ -265,9 +265,11 @@ public sealed class ResourceGroupServiceTests
 
     /// <summary>
     /// A group with no members yet owns nothing on disk but the directory itself, and that
-    /// directory is the whole claim: it is what a later extensionless import collides with
+    /// directory is the whole claim: it is what a later same-named import collides with
     /// instead of taking the group's exact path as a file. Both halves are asserted — the
-    /// directory before any resource exists, and the import yielding to it.
+    /// directory before any resource exists, and the import yielding to it. The group's
+    /// title carries the extension, which titles may: imports must carry a supported one
+    /// (BB-QA-005), so this is the same-name collision that still arrives through import.
     /// </summary>
     [Fact]
     public void CreateEmptyGroup_ClaimsDirectoryBeforeImport()
@@ -276,19 +278,19 @@ public sealed class ResourceGroupServiceTests
         var service = f.CreateService();
         var parent = ResourceLayout.FolderFor(f.Project, f.File);
 
-        var group = service.CreateGroup(f.File.Id, "Notes");
+        var group = service.CreateGroup(f.File.Id, "Notes.txt");
 
-        Assert.Equal("Notes", group.FolderSegment);
-        Assert.True(Directory.Exists(f.Storage.ResolvePath(Path.Combine(parent, "Notes"))));
+        Assert.Equal("Notes.txt", group.FolderSegment);
+        Assert.True(Directory.Exists(f.Storage.ResolvePath(Path.Combine(parent, "Notes.txt"))));
         Assert.Empty(f.Resources.GetForFile(f.File.Id));
 
         var imported = service.ImportFile(
-            f.File.Id, ResourceKind.Document, f.SourceFile("Notes", "loose bytes"));
+            f.File.Id, ResourceKind.Document, f.SourceFile("Notes.txt", "loose bytes"));
 
         Assert.Null(imported.GroupId);
-        Assert.Equal(Path.Combine(parent, "Notes (2)"), imported.StoredPath);
+        Assert.Equal(Path.Combine(parent, "Notes (2).txt"), imported.StoredPath);
         Assert.Equal("loose bytes", Read(f, imported.StoredPath));
-        Assert.True(Directory.Exists(f.Storage.ResolvePath(Path.Combine(parent, "Notes"))));
+        Assert.True(Directory.Exists(f.Storage.ResolvePath(Path.Combine(parent, "Notes.txt"))));
     }
 
     /// <summary>
@@ -487,8 +489,11 @@ public sealed class ResourceGroupServiceTests
         var storage = new SabotagedStorage(f.Storage) { RefuseReservations = true };
         var service = f.CreateService(storage: storage);
 
-        Assert.Throws<IOException>(() => service.CreateGroup(f.File.Id, "Notes"));
+        // A DomainException, like the service's other refusals, so the surface renders a
+        // calm notice instead of the storage layer's raw error.
+        var error = Assert.Throws<DomainException>(() => service.CreateGroup(f.File.Id, "Notes"));
 
+        Assert.Contains("couldn't claim its folder", error.Message);
         Assert.Empty(f.Groups.GetForFile(f.File.Id));
     }
 
@@ -509,13 +514,45 @@ public sealed class ResourceGroupServiceTests
         var settled = f.Resources.GetById(member.Id)!.StoredPath;
 
         storage.RefuseReservations = true;
-        Assert.Throws<IOException>(() => service.RenameGroup(group.Id, "Sources"));
+        var error = Assert.Throws<DomainException>(() => service.RenameGroup(group.Id, "Sources"));
 
+        Assert.Contains("couldn't claim its folder", error.Message);
         var reloaded = f.Groups.GetById(group.Id)!;
         Assert.Equal("Notes", reloaded.Title);
         Assert.Equal(group.FolderSegment, reloaded.FolderSegment);
         Assert.Equal(settled, f.Resources.GetById(member.Id)!.StoredPath);
         Assert.Equal("member bytes", Read(f, settled));
+    }
+
+    /// <summary>
+    /// The narrow shape the phase-1 record deferred: a file sitting on the group's own
+    /// claimed name — an already-stranded state, or outside interference — makes the
+    /// reservation's owned-segment branch throw when a rename keeps that segment. The
+    /// storage contract is untouched; the service translates the failure into the calm
+    /// refusal its other paths use, and nothing partially persists. The stranded file
+    /// itself is the reconciler's to heal, after which the rename goes through.
+    /// </summary>
+    [Fact]
+    public void RenameGroup_WhoseOwnedNameAFileOccupies_RefusesCalmly_AndPersistsNothing()
+    {
+        using var f = new ResourceGroupFixture();
+        var service = f.CreateService();
+        var parent = ResourceLayout.FolderFor(f.Project, f.File);
+        var group = service.CreateGroup(f.File.Id, "Notes");
+
+        // The stranded shape: the directory gone, a file holding the claimed name.
+        Directory.Delete(f.Storage.ResolvePath(Path.Combine(parent, "Notes")));
+        System.IO.File.WriteAllText(
+            f.Storage.ResolvePath(Path.Combine(parent, "Notes")), "an interloper");
+
+        // A sanitization-equivalent rename keeps the owned segment, which is the branch
+        // that reaches the occupied path instead of probing past it.
+        var error = Assert.Throws<DomainException>(() => service.RenameGroup(group.Id, "notes"));
+
+        Assert.Contains("couldn't claim its folder", error.Message);
+        var reloaded = f.Groups.GetById(group.Id)!;
+        Assert.Equal("Notes", reloaded.Title);
+        Assert.Equal("Notes", reloaded.FolderSegment);
     }
 
     /// <summary>

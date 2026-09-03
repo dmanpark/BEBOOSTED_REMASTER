@@ -1,4 +1,4 @@
-﻿using BeBoosted.Application.Projects;
+using BeBoosted.Application.Projects;
 using BeBoosted.Application.Tasks;
 using BeBoosted.Domain;
 using BeBoosted.Domain.Projects;

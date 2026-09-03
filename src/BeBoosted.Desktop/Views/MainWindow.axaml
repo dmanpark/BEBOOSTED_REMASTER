@@ -47,6 +47,7 @@
           </RadioButton>
 
           <ToggleButton Classes="rail"
+                        Name="InboxRailToggle"
                         IsChecked="{Binding IsInboxOpen}"
                         AutomationProperties.Name="Inbox"
                         ToolTip.Tip="Inbox">

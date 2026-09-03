@@ -1,4 +1,4 @@
-﻿using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Ai;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Tasks;
@@ -276,11 +276,33 @@ public sealed class ProjectService(
         // group's own directory is what the reservation is about to create inside it.
         // FolderFor's group parameter is optional and omitting it silently yields the
         // loose folder, so every call site has to be read deliberately.
-        var segment = storage.ReserveFolderSegment(ResourceLayout.FolderFor(project, file),
-            ResourceLayout.Sanitize(group.Title, group.Id.ToString()), claimed);
+        var segment = ClaimGroupFolder(group, () => storage.ReserveFolderSegment(
+            ResourceLayout.FolderFor(project, file),
+            ResourceLayout.Sanitize(group.Title, group.Id.ToString()), claimed));
         group.RelocateTo(segment, clock.Now);
         groups.Add(group);
         return group;
+    }
+
+    /// <summary>
+    /// Translates a reservation the disk refused — a file sitting on the group's own
+    /// claimed name, a permission problem — into the calm refusal the service's other
+    /// paths use, so the surface renders a notice instead of the storage layer's raw
+    /// error. The storage contract itself is deliberately untouched: teaching the
+    /// owned-segment branch to probe past an occupied name would change it for every
+    /// caller, and a stranded file is the reconciler's to heal.
+    /// </summary>
+    private static string ClaimGroupFolder(ResourceGroup group, Func<string> reserve)
+    {
+        try
+        {
+            return reserve();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw new DomainException(
+                $"'{group.Title}' couldn't claim its folder: {error.Message}");
+        }
     }
 
     public ResourceGroup RenameGroup(ResourceGroupId id, string title)
@@ -299,8 +321,9 @@ public sealed class ProjectService(
             .Select(g => g.FolderSegment).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Two-argument FolderFor again: the parent this group's directory sits in.
-        var segment = storage.ReserveFolderSegment(ResourceLayout.FolderFor(project, file),
-            ResourceLayout.Sanitize(group.Title, group.Id.ToString()), claimed, owned);
+        var segment = ClaimGroupFolder(group, () => storage.ReserveFolderSegment(
+            ResourceLayout.FolderFor(project, file),
+            ResourceLayout.Sanitize(group.Title, group.Id.ToString()), claimed, owned));
         group.RelocateTo(segment, clock.Now);
         groups.Update(group);
 
@@ -509,6 +532,13 @@ public sealed class ProjectService(
             ?? throw new DomainException("That file no longer exists.");
         var project = Require(file.ProjectId);
         var originalName = Path.GetFileName(sourcePath);
+        if (!SupportedImports.Accepts(kind, originalName))
+        {
+            // Refused before the bytes move: the picker's filter is advisory — its
+            // filename box accepts any typed path — so this is where the type check lives.
+            throw new DomainException(SupportedImports.RefusalFor(kind, originalName));
+        }
+
         var id = ResourceId.New();
 
         // The last place an unclaimed parent still reaches FolderFor. If the startup

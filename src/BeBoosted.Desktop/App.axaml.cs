@@ -28,7 +28,13 @@ public partial class App : Avalonia.Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var paths = DefaultAppDataPaths.CreateDefault();
-            paths.EnsureDirectoriesExist();
+            if (DataRootStartup.Prepare(paths) is { } dataRootFailure)
+            {
+                // No data root means no log file and no database: nothing below can run.
+                desktop.MainWindow = new StartupErrorWindow(dataRootFailure.Title, dataRootFailure.Detail);
+                base.OnFrameworkInitializationCompleted();
+                return;
+            }
 
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Information()

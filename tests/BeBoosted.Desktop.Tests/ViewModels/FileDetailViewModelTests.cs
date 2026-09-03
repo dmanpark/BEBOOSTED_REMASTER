@@ -128,6 +128,28 @@ public sealed class FileDetailViewModelTests
         Assert.Null(file.ImportNotice);
     }
 
+    /// <summary>
+    /// The picker's filter is advisory — its filename box accepts any typed path — so an
+    /// unsupported type is refused below it and named in the notice, never imported
+    /// (BB-QA-005).
+    /// </summary>
+    [Fact]
+    public void ImportBatch_RefusesAnUnsupportedType_AndNamesItInTheNotice()
+    {
+        var shell = TestShell.Create();
+        var projects = shell.Projects;
+        projects.NewProjectName = "College Admissions";
+        projects.TryCreateProject();
+        projects.Detail!.NewFileTitle = "Metric Proof";
+        projects.Detail.TryCreateFile();
+        var file = projects.FileDetail!;
+
+        file.Import(ResourceKind.Document, [@"C:\in\good.pdf", @"C:\in\setup.exe"]);
+
+        Assert.Single(file.Resources);
+        Assert.Contains("setup.exe", file.ImportNotice, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void OpeningALink_StillLaunchesTheBrowser()
     {
