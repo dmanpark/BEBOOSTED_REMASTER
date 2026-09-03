@@ -1435,16 +1435,34 @@ git commit -m "refactor: let an extraction carry a degraded-parse notice"
 - [ ] **Step 1: Write the failing test**
 
 ```csharp
+using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Ai;
 using BeBoosted.Application.Projects;
 using BeBoosted.Domain.Projects;
 using BeBoosted.Infrastructure.Ai;
+using BeBoosted.Infrastructure.Persistence;
+using BeBoosted.Infrastructure.Projects;
+using BeBoosted.Infrastructure.Settings;
 using BeBoosted.Tests.Support;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BeBoosted.Tests.Ai;
 
-public sealed class RoutedAiProviderTests
+/// <summary>
+/// The router over real repositories, the way every other test in this project works —
+/// this project has no in-memory doubles, and the routing logic is what is under test,
+/// not the storage beneath it.
+/// </summary>
+public sealed class RoutedAiProviderTests : IDisposable
 {
+    private readonly TempDatabase _database = new();
+
+    public RoutedAiProviderTests()
+        => new MigrationRunner(_database.Factory, NullLogger<MigrationRunner>.Instance)
+            .Apply(EmbeddedMigrations.Load());
+
+    public void Dispose() => _database.Dispose();
+
     private sealed class StubCaptureModel(
         Func<CaptureRequest, IReadOnlyList<CaptureDraft>> extract) : ICaptureModel
     {
@@ -1469,14 +1487,13 @@ public sealed class RoutedAiProviderTests
         }
     }
 
-    private static (RoutedAiProvider Provider, InMemorySettingsStore Store, InMemoryProjectRepository Projects)
+    private (RoutedAiProvider Provider, CaptureModelSettings Settings, SqliteProjectRepository Projects)
         Create(ICaptureModel? claude = null, ICaptureModel? ollama = null)
     {
-        var store = new InMemorySettingsStore();
-        var projects = new InMemoryProjectRepository();
-        var resources = new InMemoryResourceRepository();
+        var projects = new SqliteProjectRepository(_database.Factory);
+        var resources = new SqliteResourceRepository(_database.Factory);
         var heuristic = new LocalHeuristicAiProvider(resources, projects);
-        var settings = new CaptureModelSettings(store);
+        var settings = new CaptureModelSettings(new SqliteSettingsStore(_database.Factory));
         var provider = new RoutedAiProvider(
             heuristic,
             source => source switch
@@ -1486,7 +1503,7 @@ public sealed class RoutedAiProviderTests
                 _ => null,
             },
             settings, projects);
-        return (provider, store, projects);
+        return (provider, settings, projects);
     }
 
     private static AiContext Context() => new(null, new DateOnly(2026, 9, 3));
@@ -1508,8 +1525,8 @@ public sealed class RoutedAiProviderTests
     public async Task WithClaudeSelected_ItsDraftsAreUsed()
     {
         var claude = new StubCaptureModel(_ => [new CaptureDraft("Finish DECA presentation", 90, null, null)]);
-        var (provider, store, _) = Create(claude: claude);
-        new CaptureModelSettings(store).Source = CaptureModelSource.Claude;
+        var (provider, settings, _) = Create(claude: claude);
+        settings.Source = CaptureModelSource.Claude;
 
         var result = await provider.ExtractTasksAsync("finish deca thing", Context());
 
@@ -1523,8 +1540,8 @@ public sealed class RoutedAiProviderTests
     public async Task AFailingBackend_FallsBackToTheHeuristic_AndSaysSo()
     {
         var claude = new StubCaptureModel(_ => throw new HttpRequestException("offline"));
-        var (provider, store, _) = Create(claude: claude);
-        new CaptureModelSettings(store).Source = CaptureModelSource.Claude;
+        var (provider, settings, _) = Create(claude: claude);
+        settings.Source = CaptureModelSource.Claude;
 
         var result = await provider.ExtractTasksAsync("Draft the essay outline", Context());
 
@@ -1537,8 +1554,8 @@ public sealed class RoutedAiProviderTests
     public async Task TheNoticeNamesOllama_WhenOllamaIsTheConfiguredSource()
     {
         var ollama = new StubCaptureModel(_ => throw new FormatException("not json"));
-        var (provider, store, _) = Create(ollama: ollama);
-        new CaptureModelSettings(store).Source = CaptureModelSource.Ollama;
+        var (provider, settings, _) = Create(ollama: ollama);
+        settings.Source = CaptureModelSource.Ollama;
 
         var result = await provider.ExtractTasksAsync("Draft the essay outline", Context());
 
@@ -1551,8 +1568,8 @@ public sealed class RoutedAiProviderTests
     {
         var ollama = new StubCaptureModel(
             _ => throw new HttpRequestException("SocketException: ECONNREFUSED 127.0.0.1:11434"));
-        var (provider, store, _) = Create(ollama: ollama);
-        new CaptureModelSettings(store).Source = CaptureModelSource.Ollama;
+        var (provider, settings, _) = Create(ollama: ollama);
+        settings.Source = CaptureModelSource.Ollama;
 
         var result = await provider.ExtractTasksAsync("Draft the essay outline", Context());
 
@@ -1563,8 +1580,8 @@ public sealed class RoutedAiProviderTests
     [Fact]
     public async Task AConfiguredSourceWithNoRegisteredBackend_FallsBack()
     {
-        var (provider, store, _) = Create(); // no backends supplied
-        new CaptureModelSettings(store).Source = CaptureModelSource.Claude;
+        var (provider, settings, _) = Create(); // no backends supplied
+        settings.Source = CaptureModelSource.Claude;
 
         var result = await provider.ExtractTasksAsync("Draft the essay outline", Context());
 
@@ -1576,10 +1593,10 @@ public sealed class RoutedAiProviderTests
     {
         var backend = new StubCaptureModel(
             _ => [new CaptureDraft("Finish DECA presentation", null, null, "Schoolwork")]);
-        var (provider, store, projects) = Create(claude: backend);
+        var (provider, settings, projects) = Create(claude: backend);
         var schoolwork = Project.Create("Schoolwork", "#5B8DEF", DateTimeOffset.UtcNow);
         projects.Add(schoolwork);
-        new CaptureModelSettings(store).Source = CaptureModelSource.Claude;
+        settings.Source = CaptureModelSource.Claude;
 
         var result = await provider.ExtractTasksAsync("finish deca", Context());
 
@@ -1593,8 +1610,8 @@ public sealed class RoutedAiProviderTests
     {
         var backend = new StubCaptureModel(
             _ => [new CaptureDraft("Task", null, null, "Nonexistent Project")]);
-        var (provider, store, _) = Create(claude: backend);
-        new CaptureModelSettings(store).Source = CaptureModelSource.Claude;
+        var (provider, settings, _) = Create(claude: backend);
+        settings.Source = CaptureModelSource.Claude;
 
         var result = await provider.ExtractTasksAsync("something", Context());
 
@@ -1606,8 +1623,8 @@ public sealed class RoutedAiProviderTests
     public async Task SuggestMetadata_DegradesSilently()
     {
         var claude = new StubCaptureModel(_ => throw new HttpRequestException("offline"));
-        var (provider, store, _) = Create(claude: claude);
-        new CaptureModelSettings(store).Source = CaptureModelSource.Claude;
+        var (provider, settings, _) = Create(claude: claude);
+        settings.Source = CaptureModelSource.Claude;
 
         var suggestion = await provider.SuggestMetadataAsync("Email Ms. Rivera", Context());
 
@@ -1618,8 +1635,8 @@ public sealed class RoutedAiProviderTests
     public async Task ProjectQuestions_AlwaysReachTheHeuristic()
     {
         var claude = new StubCaptureModel(_ => throw new InvalidOperationException("must not be called"));
-        var (provider, store, projects) = Create(claude: claude);
-        new CaptureModelSettings(store).Source = CaptureModelSource.Claude;
+        var (provider, settings, projects) = Create(claude: claude);
+        settings.Source = CaptureModelSource.Claude;
         var project = Project.Create("Schoolwork", "#5B8DEF", DateTimeOffset.UtcNow);
         projects.Add(project);
 
@@ -1757,7 +1774,7 @@ public sealed class RoutedAiProvider(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `dotnet test tests/BeBoosted.Tests --filter "FullyQualifiedName~RoutedAiProviderTests"`
-Expected: PASS, 11 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1969,7 +1986,8 @@ public sealed class ChatDegradedNoticeTests
             => Task.FromResult(new ProjectAnswerResult("no answer", []));
     }
 
-    private static async Task<IReadOnlyList<ChatItemViewModel>> SendAsync(string? notice)
+    /// <summary>A List, not IReadOnlyList: the ordering assertion needs IndexOf.</summary>
+    private static async Task<List<ChatItemViewModel>> SendAsync(string? notice)
     {
         var shell = TestShell.Create(aiProvider: new DegradingProvider(notice));
         var chat = shell.Chat;
@@ -2147,6 +2165,7 @@ public sealed class CaptureModelSettingsUiTests
         Assert.DoesNotContain(
             typeof(SettingsViewModel).GetProperties(),
             property => property.PropertyType == typeof(string)
+                && property.GetIndexParameters().Length == 0 // an indexer would throw
                 && property.GetValue(vm) as string == "sk-ant-secret");
     }
 
