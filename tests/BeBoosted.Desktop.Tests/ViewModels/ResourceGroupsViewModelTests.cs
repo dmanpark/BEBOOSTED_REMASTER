@@ -587,6 +587,100 @@ public sealed class ResourceGroupsViewModelTests
     }
 
     /// <summary>
+    /// The stale-list boundary <see cref="ACommittedMutationWhoseRefreshFails_IsReportedNotThrown"/>
+    /// pins for group mutations, extended to every other mutation on this surface. Each of
+    /// these committed its write and only the rebuild behind it failed; letting that escape
+    /// crashes the command or click handler that got here, over an operation that succeeded.
+    /// The list stays as it was — whole, stale, and said to be stale.
+    /// </summary>
+    [Fact]
+    public void ACommittedNoteAdd_WhoseRefreshFails_KeepsTheListAndReportsIt()
+    {
+        var (file, groupRepo) = FileWithFailableGroupReads();
+        AddNote(file, "Syllabus");
+        var rowsBefore = file.Resources.ToList();
+
+        groupRepo.ReadsUntilFailure = 0;
+        file.NewNoteTitle = "Exam date";
+        file.NewNoteContent = "Exam date body";
+
+        Assert.True(file.TryAddNote());
+
+        Assert.False(string.IsNullOrWhiteSpace(file.GroupNotice));
+        Assert.Equal(rowsBefore, file.Resources);
+        Assert.Equal(string.Empty, file.NewNoteTitle);
+    }
+
+    [Fact]
+    public void ACommittedLinkAdd_WhoseRefreshFails_KeepsTheListAndReportsIt()
+    {
+        var (file, groupRepo) = FileWithFailableGroupReads();
+        AddNote(file, "Syllabus");
+        var rowsBefore = file.Resources.ToList();
+
+        groupRepo.ReadsUntilFailure = 0;
+        file.NewLinkUrl = "https://example.edu/syllabus";
+
+        Assert.True(file.TryAddLink());
+
+        Assert.False(string.IsNullOrWhiteSpace(file.GroupNotice));
+        Assert.Equal(rowsBefore, file.Resources);
+        Assert.Equal(string.Empty, file.NewLinkUrl);
+    }
+
+    [Fact]
+    public void ACommittedImport_WhoseRefreshFails_KeepsTheListAndReportsIt()
+    {
+        var (file, groupRepo) = FileWithFailableGroupReads();
+        AddNote(file, "Syllabus");
+        var rowsBefore = file.Resources.ToList();
+
+        // The import's own placement read lands; the refresh's read behind it does not.
+        groupRepo.ReadsUntilFailure = 1;
+
+        file.Import(ResourceKind.Document, [Path.Combine(@"C:\anywhere", "Verbs.pdf")]);
+
+        Assert.False(string.IsNullOrWhiteSpace(file.GroupNotice));
+        Assert.Null(file.ImportNotice); // every file imported; only the reload failed
+        Assert.Equal(rowsBefore, file.Resources);
+    }
+
+    [Fact]
+    public void ACommittedResourceDelete_WhoseRefreshFails_KeepsTheListAndReportsIt()
+    {
+        var (file, groupRepo) = FileWithFailableGroupReads();
+        var syllabus = AddNote(file, "Syllabus");
+        AddNote(file, "Exam date");
+        var rowsBefore = file.Resources.ToList();
+
+        groupRepo.ReadsUntilFailure = 0;
+        file.Resources.Single(r => r.Resource.Id == syllabus).DeleteCommand.Execute(null);
+
+        file.ConfirmPromptCommand.Execute(null);
+
+        Assert.False(string.IsNullOrWhiteSpace(file.GroupNotice));
+        Assert.Equal(rowsBefore, file.Resources);
+    }
+
+    [Fact]
+    public void ACommittedResourceRename_WhoseRefreshFails_KeepsTheListAndReportsIt()
+    {
+        var (file, groupRepo) = FileWithFailableGroupReads();
+        var syllabus = AddNote(file, "Syllabus");
+        var rowsBefore = file.Resources.ToList();
+        var row = file.Resources.Single(r => r.Resource.Id == syllabus);
+        row.BeginRename();
+        row.RenameTitle = "Course syllabus";
+
+        groupRepo.ReadsUntilFailure = 0;
+
+        Assert.True(row.TryCommitRename());
+
+        Assert.False(string.IsNullOrWhiteSpace(file.GroupNotice));
+        Assert.Equal(rowsBefore, file.Resources);
+    }
+
+    /// <summary>
     /// A File detail whose group reads can be armed to fail, reached through the repository
     /// seams TestShell already exposes.
     /// </summary>

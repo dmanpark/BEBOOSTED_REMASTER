@@ -127,26 +127,28 @@ public sealed partial class FileDetailViewModel : ViewModelBase
     public partial string NewGroupTitle { get; set; } = string.Empty;
 
     /// <summary>
-    /// What went wrong with the last group action; null when it went cleanly. Cleared by
-    /// <see cref="Refresh"/>, so it describes the list currently on screen rather than
-    /// hanging over one that an unrelated add, import or rename has since rebuilt.
+    /// What went wrong with the last list action — a group mutation, or a resource add,
+    /// rename or delete; null when it went cleanly. Cleared by <see cref="Refresh"/>, so it
+    /// describes the list currently on screen rather than hanging over one that a later
+    /// action has since rebuilt. Import keeps its own per-file notice.
     /// </summary>
     [ObservableProperty]
     public partial string? GroupNotice { get; private set; }
 
     /// <summary>
-    /// The presentation boundary for every group mutation. A throw from the mutation is a
-    /// failure and is reported as one: the notice says why, the collections are left
-    /// exactly as they were, and nothing is rebuilt around a change that did not land.
+    /// The presentation boundary for every mutation on this surface — group actions and
+    /// resource adds, renames and deletes alike. A throw from the mutation is a failure and
+    /// is reported as one: the notice says why, the collections are left exactly as they
+    /// were, and nothing is rebuilt around a change that did not land.
     ///
     /// A throw from the refresh *behind* a mutation is a different thing and is not allowed
     /// to look like the same thing. The write has already committed, so reporting failure
-    /// would be a lie and letting it escape would crash the [RelayCommand] that got here —
-    /// the user seeing an error dialog for an operation that succeeded. Refresh is
-    /// all-or-nothing, so what is left is the previous list, correct as of a moment ago,
-    /// with a notice saying it is stale.
+    /// would be a lie and letting it escape would crash the [RelayCommand] or click handler
+    /// that got here — the user seeing an error dialog for an operation that succeeded.
+    /// Refresh is all-or-nothing, so what is left is the previous list, correct as of a
+    /// moment ago, with a notice saying it is stale.
     /// </summary>
-    private bool TryGroupMutation(Action mutation)
+    private bool TryListMutation(Action mutation)
     {
         GroupNotice = null;
         try
@@ -159,6 +161,14 @@ public sealed partial class FileDetailViewModel : ViewModelBase
             return false;
         }
 
+        RefreshOrNotice();
+        return true;
+    }
+
+    /// <summary>The refresh half of <see cref="TryListMutation"/>, for callers that guard
+    /// their mutation another way — an import batch reports its failures per file.</summary>
+    private void RefreshOrNotice()
+    {
         try
         {
             Refresh();
@@ -167,14 +177,12 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         {
             GroupNotice = $"That worked, but this list couldn't be reloaded: {error.Message}";
         }
-
-        return true;
     }
 
     /// <summary>Returns true when the group was created (the view closes its flyout).</summary>
     public bool TryCreateGroup()
     {
-        if (!TryGroupMutation(() => _service.CreateGroup(File.Id, NewGroupTitle)))
+        if (!TryListMutation(() => _service.CreateGroup(File.Id, NewGroupTitle)))
         {
             // The typed text stays: a refused title is one the user still has to fix.
             return false;
@@ -185,10 +193,10 @@ public sealed partial class FileDetailViewModel : ViewModelBase
     }
 
     internal bool TryRenameGroup(Domain.ResourceGroupId id, string title)
-        => TryGroupMutation(() => _service.RenameGroup(id, title));
+        => TryListMutation(() => _service.RenameGroup(id, title));
 
     internal bool TryUngroup(Domain.ResourceGroupId id)
-        => TryGroupMutation(() => _service.UngroupGroup(id));
+        => TryListMutation(() => _service.UngroupGroup(id));
 
     /// <summary>
     /// Files a resource into a group, or back out to loose. The moved row is reselected by
@@ -197,7 +205,7 @@ public sealed partial class FileDetailViewModel : ViewModelBase
     /// </summary>
     internal bool TryMoveResource(Domain.ResourceId id, Domain.ResourceGroupId? groupId)
     {
-        if (!TryGroupMutation(() => _service.MoveResourceToGroup(id, groupId)))
+        if (!TryListMutation(() => _service.MoveResourceToGroup(id, groupId)))
         {
             return false;
         }
@@ -245,7 +253,7 @@ public sealed partial class FileDetailViewModel : ViewModelBase
                 + "and any stored files are deleted too.",
             "Delete group",
             IsTaskDeletion: false);
-        _pendingConfirmedAction = () => TryGroupMutation(() => _service.DeleteGroup(group.Id));
+        _pendingConfirmedAction = () => TryListMutation(() => _service.DeleteGroup(group.Id));
     }
 
     /// <summary>
@@ -368,12 +376,10 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         _pendingConfirmedAction = null;
     }
 
-    /// <summary>One retitled resource; the list rebuilds so the row shows it.</summary>
-    internal void RenameResource(ResourceRowViewModel row, string title)
-    {
-        _service.RenameResource(row.Resource.Id, title);
-        Refresh();
-    }
+    /// <summary>One retitled resource; the list rebuilds so the row shows it. Returns
+    /// false only when the rename itself was refused (the flyout stays open).</summary>
+    internal bool RenameResource(ResourceRowViewModel row, string title)
+        => TryListMutation(() => _service.RenameResource(row.Resource.Id, title));
 
     public void Refresh()
     {
@@ -518,10 +524,14 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         }
 
         var title = string.IsNullOrWhiteSpace(NewLinkTitle) ? NewLinkUrl.Trim() : NewLinkTitle;
-        _service.AddLink(File.Id, title, NewLinkUrl);
+        if (!TryListMutation(() => _service.AddLink(File.Id, title, NewLinkUrl)))
+        {
+            // The typed fields stay: a refused link is one the user still has to fix.
+            return false;
+        }
+
         NewLinkTitle = string.Empty;
         NewLinkUrl = string.Empty;
-        Refresh();
         return true;
     }
 
@@ -532,10 +542,13 @@ public sealed partial class FileDetailViewModel : ViewModelBase
             return false;
         }
 
-        _service.AddNote(File.Id, NewNoteTitle, NewNoteContent);
+        if (!TryListMutation(() => _service.AddNote(File.Id, NewNoteTitle, NewNoteContent)))
+        {
+            return false;
+        }
+
         NewNoteTitle = string.Empty;
         NewNoteContent = string.Empty;
-        Refresh();
         return true;
     }
 
@@ -567,7 +580,7 @@ public sealed partial class FileDetailViewModel : ViewModelBase
         ImportNotice = failures.Count == 0
             ? null
             : $"Couldn't import {string.Join(", ", failures)}.";
-        Refresh();
+        RefreshOrNotice();
     }
 
     /// <summary>
@@ -584,10 +597,7 @@ public sealed partial class FileDetailViewModel : ViewModelBase
     }
 
     public void DeleteResource(ResourceRowViewModel row)
-    {
-        _service.DeleteResource(row.Resource.Id);
-        Refresh();
-    }
+        => TryListMutation(() => _service.DeleteResource(row.Resource.Id));
 
     [RelayCommand]
     private void Back() => _owner.CloseFileCommand.Execute(null);
@@ -786,8 +796,7 @@ public sealed partial class ResourceRowViewModel : ViewModelBase
             return false;
         }
 
-        _owner.RenameResource(this, RenameTitle);
-        return true;
+        return _owner.RenameResource(this, RenameTitle);
     }
 
     private static string TryHost(string? url)
