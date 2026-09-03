@@ -93,7 +93,7 @@ Settings gains a **Capture model** card with three exclusive choices:
 - **Built-in (no model)** — the default, and what every existing profile keeps. The
   heuristic parses captures. Nothing leaves the machine. No configuration.
 - **Ollama (on this computer)** — endpoint (default `http://localhost:11434`) and
-  model name (default `mistral`) fields.
+  model name (default `qwen2.5:7b-instruct`) fields.
 - **Claude (cloud)** — an API key field and a model name (default
   `claude-sonnet-4-6`).
 
@@ -189,9 +189,17 @@ the name. A backend that cannot answer throws, and the router decides what that 
 
 ### `BeBoosted.Application` — `CaptureModelSource`
 
-`Heuristic | Ollama | Claude`, with the settings-backed accessor alongside
-`AiPermissionSettings`, which it mirrors in shape. Defaults to `Heuristic` when unset
-or unrecognised.
+`Heuristic | Ollama | Claude`, with a settings-backed accessor (`CaptureModelSettings`)
+alongside `AiPermissionSettings`, which it mirrors in shape. Five new keys on
+`SettingKeys`:
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `ai.captureModel.source` | `heuristic` | An unset or unrecognised value reads as `heuristic`, so no existing profile changes behavior and a hand-edited database cannot select a backend that does not exist. |
+| `ai.claude.model` | `claude-sonnet-4-6` | |
+| `ai.claude.apiKey` | unset | Ciphertext from `ISecretProtector`; never written or logged in plaintext. |
+| `ai.ollama.endpoint` | `http://localhost:11434` | |
+| `ai.ollama.model` | `qwen2.5:7b-instruct` | An instruction-tuned model, which the JSON-shaped extraction task needs. |
 
 ### `BeBoosted.Application` — `CaptureExtractionPrompt` and `CaptureDraftParser`
 
@@ -300,7 +308,12 @@ Ollama needs no package: it is one `HttpClient` POST to a local endpoint.
 - **Chat**: a degraded capture renders its notice; a healthy capture renders none.
 - **Live check, manual, at the end of the branch**: one real Claude capture with a
   real key and one real Ollama capture, in a disposable profile, recorded the way the
-  resource-groups phase-1 verification was.
+  resource-groups phase-1 verification was. The Ollama half needs no account and can
+  run first — `qwen2.5:7b-instruct` is already pulled on the development machine — so
+  the local backend is provable end to end before any key exists. The BB-QA-003
+  message is the capture to send: three drafts today, one of them the fragment *"It
+  probably needs two focused sessions"*, is the before state this feature exists to
+  change, and the live check should record what each backend returns for it.
 
 ## Known limitations
 
@@ -312,5 +325,8 @@ Ollama needs no package: it is one `HttpClient` POST to a local endpoint.
 - Ollama must be started by the user; the app does not launch or install it.
 - No streaming, so a slow local model shows nothing until it answers or the 15-second
   timeout fires.
-- The prompt is tuned against Claude and a Mistral-class local model. A very small
-  local model may parse poorly; that is visible in the review list and reversible.
+- The prompt is tuned against Claude and a 7B-class instruction-tuned local model. A
+  much smaller model — a 3B, or a base model rather than an instruct one — may ignore
+  the JSON contract or split sentences the way the heuristic does. That is visible in
+  the review list and reversible by naming another model, and the parser refuses
+  malformed output rather than passing it through.
