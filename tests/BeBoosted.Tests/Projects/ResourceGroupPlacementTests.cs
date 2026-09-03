@@ -140,11 +140,14 @@ public sealed class ResourceGroupPlacementTests
     [Fact]
     public void ImportFile_WhenTheGroupReadFaults_LeavesNoBytesAndNoRow()
     {
+        // The group's title carries an extension, which titles may ("Notes.txt" is a fine
+        // group name): since imports must carry a supported extension (BB-QA-005), that is
+        // the same-name collision that can still arrive through ImportFile.
         using var f = new ResourceGroupFixture();
         var parent = ResourceLayout.FolderFor(f.Project, f.File);
-        var group = f.Group("Notes");
+        var group = f.Group("Notes.txt");
         var existing = f.Resources.GetForFile(f.File.Id).Count;
-        var source = f.SourceFile("Notes", "loose bytes");
+        var source = f.SourceFile("Notes.txt", "loose bytes");
 
         var service = f.CreateService(groups: new FaultingGroups(f.Groups));
         var failure = Assert.Throws<InvalidOperationException>(
@@ -154,14 +157,14 @@ public sealed class ResourceGroupPlacementTests
         // Nothing half-done: no row, no bytes anywhere the import could have put them, and
         // above all not on the group's claimed name.
         Assert.Equal(existing, f.Resources.GetForFile(f.File.Id).Count);
-        Assert.False(f.Storage.Exists(Path.Combine(parent, "Notes")));
-        Assert.False(f.Storage.Exists(Path.Combine(parent, "Notes (2)")));
+        Assert.False(f.Storage.Exists(Path.Combine(parent, "Notes.txt")));
+        Assert.False(f.Storage.Exists(Path.Combine(parent, "Notes (2).txt")));
         Assert.True(Directory.Exists(Resolve(f, parent, group.FolderSegment)));
 
         // The source is untouched, so the retry the user is left with is a real one.
         Assert.Equal("loose bytes", System.IO.File.ReadAllText(source));
         Assert.Equal(
-            Path.Combine(parent, "Notes (2)"),
+            Path.Combine(parent, "Notes (2).txt"),
             f.CreateService().ImportFile(f.File.Id, ResourceKind.Document, source).StoredPath);
     }
 
@@ -238,19 +241,21 @@ public sealed class ResourceGroupPlacementTests
     /// <summary>
     /// The case no ordering can reach. An empty group has no member to create its directory,
     /// and after a rename its claim exists nowhere but the row — the directory it reserved is
-    /// under the old parent and the new one has never been made. An extensionless import of
-    /// the same name is then the only thing asking for that path, so a disk check has nothing
-    /// to refuse it with, and taking it would leave the group unable to create its directory
-    /// ever again: its persisted segment would name a file.
+    /// under the old parent and the new one has never been made. An import whose name matches
+    /// the group's segment is then the only thing asking for that path, so a disk check has
+    /// nothing to refuse it with, and taking it would leave the group unable to create its
+    /// directory ever again: its persisted segment would name a file. (Extensionless imports
+    /// are refused at the door now — BB-QA-005 — so the group's title carries the extension,
+    /// which titles may; the collision is the same.)
     ///
     /// Imported through the service rather than the fixture on purpose — this is the
     /// production path, and it is the one whose <c>Store</c> call has to carry the claims.
     /// </summary>
     [Fact]
-    public void AnEmptyGroupsClaim_SurvivesAParentRename_AndAnExtensionlessImportAfterIt()
+    public void AnEmptyGroupsClaim_SurvivesAParentRename_AndACollidingImportAfterIt()
     {
         using var f = new ResourceGroupFixture();
-        var group = f.Group("Notes");
+        var group = f.Group("Notes.txt");
         f.Document("syllabus.txt", "syllabus bytes");
 
         var service = f.CreateService();
@@ -258,27 +263,28 @@ public sealed class ResourceGroupPlacementTests
 
         var file = f.Files.GetById(f.File.Id)!;
         var parent = ResourceLayout.FolderFor(f.Project, file);
-        Assert.Equal("Notes", f.Groups.GetById(group.Id)!.FolderSegment);
+        Assert.Equal("Notes.txt", f.Groups.GetById(group.Id)!.FolderSegment);
 
         // The claim has no directory to stand on: the group never had a member to make one.
-        Assert.False(Directory.Exists(Resolve(f, parent, "Notes")));
-        Assert.False(System.IO.File.Exists(Resolve(f, parent, "Notes")));
+        Assert.False(Directory.Exists(Resolve(f, parent, "Notes.txt")));
+        Assert.False(System.IO.File.Exists(Resolve(f, parent, "Notes.txt")));
 
         var imported = service.ImportFile(
-            file.Id, ResourceKind.Document, f.SourceFile("Notes", "loose bytes"));
-        Assert.Equal(Path.Combine(parent, "Notes (2)"), imported.StoredPath);
+            file.Id, ResourceKind.Document, f.SourceFile("Notes.txt", "loose bytes"));
+        Assert.Equal(Path.Combine(parent, "Notes (2).txt"), imported.StoredPath);
         Assert.Equal("loose bytes", Read(f, imported.StoredPath));
-        Assert.False(System.IO.File.Exists(Resolve(f, parent, "Notes")));
+        Assert.False(System.IO.File.Exists(Resolve(f, parent, "Notes.txt")));
 
         // And the group can still take its directory the moment it gains a member.
         var member = service.ImportFile(
             file.Id, ResourceKind.Document, f.SourceFile("member.txt", "member bytes"));
         service.MoveResourceToGroup(member.Id, group.Id);
 
-        var memberPath = Path.Combine(parent, "Notes", "member.txt");
+        var memberPath = Path.Combine(parent, "Notes.txt", "member.txt");
         Assert.Equal(memberPath, f.Resources.GetById(member.Id)!.StoredPath);
         Assert.Equal("member bytes", Read(f, memberPath));
-        Assert.Equal(Path.Combine(parent, "Notes (2)"), f.Resources.GetById(imported.Id)!.StoredPath);
+        Assert.Equal(
+            Path.Combine(parent, "Notes (2).txt"), f.Resources.GetById(imported.Id)!.StoredPath);
         Assert.Equal(0, f.Reconciler().ReconcileProject(f.Project.Id));
     }
 
@@ -481,9 +487,10 @@ public sealed class ResourceGroupPlacementTests
         var healthy = SiblingFile(f, "History");
         var elsewhere = LegacyDocument(f, healthy.Id, "Brief.pdf", "brief bytes");
 
-        var refused = Assert.Throws<IOException>(
+        var refused = Assert.Throws<DomainException>(
             () => f.CreateService(storage: new RefusingReservations(f.Storage)).RenameGroup(group.Id, "Reading"));
-        Assert.Equal("the folder could not be created", refused.Message);
+        Assert.Contains("couldn't claim its folder", refused.Message);
+        Assert.Contains("the folder could not be created", refused.Message);
         var unchanged = f.Groups.GetById(group.Id)!;
         Assert.Equal("Notes", unchanged.Title);
         Assert.Equal("Notes", unchanged.FolderSegment);

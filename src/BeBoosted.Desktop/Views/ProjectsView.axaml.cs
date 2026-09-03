@@ -6,6 +6,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using BeBoosted.Application.Projects;
 using BeBoosted.Desktop.ViewModels;
 using BeBoosted.Domain.Projects;
 
@@ -279,14 +280,25 @@ public partial class ProjectsView : UserControl
         }
     }
 
+    // Both filters come from the lists the validation below the picker enforces
+    // (BB-QA-005), so what the dialog offers and what the import accepts cannot drift.
     private async void OnAddDocumentClick(object? sender, RoutedEventArgs e)
         => await PickAndImportAsync(
             ResourceKind.Document,
             "Add documents",
-            new FilePickerFileType("Documents") { Patterns = ["*.pdf", "*.doc", "*.docx", "*.txt", "*.md"] });
+            new FilePickerFileType("Documents")
+            {
+                Patterns = [.. SupportedImports.PatternsFor(ResourceKind.Document)],
+            });
 
     private async void OnAddImageClick(object? sender, RoutedEventArgs e)
-        => await PickAndImportAsync(ResourceKind.Image, "Add images", FilePickerFileTypes.ImageAll);
+        => await PickAndImportAsync(
+            ResourceKind.Image,
+            "Add images",
+            new FilePickerFileType("Images")
+            {
+                Patterns = [.. SupportedImports.PatternsFor(ResourceKind.Image)],
+            });
 
     private async System.Threading.Tasks.Task PickAndImportAsync(
         ResourceKind kind, string title, FilePickerFileType filter)

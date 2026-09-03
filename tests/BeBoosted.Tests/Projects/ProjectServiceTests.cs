@@ -1,4 +1,4 @@
-﻿using BeBoosted.Application.Abstractions;
+using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Ai;
 using BeBoosted.Application.Calendar;
 using BeBoosted.Application.Projects;
@@ -298,6 +298,56 @@ public sealed class ProjectServiceTests : IDisposable
         _service.DeleteResource(resource.Id);
         Assert.False(_storage.Exists(resource.StoredPath!));
         Assert.Null(_resources.GetById(resource.Id));
+    }
+
+    /// <summary>
+    /// The picker's filter is advisory: its filename box accepts any typed path, so the
+    /// type check has to live below it (BB-QA-005). A refused import stores nothing and
+    /// persists nothing — refusal before the bytes move, not cleanup after.
+    /// </summary>
+    [Fact]
+    public void ImportFile_RefusesAnUnsupportedDocumentType()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "setup.exe");
+        File.WriteAllText(source, "not a document");
+
+        var error = Assert.Throws<DomainException>(
+            () => _service.ImportFile(file.Id, ResourceKind.Document, source));
+
+        Assert.Contains("setup.exe", error.Message);
+        Assert.Empty(_resources.GetForFile(file.Id));
+        Assert.False(_storage.Exists(
+            Path.Combine("College Admissions", "Metric Proof", "setup.exe")));
+    }
+
+    [Fact]
+    public void ImportFile_RefusesAFileWithNoExtension()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript");
+        File.WriteAllText(source, "extensionless");
+
+        Assert.Throws<DomainException>(
+            () => _service.ImportFile(file.Id, ResourceKind.Document, source));
+
+        Assert.Empty(_resources.GetForFile(file.Id));
+    }
+
+    [Fact]
+    public void ImportFile_RefusesADocumentFileAsAnImage()
+    {
+        var project = _service.CreateProject("College Admissions");
+        var file = _service.CreateFile(project.Id, "Metric Proof", null);
+        var source = Path.Combine(_paths.DataDirectory, "Transcript.pdf");
+        File.WriteAllText(source, "fake pdf bytes");
+
+        Assert.Throws<DomainException>(
+            () => _service.ImportFile(file.Id, ResourceKind.Image, source));
+
+        Assert.Empty(_resources.GetForFile(file.Id));
     }
 
     [Fact]
