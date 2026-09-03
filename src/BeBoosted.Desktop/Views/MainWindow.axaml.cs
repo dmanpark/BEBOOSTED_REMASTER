@@ -11,18 +11,40 @@ namespace BeBoosted.Desktop.Views;
 public partial class MainWindow : Window
 {
     private IInputElement? _taskEditorReturnFocus;
+    private IInputElement? _drawerReturnFocus;
 
     public MainWindow()
     {
         InitializeComponent();
 
-        // Focus the capture box whenever the Inbox drawer opens.
+        // The drawer moves focus into its capture box on open, so close has to give it
+        // back (BB-QA-006) — to the exact invoker when it survived, else to the rail
+        // toggle, which owns the drawer and always exists.
         InboxDrawer.PropertyChanged += (_, e) =>
         {
-            if (e.Property == IsVisibleProperty && e.NewValue is true)
+            if (e.Property != IsVisibleProperty)
             {
-                Dispatcher.UIThread.Post(() => InboxDrawerContent.FocusCapture());
+                return;
             }
+
+            if (e.NewValue is true)
+            {
+                _drawerReturnFocus = FocusManager?.GetFocusedElement();
+                Dispatcher.UIThread.Post(() => InboxDrawerContent.FocusCapture());
+                return;
+            }
+
+            var invoker = _drawerReturnFocus as Control;
+            _drawerReturnFocus = null;
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (invoker is { IsLoaded: true, IsEffectivelyVisible: true } && invoker.Focus())
+                {
+                    return;
+                }
+
+                InboxRailToggle.Focus();
+            });
         };
 
         DataContextChanged += (_, _) =>
