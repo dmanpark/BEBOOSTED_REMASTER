@@ -205,7 +205,32 @@ approximated.
 - **Two pre-existing documentation-reference warnings** in the storage tests, invisible because no
   project generates a documentation file.
 
+## Addendum 2026-09-02 — the three deferred live checks, now verified
+
+All three ran against the running app in a disposable profile (`BEBOOSTED_DATA_DIR` set to a
+throwaway directory; the real library untouched). The picker blocker was solved without synthesized
+input: the "Add documents" dialog turned out to be findable as a Win32 window of the app's process
+(it never appears as a UI Automation root child, which is why the earlier sweep missed it), and its
+classic control structure is intact — filename Edit (control id 1148), Open (id 1), Cancel (id 2).
+`WM_SETTEXT` and `BM_CLICK` sent to those exact handles satisfy the same safety bar as UIA patterns:
+no cursor, no z-order, no foreground dependency, no possibility of input reaching another
+application.
+
+| Check | Result |
+| --- | --- |
+| Import through the running app's picker | Two documents imported in one multi-select Open; both arrived **loose**, rows and bytes correct |
+| Extensionless name colliding with a group's segment | File literally named `Unit 5` imported while group `Unit 5` existed; placed as `Unit 5 (2)`, the group's directory stayed a directory, no stranding |
+| Byte movement on a parent File rename | `Vault` → `Vault Prime`: grouped member's bytes moved to `Vault Prime\Unit 5\notes-a.txt`, loose colliding doc to `Vault Prime\Unit 5 (2)`, stored paths updated, content intact |
+| Confirmed group deletion removes stored bytes | Prompt read "Delete 'Unit 5'? Its 1 resource and any stored files are deleted too."; Confirm removed the member's row and its bytes; the unrelated loose document was untouched |
+
+Bonus, upgrading the "weaker than it looks" note above: the restart/settled-reconcile check was
+re-run with a real stored document rather than a link — the group and its membership survived the
+restart (header announced "Group Unit 5, 1 item") and the second reconcile logged **zero moves**.
+
+Old empty directories (`Vault\`, `Vault\Unit 5\`, and the emptied group directory after deletion)
+remain on disk — the plan-sanctioned pruning deferral, observed and expected.
+
 ## Status
 
-Phase 1 is implemented, reviewed and verified to the extent recorded above. Three live checks are
-explicitly unverified and await manual confirmation. No push, no pull request, no merge.
+Phase 1 is implemented, reviewed and verified. The three formerly deferred live checks were
+confirmed by hand on 2026-09-02 (addendum above). Pushed to origin/main on 2026-09-02.
