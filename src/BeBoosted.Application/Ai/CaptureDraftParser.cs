@@ -11,8 +11,25 @@ namespace BeBoosted.Application.Ai;
 /// </summary>
 public static class CaptureDraftParser
 {
+    /// <summary>
+    /// A task's title is a calendar row label, not prose. The parser is the only validation
+    /// boundary between model and app, so this cap prevents unchecked model output from claiming
+    /// unbounded space in the UI.
+    /// </summary>
     private const int MaxTitleLength = 200;
+
+    /// <summary>
+    /// A duration of zero or less is meaningless — a model claiming a negative session would be
+    /// a parse error, not a plan detail. The parser is the only validation boundary, so the floor
+    /// is set here rather than trusted to downstream consumers.
+    /// </summary>
     private const int MinMinutes = 1;
+
+    /// <summary>
+    /// A session longer than 24 hours is a model hallucination, not a planning detail.
+    /// A 1440-minute (24-hour) cap lets the parser refuse to store durations beyond a single day
+    /// at the point where the model's JSON is first trusted.
+    /// </summary>
     private const int MaxMinutes = 24 * 60;
 
     public static IReadOnlyList<CaptureDraft> Parse(string json)

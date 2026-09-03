@@ -79,6 +79,17 @@ public sealed class CaptureDraftParserTests
         Assert.Null(draft.EstimatedMinutes);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(1440)]
+    public void TheInclusiveDurationBounds_AreAccepted(int minutes)
+    {
+        var draft = Assert.Single(CaptureDraftParser.Parse(
+            $$"""{"tasks":[{"title":"Task","estimated_minutes":{{minutes}}}]}"""));
+
+        Assert.Equal(minutes, draft.EstimatedMinutes);
+    }
+
     [Fact]
     public void AnAbsurdlyLongTitle_IsTruncatedRatherThanStored()
     {
