@@ -18,7 +18,8 @@ public interface IProvenanceInvalidator
 public sealed record TaskExtractionOutcome(
     IReadOnlyList<ExtractedTaskDraft> Drafts,
     bool AddedAutomatically,
-    IReadOnlyList<TaskItem> AddedTasks);
+    IReadOnlyList<TaskItem> AddedTasks,
+    string? DegradedNotice = null);
 
 /// <summary>A persisted project answer plus its exact citations.</summary>
 public sealed record ProjectAnswerOutcome(
@@ -43,15 +44,18 @@ public sealed class AiService(
     public async Task<TaskExtractionOutcome> ExtractTasksAsync(
         string message, AiContext context, CancellationToken cancellationToken = default)
     {
-        var drafts = await provider.ExtractTasksAsync(message, context, cancellationToken);
-        if (drafts.Count == 0 || permissions.TaskCapture == TaskCapturePermission.ReviewBeforeAdding)
+        var result = await provider.ExtractTasksAsync(message, context, cancellationToken);
+        if (result.Drafts.Count == 0
+            || permissions.TaskCapture == TaskCapturePermission.ReviewBeforeAdding)
         {
-            return new TaskExtractionOutcome(drafts, AddedAutomatically: false, []);
+            return new TaskExtractionOutcome(
+                result.Drafts, AddedAutomatically: false, [], result.DegradedNotice);
         }
 
         // Auto-add is allowed, but every task keeps its AI origin and provenance.
-        var added = AcceptDrafts(drafts);
-        return new TaskExtractionOutcome(drafts, AddedAutomatically: true, added);
+        var added = AcceptDrafts(result.Drafts);
+        return new TaskExtractionOutcome(
+            result.Drafts, AddedAutomatically: true, added, result.DegradedNotice);
     }
 
     /// <summary>Creates reviewed (or auto-added) tasks with AI origin and shared provenance.</summary>

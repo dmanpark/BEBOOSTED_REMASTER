@@ -35,11 +35,11 @@ public sealed class LocalHeuristicAiProviderTests : IDisposable
     [Fact]
     public async Task ExtractTasks_ParsesTitlesDeadlinesAndDurations()
     {
-        var drafts = await _provider.ExtractTasksAsync(
+        var drafts = (await _provider.ExtractTasksAsync(
             "I need to finish my DECA presentation before Friday. "
             + "Also email the recommendation request to Ms. Rivera.",
             Context(),
-            TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken)).Drafts;
 
         Assert.Equal(2, drafts.Count);
         Assert.Equal("Finish my DECA presentation", drafts[0].Title);
@@ -72,7 +72,7 @@ public sealed class LocalHeuristicAiProviderTests : IDisposable
         var deca = Project.Create("DECA", ProjectPalette.Colors[0], Now);
         _projects.Add(deca);
 
-        var drafts = await _provider.ExtractTasksAsync("Practice the DECA role-play", Context(), TestContext.Current.CancellationToken);
+        var drafts = (await _provider.ExtractTasksAsync("Practice the DECA role-play", Context(), TestContext.Current.CancellationToken)).Drafts;
 
         Assert.Equal(deca.Id, Assert.Single(drafts).ProjectId);
     }
@@ -121,8 +121,8 @@ public sealed class LocalHeuristicAiProviderTests : IDisposable
     public async Task Provider_IsDeterministic()
     {
         const string message = "Draft the essay outline before Sunday and review economics for 45 min";
-        var first = await _provider.ExtractTasksAsync(message, Context(), TestContext.Current.CancellationToken);
-        var second = await _provider.ExtractTasksAsync(message, Context(), TestContext.Current.CancellationToken);
+        var first = (await _provider.ExtractTasksAsync(message, Context(), TestContext.Current.CancellationToken)).Drafts;
+        var second = (await _provider.ExtractTasksAsync(message, Context(), TestContext.Current.CancellationToken)).Drafts;
 
         Assert.Equal(
             first.Select(d => (d.Title, d.EstimatedDuration, d.Deadline)),

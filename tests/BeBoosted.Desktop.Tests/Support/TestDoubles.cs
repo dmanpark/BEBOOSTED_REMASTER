@@ -625,6 +625,17 @@ public sealed class FakeClock(DateOnly today) : IClock
     public DateOnly Today => today;
 }
 
+/// <summary>A minimal, shareable <see cref="IAppDataPaths"/> double for tests that only
+/// need a path to exist, not to be written to.</summary>
+public sealed class FakeAppDataPaths : IAppDataPaths
+{
+    public string DataDirectory => Path.Combine(Path.GetTempPath(), "beboosted-tests");
+
+    public string LogsDirectory => Path.Combine(DataDirectory, "logs");
+
+    public string ResourcesDirectory => Path.Combine(DataDirectory, "resources");
+}
+
 public static class TestShell
 {
     /// <summary>Tuesday, August 11, 2026 — the date used across the design frames.</summary>
@@ -680,7 +691,8 @@ public static class TestShell
         InMemoryPrioritizationRepository? ranks = null,
         BeBoosted.Desktop.Platform.IFileRevealService? reveal = null,
         IResourceStorage? resourceStorage = null,
-        IProjectMutations? projectMutations = null)
+        IProjectMutations? projectMutations = null,
+        IAiProvider? aiProvider = null)
     {
         var settingsStore = store ?? new InMemorySettingsStore();
         var settings = new AppSettings(settingsStore);
@@ -714,9 +726,9 @@ public static class TestShell
         groupRepo.Resources = resourceRepo;
         var storage = resourceStorage ?? new FakeResourceStorage();
         var aiPermissions = new AiPermissionSettings(settingsStore);
-        var aiProvider = new BeBoosted.Infrastructure.Ai.LocalHeuristicAiProvider(resourceRepo, projectRepo);
+        var provider = aiProvider ?? new BeBoosted.Infrastructure.Ai.LocalHeuristicAiProvider(resourceRepo, projectRepo);
         var aiService = new AiService(
-            aiProvider, new InMemoryAiProvenanceRepository(), repository, aiPermissions, clock);
+            provider, new InMemoryAiProvenanceRepository(), repository, aiPermissions, clock);
         var projectService = new ProjectService(
             projectRepo, fileRepo, resourceRepo, storage,
             projectMutations
@@ -731,7 +743,9 @@ public static class TestShell
             new ProjectsViewModel(
                 projectService, projectRepo, fileRepo, resourceRepo,
                 calendarService, reveal ?? new FakeFileReveal(), aiService),
-            new SettingsViewModel(new FakePaths(), aiPermissions),
+            new SettingsViewModel(
+                new FakePaths(), aiPermissions, new CaptureModelSettings(settingsStore),
+                new BeBoosted.Infrastructure.Security.UnavailableSecretProtector()),
             new ChatViewModel(aiService, aiPermissions, clock),
             prioritySort,
             aiPermissions,

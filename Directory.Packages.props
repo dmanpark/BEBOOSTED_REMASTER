@@ -16,6 +16,10 @@
     <!-- Persistence -->
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.11" />
 
+    <!-- AI -->
+    <PackageVersion Include="Anthropic" Version="12.45.0" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.11" />
+
     <!-- Composition and logging -->
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
