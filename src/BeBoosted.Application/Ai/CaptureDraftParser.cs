@@ -55,6 +55,16 @@ public static class CaptureDraftParser
                 title, ReadMinutes(entry), ReadDeadline(entry), ReadProject(entry)));
         }
 
+        // An explicitly empty "tasks" array is a valid answer ("no task in this
+        // message"). A non-empty array where nothing survived validation is a
+        // different situation — the model's reply was malformed, not empty — and must
+        // throw so the router degrades with a notice instead of reporting false
+        // success with an empty draft list and no explanation.
+        if (drafts.Count == 0 && tasks.GetArrayLength() > 0)
+        {
+            throw new FormatException("None of the model's task entries could be read.");
+        }
+
         return drafts;
     }
 

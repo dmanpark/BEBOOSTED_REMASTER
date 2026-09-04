@@ -100,9 +100,38 @@ public sealed class CaptureDraftParserTests
         Assert.True(draft.Title.Length <= 200, "a model must not be able to write an unbounded title");
     }
 
+    /// <summary>
+    /// Renamed from "AWhitespaceOnlyTitle_IsSkipped": under the all-malformed rule this
+    /// single garbage entry is no longer silently swallowed. A non-empty "tasks" array
+    /// where nothing survives validation must throw, exactly like any other malformed
+    /// reply, so the router degrades with a notice instead of reporting false success.
+    /// </summary>
     [Fact]
-    public void AWhitespaceOnlyTitle_IsSkipped()
-        => Assert.Empty(CaptureDraftParser.Parse("""{"tasks":[{"title":"   "}]}"""));
+    public void AWhitespaceOnlyTitle_IsTheOnlyEntry_SoTheBatchFails()
+        => Assert.Throws<FormatException>(() => CaptureDraftParser.Parse("""{"tasks":[{"title":"   "}]}"""));
+
+    /// <summary>
+    /// The other half of the same rule, distinct from the all-malformed case above: a
+    /// message the model correctly judged to contain no task is a valid, successful
+    /// answer and must not throw. Conflating "explicitly empty" with "all garbage"
+    /// would turn a healthy "no task here" reply into a false degraded notice.
+    /// </summary>
+    [Fact]
+    public void AnExplicitlyEmptyTaskArray_StillReturnsEmpty_WithoutThrowing()
+        => Assert.Empty(CaptureDraftParser.Parse("""{"tasks": []}"""));
+
+    /// <summary>
+    /// The all-malformed case itself, with more than one bad entry: nothing in the
+    /// batch survives validation, so this must fail the same way a single bad entry
+    /// does — not degrade silently into an empty, "successful" draft list. Before this
+    /// fix, this parsed without throwing into an empty list, and the router reported it
+    /// as success with no degraded notice, telling the user a false "I couldn't find a
+    /// task in that" even though the model's reply was the actual failure.
+    /// </summary>
+    [Fact]
+    public void AllEntriesMalformed_Throws_RatherThanReportingFalseSuccess()
+        => Assert.Throws<FormatException>(
+            () => CaptureDraftParser.Parse("""{"tasks":[{"foo":1},{"bar":2}]}"""));
 
     [Fact]
     public void NonJson_Throws_SoTheRouterCanFallBack()
