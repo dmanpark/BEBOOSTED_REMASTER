@@ -175,7 +175,8 @@ public sealed class SettingsViewModelTests
         var store = new InMemorySettingsStore();
         var permissions = new AiPermissionSettings(store);
         var settings = new SettingsViewModel(
-            new BeBoosted.Infrastructure.Storage.DefaultAppDataPaths(Path.GetTempPath()), permissions);
+            new BeBoosted.Infrastructure.Storage.DefaultAppDataPaths(Path.GetTempPath()), permissions,
+            new CaptureModelSettings(store), new BeBoosted.Infrastructure.Security.UnavailableSecretProtector());
 
         Assert.True(settings.IsTaskCaptureReview);
         Assert.True(settings.IsPlanningReview);

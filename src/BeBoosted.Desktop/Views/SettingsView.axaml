@@ -4,6 +4,20 @@
              x:Class="BeBoosted.Desktop.Views.SettingsView"
              x:DataType="vm:SettingsViewModel">
 
+  <UserControl.Styles>
+    <!-- Local focus ring for the capture model card's text fields and buttons,
+         matching the editor views' scoped focusRing idiom. -->
+    <Style Selector="Border.focusRing">
+      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="CornerRadius" Value="{StaticResource RadiusControl}" />
+    </Style>
+    <Style Selector="Border.focusRing:focus-within">
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+      <Setter Property="BoxShadow" Value="0 0 0 5 #8CC8F24A" />
+    </Style>
+  </UserControl.Styles>
+
   <DockPanel>
     <Border DockPanel.Dock="Top" Height="52"
             BorderBrush="{StaticResource BrushRuleDefault}"
@@ -113,6 +127,107 @@
                        AutomationProperties.Name="Read availability from connected calendars (coming later)">
             <TextBlock Classes="secondary" Text="Read availability from connected calendars" />
           </RadioButton>
+        </StackPanel>
+      </Border>
+
+      <!-- Capture model -->
+      <Border Background="{StaticResource BrushPaperWhite}"
+              BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
+              CornerRadius="{StaticResource RadiusPanel}" Padding="24,20">
+        <StackPanel Spacing="13">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="Capture model" FontSize="{StaticResource TextSizeHeading}"
+                       FontWeight="SemiBold" />
+            <TextBlock Classes="meta" Text="which parser reads your message" VerticalAlignment="Center" />
+          </StackPanel>
+
+          <RadioButton GroupName="captureModel" IsChecked="{Binding IsCaptureHeuristic}"
+                       AutomationProperties.Name="Built-in capture">
+            <StackPanel Spacing="2">
+              <TextBlock Text="Built-in rules" FontWeight="SemiBold" />
+              <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                         Text="No model involved. Works offline, every time."
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </RadioButton>
+
+          <RadioButton GroupName="captureModel" IsChecked="{Binding IsCaptureOllama}"
+                       AutomationProperties.Name="Ollama capture">
+            <StackPanel Spacing="2">
+              <TextBlock Text="Ollama, running locally" FontWeight="Medium" />
+              <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                         Text="A model on this computer reads your message."
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </RadioButton>
+          <StackPanel Spacing="10" Margin="30,0,0,0" IsVisible="{Binding IsCaptureOllama}">
+            <StackPanel Spacing="6">
+              <TextBlock Classes="metaLabel" Text="ENDPOINT" />
+              <Border Classes="focusRing">
+                <TextBox Text="{Binding OllamaEndpoint}"
+                         AutomationProperties.Name="Ollama endpoint" />
+              </Border>
+            </StackPanel>
+            <StackPanel Spacing="6">
+              <TextBlock Classes="metaLabel" Text="MODEL" />
+              <Border Classes="focusRing">
+                <TextBox Text="{Binding OllamaModel}"
+                         AutomationProperties.Name="Ollama model" />
+              </Border>
+            </StackPanel>
+          </StackPanel>
+
+          <RadioButton GroupName="captureModel" IsChecked="{Binding IsCaptureClaude}"
+                       IsEnabled="{Binding CanUseClaude}"
+                       AutomationProperties.Name="Claude capture">
+            <StackPanel Spacing="2">
+              <TextBlock Text="Claude" FontWeight="Medium" />
+              <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                         Text="A cloud model reads your message. Most capable, but it leaves the machine."
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </RadioButton>
+          <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                     Text="{Binding UnavailableKeyNotice}" IsVisible="{Binding !CanUseClaude}"
+                     Margin="30,0,0,0" TextWrapping="Wrap" />
+          <StackPanel Spacing="10" Margin="30,0,0,0" IsVisible="{Binding IsCaptureClaude}">
+            <StackPanel Spacing="6">
+              <TextBlock Classes="metaLabel" Text="MODEL" />
+              <Border Classes="focusRing">
+                <TextBox Text="{Binding ClaudeModel}"
+                         AutomationProperties.Name="Claude model" />
+              </Border>
+            </StackPanel>
+            <StackPanel Spacing="6">
+              <TextBlock Classes="metaLabel" Text="API KEY" />
+              <Border Classes="focusRing">
+                <TextBox Text="{Binding ApiKeyEntry}" PasswordChar="•"
+                         PlaceholderText="sk-ant-..."
+                         AutomationProperties.Name="Claude API key" />
+              </Border>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Border Classes="focusRing">
+                  <Button Content="Save" Command="{Binding SaveApiKeyCommand}"
+                          AutomationProperties.Name="Save API key" />
+                </Border>
+                <Border Classes="focusRing">
+                  <Button Content="Remove" Command="{Binding RemoveApiKeyCommand}"
+                          IsEnabled="{Binding HasSavedKey}"
+                          AutomationProperties.Name="Remove API key" />
+                </Border>
+                <TextBlock Classes="meta" Text="Key saved" VerticalAlignment="Center"
+                           IsVisible="{Binding HasSavedKey}" />
+              </StackPanel>
+            </StackPanel>
+          </StackPanel>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Path Classes="icon" Data="{StaticResource IconLock}" Width="12" Height="12"
+                  StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}"
+                  VerticalAlignment="Center" />
+            <TextBlock Classes="secondary" FontSize="{StaticResource TextSizeSmall}"
+                       Text="{Binding ConsentText}" TextWrapping="Wrap" />
+          </StackPanel>
         </StackPanel>
       </Border>
 
