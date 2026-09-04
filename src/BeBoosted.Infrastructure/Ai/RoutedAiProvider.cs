@@ -102,16 +102,21 @@ public sealed class RoutedAiProvider(
     private static ExtractedTaskDraft ToDraft(
         CaptureDraft draft, IReadOnlyList<Project> known, AiContext context)
     {
-        // A name the model invented resolves to no project rather than a guess.
-        var project = draft.ProjectName is { } name
-            ? known.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
-            : null;
+        // A name the model invented resolves to no project rather than a guess — the
+        // lookup below yields null for it, and that null must reach ExtractedTaskDraft
+        // unchanged. That's a different situation from the model naming no project at
+        // all, which instead inherits whatever project is already open: only the
+        // "named but unmatched" branch may not fall back to ActiveProjectId, or a
+        // misspelled name would be silently misfiled into the active project.
+        ProjectId? projectId = draft.ProjectName is { } name
+            ? known.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))?.Id
+            : context.ActiveProjectId;
 
         return new ExtractedTaskDraft(
             draft.Title,
             draft.EstimatedMinutes is { } minutes ? TimeSpan.FromMinutes(minutes) : null,
             draft.Deadline,
-            project?.Id ?? context.ActiveProjectId,
+            projectId,
             "from your message");
     }
 }

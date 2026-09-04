@@ -1,6 +1,7 @@
 using BeBoosted.Application.Abstractions;
 using BeBoosted.Application.Ai;
 using BeBoosted.Application.Projects;
+using BeBoosted.Domain;
 using BeBoosted.Domain.Projects;
 using BeBoosted.Infrastructure.Ai;
 using BeBoosted.Infrastructure.Persistence;
@@ -69,7 +70,8 @@ public sealed class RoutedAiProviderTests : IDisposable
         return (provider, settings, projects);
     }
 
-    private static AiContext Context() => new(null, new DateOnly(2026, 9, 3));
+    private static AiContext Context(ProjectId? activeProjectId = null)
+        => new(activeProjectId, new DateOnly(2026, 9, 3));
 
     [Fact]
     public async Task WithTheHeuristicSelected_NoBackendIsCalled()
@@ -175,18 +177,50 @@ public sealed class RoutedAiProviderTests : IDisposable
         Assert.Equal(schoolwork.Id, Assert.Single(result.Drafts).ProjectId);
     }
 
+    /// <summary>
+    /// Deliberately set with an active project already open — the normal case while
+    /// capturing inside a project. A vacuous version of this test (active project
+    /// null) would pass even if a hallucinated name silently fell back to the active
+    /// project, because there'd be no active project to fall back to. Here there is
+    /// one, so the assertion only holds if the unmatched name truly resolves to no
+    /// project rather than being conflated with "no name given."
+    /// </summary>
     [Fact]
-    public async Task AnUnknownProjectName_BecomesNoProject_RatherThanAGuess()
+    public async Task AnUnknownProjectName_BecomesNoProject_EvenWithAnActiveProjectOpen()
     {
         var backend = new StubCaptureModel(
             _ => [new CaptureDraft("Task", null, null, "Nonexistent Project")]);
-        var (provider, settings, _) = Create(claude: backend);
+        var (provider, settings, projects) = Create(claude: backend);
         settings.Source = CaptureModelSource.Claude;
+        var active = Project.Create("Schoolwork", "#5B8DEF", DateTimeOffset.UtcNow);
+        projects.Add(active);
 
         var result = await provider.ExtractTasksAsync(
-            "something", Context(), TestContext.Current.CancellationToken);
+            "something", Context(active.Id), TestContext.Current.CancellationToken);
 
         Assert.Null(Assert.Single(result.Drafts).ProjectId);
+    }
+
+    /// <summary>
+    /// The other half of the same rule: a draft that names no project at all is not
+    /// "unknown" — it inherits whatever project is already open. Pinned separately so
+    /// the fix for the case above can't be over-corrected into dropping this fallback
+    /// entirely.
+    /// </summary>
+    [Fact]
+    public async Task NoProjectNamedAtAll_InheritsTheActiveProject()
+    {
+        var backend = new StubCaptureModel(
+            _ => [new CaptureDraft("Task", null, null, null)]);
+        var (provider, settings, projects) = Create(claude: backend);
+        settings.Source = CaptureModelSource.Claude;
+        var active = Project.Create("Schoolwork", "#5B8DEF", DateTimeOffset.UtcNow);
+        projects.Add(active);
+
+        var result = await provider.ExtractTasksAsync(
+            "something", Context(active.Id), TestContext.Current.CancellationToken);
+
+        Assert.Equal(active.Id, Assert.Single(result.Drafts).ProjectId);
     }
 
     /// <summary>Metadata fills an optional hint; a notice for it would be noise.</summary>
