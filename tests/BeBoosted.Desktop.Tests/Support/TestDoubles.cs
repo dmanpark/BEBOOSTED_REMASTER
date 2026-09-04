@@ -680,7 +680,8 @@ public static class TestShell
         InMemoryPrioritizationRepository? ranks = null,
         BeBoosted.Desktop.Platform.IFileRevealService? reveal = null,
         IResourceStorage? resourceStorage = null,
-        IProjectMutations? projectMutations = null)
+        IProjectMutations? projectMutations = null,
+        IAiProvider? aiProvider = null)
     {
         var settingsStore = store ?? new InMemorySettingsStore();
         var settings = new AppSettings(settingsStore);
@@ -714,9 +715,9 @@ public static class TestShell
         groupRepo.Resources = resourceRepo;
         var storage = resourceStorage ?? new FakeResourceStorage();
         var aiPermissions = new AiPermissionSettings(settingsStore);
-        var aiProvider = new BeBoosted.Infrastructure.Ai.LocalHeuristicAiProvider(resourceRepo, projectRepo);
+        var provider = aiProvider ?? new BeBoosted.Infrastructure.Ai.LocalHeuristicAiProvider(resourceRepo, projectRepo);
         var aiService = new AiService(
-            aiProvider, new InMemoryAiProvenanceRepository(), repository, aiPermissions, clock);
+            provider, new InMemoryAiProvenanceRepository(), repository, aiPermissions, clock);
         var projectService = new ProjectService(
             projectRepo, fileRepo, resourceRepo, storage,
             projectMutations

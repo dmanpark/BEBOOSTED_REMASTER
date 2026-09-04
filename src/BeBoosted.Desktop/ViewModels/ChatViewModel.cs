@@ -238,6 +238,12 @@ public sealed partial class ChatViewModel : ViewModelBase
         }
 
         var extraction = await _ai.ExtractTasksAsync(text, context);
+        if (extraction.DegradedNotice is { } degraded)
+        {
+            // Before the drafts, because it explains them.
+            Items.Add(new ChatAssistantMessageViewModel(degraded));
+        }
+
         if (extraction.Drafts.Count == 0)
         {
             Items.Add(new ChatAssistantMessageViewModel(
