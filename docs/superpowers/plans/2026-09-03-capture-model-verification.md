@@ -1,0 +1,256 @@
+# Capture Model Providers — Verification Record
+
+Branch `feature/ai-provider`, tip `a666bc9`. This record covers Task 12, the full-gates and
+manual-live-check task for the pluggable capture-model feature (Tasks 1–11). It states what was
+verified, how, and what was **not** — including one thing found live that was not expected: a
+reproducible crash.
+
+Nothing has been pushed, no PR opened, nothing merged. Branch `main` was never touched.
+
+## Gate results
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Core tests | `dotnet test BeBoosted.slnx` — `BeBoosted.Tests` | **590 passed, 0 skipped** |
+| Desktop tests | `dotnet test BeBoosted.slnx` — `BeBoosted.Desktop.Tests` | **564 passed, 3 skipped** |
+| Build | `dotnet build BeBoosted.slnx -warnaserror` | **0 warnings, 0 errors** |
+| Format | `dotnet format BeBoosted.slnx --verify-no-changes` | **clean, exit 0, no diff** |
+
+The 3 desktop skips are the pre-existing screenshot-capture tests (`CaptureShellScreens`,
+`CaptureMinimumWindowScreens`, `CaptureTaskEditorAndProjectScreens`), skipped whenever
+`BEBOOSTED_SCREENSHOT_DIR` is unset. They predate this branch and are not new. All four gates are
+green with no fixes applied — nothing here needed reporting back.
+
+## Screenshot suite
+
+Re-run with `BEBOOSTED_SCREENSHOT_DIR` set to a throwaway directory:
+
+```
+dotnet test tests/BeBoosted.Desktop.Tests --filter "FullyQualifiedName~ScreenshotCapture"
+```
+
+**3 passed, 0 skipped.** `shell-settings-1440x960.png` was inspected directly. The Capture model
+card shows all three choices — Built-in rules, Ollama running locally, Claude — with the consent
+sentence for the selected default ("No model involved. Works offline, every time.") and no key
+value anywhere on screen. That last point is structural, not incidental: the API-key `TextBox` in
+`SettingsView.axaml` only exists in the visual tree when `IsCaptureClaude` is true, which it is not
+by default, so a screenshot of the default state cannot show a key regardless of what is saved.
+
+## Live check — Ollama: the capture crashed the app (twice, reproducibly)
+
+Settings → Capture model → Ollama was selected live, in a disposable profile
+(`BEBOOSTED_DATA_DIR` = a throwaway temp directory), driven entirely through UI Automation
+(`Find-ById`/`Find-ByName`/`Toggle-El`/`Set-ElValue` against the running app's own tree — no
+coordinate clicks). Submission used a targeted `PostMessage(WM_KEYDOWN/WM_KEYUP, VK_RETURN)` sent
+directly to the app's own window handle after `AutomationElement.SetFocus()` placed logical focus
+on the composer — the same safety bar as the phase-1 record's control-handle technique: no cursor,
+no z-order, no foreground dependency, no possibility of input reaching another application. The
+composer correctly showed the endpoint (`http://localhost:11434`) and model (`qwen2.5:7b-instruct`)
+defaults, and the consent line updated correctly to "Your message goes to the model running on this
+computer. Nothing leaves it."
+
+Sending the BB-QA-003 message — *"Finish my DECA presentation before Friday. It probably needs two
+focused sessions. Also I still owe Ms. Rivera the rec request email."* — **crashed the whole
+desktop process**, twice, on two separate launches. This was not a UI hang or an error toast; the
+process itself terminated.
+
+**Root cause, confirmed from the OS crash record (`Get-WinEvent` on the `.NET Runtime` Application
+log source), stack trace identical both times:**
+
+```
+System.Threading.Tasks.TaskCanceledException: The request was canceled due to the configured
+HttpClient.Timeout of 15 seconds elapsing.
+ ---> System.TimeoutException / TaskCanceledException / IOException / SocketException (995)
+   at System.Net.Http.HttpClient... (SendAsync chain)
+   at BeBoosted.Infrastructure.Ai.OllamaCaptureModel.GenerateAsync(...) OllamaCaptureModel.cs:line 47
+   at BeBoosted.Infrastructure.Ai.OllamaCaptureModel.ExtractAsync(...) OllamaCaptureModel.cs:line 28
+   at BeBoosted.Infrastructure.Ai.RoutedAiProvider.ExtractTasksAsync(...) RoutedAiProvider.cs:line 42
+   at BeBoosted.Application.Ai.AiService.ExtractTasksAsync(...) AiService.cs:line 47
+   at BeBoosted.Desktop.ViewModels.ChatViewModel.SubmitAsync() ChatViewModel.cs:line 240
+   at CommunityToolkit.Mvvm.Input.AsyncRelayCommand.AwaitAndThrowIfFailed(...)
+   ... Avalonia.Threading.Dispatcher... Win32Platform.WndProc ...
+```
+
+The mechanism, traced through the actual source:
+
+- `ServiceCollectionExtensions.cs:59` registers one shared `HttpClient` with
+  `Timeout = TimeSpan.FromSeconds(15)`, used by both capture backends.
+- `RoutedAiProvider.cs:47` catches backend failures with
+  `catch (Exception error) when (error is not OperationCanceledException)` — the class's own doc
+  comment states the intent plainly: *"no key, offline, timeout, refused, unparseable — is the same
+  event to the user, so all of them land here."* But .NET represents **both** a caller-requested
+  cancellation and an `HttpClient`-internal timeout as the same exception type
+  (`TaskCanceledException : OperationCanceledException`), and the filter cannot tell them apart. A
+  genuine `HttpClient.Timeout` firing is exactly as excluded as a real user cancellation, so it is
+  **not** caught, and propagates out of `ExtractTasksAsync` uncaught.
+- `ChatViewModel.cs:240` (`var extraction = await _ai.ExtractTasksAsync(text, context);`) awaits
+  this with no surrounding try/catch.
+- `CommunityToolkit.Mvvm`'s `AsyncRelayCommand` rethrows an unhandled command-execution exception
+  onto the captured `SynchronizationContext`, which Avalonia's dispatcher then re-raises inside its
+  own message pump (`Dispatcher.ExecuteJobsCore` → `Win32Platform.WndProc`) with nothing upstream to
+  catch it — terminating the whole process. No global unhandled-exception handler is wired up
+  anywhere in the app to intercept this.
+
+**This is reproducible, not a fluke.** Both crashes (`2026-09-03 21:13:11` and
+`2026-09-03 21:18:44`, per the Application log) have byte-identical stack traces. Ollama's own
+`server.log` independently corroborates both: request one ran 13.87s before the client (BeBoosted)
+closed the connection (`499`, `"client connection closed before llama-server finished loading"`);
+request two ran 13.04s before an internal cancel (`500`, `slot: cancel task, id_task = 4`) — both
+within a hair of the app's 15-second ceiling. On this machine, `qwen2.5:7b-instruct` runs **CPU-only**
+(no CUDA/Vulkan device attached to the Ollama process for this call): a trivial 32-token warm-up
+prompt measured 37 ms/token prompt-eval and took 13.17s of its 14.85s total just to *load* the
+model into memory; the real BB-QA-003 extraction prompt (271 tokens) took over 13s even with the
+model already warm. A 15-second budget is tight-to-insufficient for CPU-only local inference on
+this hardware, and this app has **no code path that survives a real timeout** — every time one
+fires, the result is a crash instead of the documented graceful degradation.
+
+**This traces directly to a previously-deferred concern.** The Task 8 review (recorded in this
+plan's `progress.md`) already flagged: *"no test proves `OperationCanceledException` actually
+propagates (verified by code inspection only)."* It was accepted as a minor and deferred. This live
+check is that untested path, now exercised for real — and it does not do what the class's own
+comment says it should. No test in the suite constructs an `HttpClient`-timeout scenario at all
+(`grep` for `OperationCanceledException|TaskCanceledException|Timeout` across `tests/` returns
+nothing), so nothing catches this in CI either.
+
+**Not fixed.** Per this task's instructions, production code and tests are out of scope for Task 12
+and a defect is reported rather than repaired. Flagging plainly: **this needs a fix before this
+feature ships** — either distinguish a genuine caller cancellation from an `HttpClient`-internal
+timeout inside the catch (e.g. check whether the token actually passed in was the one that fired),
+or catch `TimeoutException`/timeout-shaped `TaskCanceledException` explicitly and route it into
+`DegradeAsync` like every other backend failure, and add a test that manufactures exactly this
+condition (a handler that ignores the cancellation token and stalls past the client timeout).
+
+### What Ollama actually returns for BB-QA-003 (obtained outside the crash)
+
+Because the live GUI path could not complete, the model's real output was captured by issuing the
+**identical** request the app constructs — same system prompt (`CaptureExtractionPrompt.System`),
+same user-prompt shape (`CaptureExtractionPrompt.BuildUser`, "Existing projects: none", today
+2026-09-03), same endpoint, same model, `"format": "json"` — directly to Ollama's `/api/generate`
+with a generous client-side timeout, bypassing only the app's undersized 15-second ceiling. This is
+a supplementary diagnostic, explicitly **not** a live GUI verification; it exists to still answer
+the semantic question this task exists to answer, since the crash prevented the app from answering
+it itself.
+
+Raw model response:
+
+```json
+{"tasks": [
+  {"title": "Finish DECA presentation", "estimated_minutes": 120, "deadline": "2026-09-07", "project": "DECA"},
+  {"title": "Send rec request to Ms. Rivera", "estimated_minutes": 30, "deadline": "2026-09-08", "project": null}
+]}
+```
+
+**Two drafts, not three.** The core BB-QA-003 defect — the heuristic splitting "It probably needs
+two focused sessions" into its own task — **is fixed by the model**: that sentence is folded into
+the DECA task (reflected as `estimated_minutes: 120`, i.e. two ~1-hour sessions) rather than
+standing alone. This is the headline result and it is a genuine success on the exact repro in the
+task brief.
+
+It is not a clean pass in every respect, and both issues below are worth recording honestly rather
+than smoothing over:
+
+- **Wrong deadline.** 2026-09-03 is a Thursday, so "before Friday" resolves to 2026-09-04. The model
+  returned `2026-09-07` (the following Monday) — a real date-arithmetic error, three days off.
+- **Two rule violations against its own system prompt.** The prompt says *"project" must be exactly
+  one of the supplied project names, or omitted* (none were supplied — "Existing projects: none")
+  and *do not invent deadlines... omit a field the message does not support*. The model invented a
+  project name (`"DECA"`, matching nothing supplied) and invented a deadline for the second task
+  (`2026-09-08`) despite the message giving no deadline cue for the Rivera email at all.
+
+The invented project name is defended downstream: `RoutedAiProvider.ToDraft`'s comment states
+plainly that a name the model invents "resolves to no project rather than a guess," and with no
+project named "DECA" in the (empty) project list, this would correctly land as `ProjectId = null` in
+the real app — not misfiled. The invented deadline has no such backstop and would show up in the
+Inbox as a due date the user never gave.
+
+## Live check — Claude fallback (no key saved)
+
+Selected live via UI Automation: Settings → Capture model → Claude. `CanUseClaude` reflects
+`ISecretProtector.IsAvailable` (DPAPI, always true on Windows) rather than whether a key is saved,
+so the radio is enabled and selectable with no key present — confirmed via
+`RadioButton.IsEnabled = True` before toggling. Confirmed no key was saved (no "Key saved" label in
+the tree) before sending.
+
+Sent the same BB-QA-003 message. **The app did not crash** — this path fails fast:
+`ClaudeCaptureModel.CompleteAsync` throws `InvalidOperationException("No usable Claude API key is
+saved.")` synchronously, before any network call is attempted, so it never touches the 15-second
+timeout at all. `RoutedAiProvider`'s catch (not an `OperationCanceledException`) catches it cleanly.
+
+The chat showed, in order:
+
+1. The echoed user message.
+2. **"Parsed locally - Claude couldn't be reached."** — the exact degraded notice.
+3. "I found 3 tasks. Review them before they join your Inbox:"
+4. Three drafts, read directly from the `Proposed task title` edit fields:
+   - `Finish my DECA presentation` — due Fri · 1 h 30 min · from your message
+   - `It probably needs two focused sessions` — 3 h · from your message
+   - `Ms. Rivera the rec request email` — 10 min · from your message
+
+The fallback notice appeared and drafts still arrived, confirming the degradation path end to end.
+Incidentally, this run **live-reproduces the exact BB-QA-003 heuristic defect** the whole feature
+exists to fix — the fragment "It probably needs two focused sessions" appears as its own task, since
+this path exercises the built-in heuristic. That is expected and correct: it is the same heuristic
+this feature routes *around* when a model is reachable, and this live run is simply the case where
+the model source (Claude, no key) is unreachable by design.
+
+## Isolation
+
+| Check | Result |
+| --- | --- |
+| Real profile db (`%LOCALAPPDATA%\BeBoosted\beboosted.db`) last write, before this session | `2026-09-03 16:18:26.706036900 -0700` |
+| Same file, checked again after all live checks | `2026-09-03 16:18:26.706036900 -0700` — **unchanged** |
+| Plaintext key anywhere in the throwaway profile | `grep -r "sk-ant" $TEMP/bb-capture-live` → **no plaintext key found** |
+| Broader key-shaped strings in the throwaway db | `grep -ac "sk-\|ApiKey\|ProtectedClaudeKey"` on the raw db file → **0 matches** |
+
+The real profile was never opened by anything in this session. No key was ever saved during this
+task (by design — the ruling below forbids it), so the "no plaintext key" result is expected rather
+than a close call, and the broader grep confirms it beyond the brief's literal `sk-ant` pattern.
+
+An unrelated, pre-existing `BeBoosted.exe` process (PID 31596, **Release** build, started
+2026-09-03 16:14:20, well before this session) was present throughout and was left untouched — it
+belongs to the user's own separate use of the app, not to this task, and nothing in this session
+targeted it.
+
+## Not verified
+
+**The Claude live capture with a real API key — deliberately not performed, per this task's
+ruling.** Hunting for or using the user's own Anthropic key is not this task's (or this agent's) to
+do. This needs the user's own key and about five minutes of their time: Settings → Capture model →
+Claude → paste a key → Save → send a message, then (optionally) remove or invalidate the key and
+resend to see the degraded notice on a real, reachable-but-failing network path. What this leaves
+unproven: the actual wire format and response handling against the real Anthropic API, and Claude's
+real answer to the BB-QA-003 message. What still covers it: Task 6's stub-transport tests exercise
+`ClaudeCaptureModel` against a fake `HttpMessageHandler` standing in for the SDK's transport, proven
+(per Task 6's review) to genuinely intercept all traffic — so the parsing and mapping logic is
+tested, just not the real network round-trip.
+
+**The Ollama live capture, completed through the app's own UI, without crashing.** This was
+attempted twice and crashed both times (see above). The reported drafts came from a supplementary
+direct-to-Ollama probe outside the app, not from a successful live run of the feature's own
+end-to-end path. Until the timeout/exception-handling defect above is fixed, this check cannot be
+completed as a true live verification.
+
+**Whether the same crash occurs on the Claude backend under a slow-but-live network.** The fallback
+check here used the no-key path, which fails before any HTTP call — it never approaches the
+15-second timeout. `ClaudeCaptureModel` shares the same `HttpClient` and the same `RoutedAiProvider`
+catch clause, so the identical defect almost certainly applies there too (a slow or hanging Claude
+response would hit the same unfiltered `TaskCanceledException`), but this was not exercised live.
+
+**`SuggestMetadataAsync`'s behavior under the same timeout.** This is the other caller of both
+`ICaptureModel` backends (used for duration/deadline hints when adding a task manually), and its own
+catch clause has the identical `error is not OperationCanceledException` shape. Not exercised live
+in this task; only `ExtractTasksAsync` (the composer path) was driven through the GUI.
+
+**No screen reader was run**, matching the phase-1 record's own caveat — no claim is made about how
+any assistive technology announces the Capture model card or the chat notice.
+
+## Status
+
+Gates are clean. The feature's core capability — a real model correctly folding a sentence fragment
+into its parent task, where the built-in heuristic splits it into a third, wrong draft — is
+confirmed working, for the message this defect was originally filed against. But the live Ollama
+check surfaced a **real, reproducible crash** in the router's exception handling that is unrelated
+to model quality and affects any capture that takes longer than 15 seconds, which — on CPU-only
+local inference — is close to the common case rather than an edge case. This needs a fix, and a
+timeout-shaped regression test, before this feature should ship. The Claude live capture remains
+explicitly unperformed pending the user's own key.
