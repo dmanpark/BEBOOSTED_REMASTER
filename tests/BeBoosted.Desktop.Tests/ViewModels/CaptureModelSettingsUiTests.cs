@@ -102,4 +102,32 @@ public sealed class CaptureModelSettingsUiTests
 
         Assert.NotEqual(CaptureModelSource.Claude, settings.Source);
     }
+
+    /// <summary>
+    /// The spec's Testing section requires "consent copy present" among the Settings UI
+    /// tests. These three strings are the one privacy-facing text with nothing else
+    /// holding them in place — they are what makes cloud capture honest and opt-in, so
+    /// the full text (including the em dash) is asserted exactly, not as a substring,
+    /// so a future edit cannot quietly reword what the app promises about the user's
+    /// data.
+    /// </summary>
+    [Theory]
+    [InlineData(
+        CaptureModelSource.Claude,
+        "The message you type, your project names, and today's date leave your computer — "
+        + "only when you press send.")]
+    [InlineData(
+        CaptureModelSource.Ollama,
+        "Your message goes to the model running on this computer. Nothing leaves it.")]
+    [InlineData(
+        CaptureModelSource.Heuristic,
+        "Nothing is sent anywhere. Task capture uses built-in rules.")]
+    public void TheConsentText_MatchesTheApprovedCopy_ForEachSource(
+        CaptureModelSource source, string expected)
+    {
+        var (vm, settings) = Create();
+        settings.Source = source;
+
+        Assert.Equal(expected, vm.ConsentText);
+    }
 }
