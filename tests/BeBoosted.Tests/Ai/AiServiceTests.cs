@@ -359,5 +359,15 @@ public sealed class AiServiceTests : IDisposable
         Assert.StartsWith("Used by", derivation.Title, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task AHealthyExtraction_CarriesNoDegradedNotice()
+    {
+        var outcome = await _service.ExtractTasksAsync(
+            "Draft the essay outline", Context(), TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(outcome.Drafts);
+        Assert.Null(outcome.DegradedNotice);
+    }
+
     public void Dispose() => _database.Dispose();
 }

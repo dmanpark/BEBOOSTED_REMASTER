@@ -24,7 +24,7 @@ public sealed partial class LocalHeuristicAiProvider(
         "your", "mine", "into", "than", "then", "week", "today",
     ];
 
-    public Task<IReadOnlyList<ExtractedTaskDraft>> ExtractTasksAsync(
+    public Task<CaptureExtractionResult> ExtractTasksAsync(
         string message, AiContext context, CancellationToken cancellationToken = default)
     {
         var drafts = new List<ExtractedTaskDraft>();
@@ -53,7 +53,7 @@ public sealed partial class LocalHeuristicAiProvider(
             drafts.Add(new ExtractedTaskDraft(title, duration, deadline, projectId, "from your message"));
         }
 
-        return Task.FromResult<IReadOnlyList<ExtractedTaskDraft>>(drafts);
+        return Task.FromResult(new CaptureExtractionResult(drafts));
     }
 
     public Task<TaskMetadataSuggestion> SuggestMetadataAsync(

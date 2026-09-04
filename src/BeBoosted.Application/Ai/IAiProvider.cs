@@ -20,6 +20,13 @@ public sealed record TaskMetadataSuggestion(TimeSpan? EstimatedDuration, DateOnl
 public sealed record ProjectAnswerResult(string AnswerText, IReadOnlyList<Resource> Citations);
 
 /// <summary>
+/// Task drafts plus, when the configured model could not be reached, the plain sentence
+/// the chat shows about it. A null notice means the configured parser did the work.
+/// </summary>
+public sealed record CaptureExtractionResult(
+    IReadOnlyList<ExtractedTaskDraft> Drafts, string? DegradedNotice = null);
+
+/// <summary>
 /// The AI provider port. UI code never depends on a vendor; version one ships a
 /// deterministic local provider, and a network provider can be registered later
 /// without touching any workflow.
@@ -27,7 +34,7 @@ public sealed record ProjectAnswerResult(string AnswerText, IReadOnlyList<Resour
 public interface IAiProvider
 {
     /// <summary>Proposes tasks from a natural-language message.</summary>
-    Task<IReadOnlyList<ExtractedTaskDraft>> ExtractTasksAsync(
+    Task<CaptureExtractionResult> ExtractTasksAsync(
         string message, AiContext context, CancellationToken cancellationToken = default);
 
     /// <summary>Suggests duration/deadline metadata for a bare task title.</summary>
