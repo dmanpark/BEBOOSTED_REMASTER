@@ -247,9 +247,23 @@ capture against a real model after the fix — that re-verification has not been
 
 **Whether the same crash occurs on the Claude backend under a slow-but-live network.** The fallback
 check here used the no-key path, which fails before any HTTP call — it never approaches the
-15-second timeout. `ClaudeCaptureModel` shares the same `HttpClient` and the same `RoutedAiProvider`
-catch clause, so the identical defect almost certainly applies there too (a slow or hanging Claude
-response would hit the same unfiltered `TaskCanceledException`), but this was not exercised live.
+15-second timeout. `ClaudeCaptureModel` does **not** share the same `HttpClient` as Ollama —
+at the time this check ran it built its own `AnthropicClient` per call, which left the SDK's own
+defaults in effect (a 10-minute timeout, `Anthropic.Core.ClientOptions.DefaultTimeout`, and up to
+two silent retries on connection errors, 408/409/429, and 5xx —
+`Anthropic.Core.ClientOptions.DefaultMaxRetries`) instead of the spec's 15-second budget. That was a
+real, separate defect from the one this addendum fixes: a slow or hanging Claude response would not
+have produced a 15-second-shaped `TaskCanceledException` at all, so it would not even have reached
+the router's misclassified catch clause within any reasonable window — the actual exposure was an
+unbounded multi-minute hang (potentially up to three attempts under the default retry count), not a
+15-second crash. `ClaudeCaptureModel` does share the same `RoutedAiProvider` catch clause, which is
+the part of the original claim that was correct. This has since been fixed on this branch:
+`ClaudeCaptureModel` now builds its `AnthropicClient` with an explicit 15-second timeout and zero
+retries regardless of whether a test handler is injected (`ClaudeCaptureModel.RequestTimeout`,
+`RequestMaxRetries`, and `CreateClient`), verified directly against the constructed client's own
+`Timeout`/`MaxRetries` properties in `ClaudeCaptureModelTests`. Claude and Ollama now carry the same
+effective 15-second guarantee even though they still don't share the same `HttpClient` instance — but
+a live, slow-but-real Claude call was still not exercised here, before or after that fix.
 
 **`SuggestMetadataAsync`'s behavior under the same timeout.** This is the other caller of both
 `ICaptureModel` backends (used for duration/deadline hints when adding a task manually), and its own
