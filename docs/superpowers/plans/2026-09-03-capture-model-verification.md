@@ -1,9 +1,12 @@
 # Capture Model Providers — Verification Record
 
-Branch `feature/ai-provider`, tip `a666bc9`. This record covers Task 12, the full-gates and
-manual-live-check task for the pluggable capture-model feature (Tasks 1–11). It states what was
-verified, how, and what was **not** — including one thing found live that was not expected: a
-reproducible crash.
+Branch `feature/ai-provider`, tip `a666bc9` at the time this record's live verification ran. This
+record covers Task 12, the full-gates and manual-live-check task for the pluggable capture-model
+feature (Tasks 1–11). It states what was verified, how, and what was **not** — including one thing
+found live that was not expected: a reproducible crash. That crash has since been **fixed and
+independently re-reviewed**, in commit `0625420` — see the addendum near the end of this record.
+The finding, its diagnosis, and the fix all stay here in full: this is not a record of a clean run,
+it is a record of a real defect caught before it shipped.
 
 Nothing has been pushed, no PR opened, nothing merged. Branch `main` was never touched.
 
@@ -20,6 +23,11 @@ The 3 desktop skips are the pre-existing screenshot-capture tests (`CaptureShell
 `CaptureMinimumWindowScreens`, `CaptureTaskEditorAndProjectScreens`), skipped whenever
 `BEBOOSTED_SCREENSHOT_DIR` is unset. They predate this branch and are not new. All four gates are
 green with no fixes applied — nothing here needed reporting back.
+
+This table reflects the gate run at tip `a666bc9`, before the crash below was found and fixed. Four
+tests were added with the fix (commit `0625420`); the core row is **594 passed, 0 skipped**
+afterward, desktop unchanged. See the addendum near the end of this record for the full post-fix
+gate run.
 
 ## Screenshot suite
 
@@ -110,15 +118,21 @@ propagates (verified by code inspection only)."* It was accepted as a minor and 
 check is that untested path, now exercised for real — and it does not do what the class's own
 comment says it should. No test in the suite constructs an `HttpClient`-timeout scenario at all
 (`grep` for `OperationCanceledException|TaskCanceledException|Timeout` across `tests/` returns
-nothing), so nothing catches this in CI either.
+nothing), so nothing catches this in CI either. (This gap is closed by the regression tests added
+with the fix — see the addendum below.)
 
-**Not fixed.** Per this task's instructions, production code and tests are out of scope for Task 12
-and a defect is reported rather than repaired. Flagging plainly: **this needs a fix before this
-feature ships** — either distinguish a genuine caller cancellation from an `HttpClient`-internal
-timeout inside the catch (e.g. check whether the token actually passed in was the one that fired),
-or catch `TimeoutException`/timeout-shaped `TaskCanceledException` explicitly and route it into
-`DegradeAsync` like every other backend failure, and add a test that manufactures exactly this
-condition (a handler that ignores the cancellation token and stalls past the client timeout).
+**Not fixed at the time this check ran.** Per this task's instructions, production code and tests
+were out of scope for Task 12, so the defect was reported here rather than repaired. It was flagged
+plainly: **this needs a fix before this feature ships** — either distinguish a genuine caller
+cancellation from an `HttpClient`-internal timeout inside the catch (e.g. check whether the token
+actually passed in was the one that fired), or catch `TimeoutException`/timeout-shaped
+`TaskCanceledException` explicitly and route it into `DegradeAsync` like every other backend
+failure, and add a test that manufactures exactly this condition (a handler that ignores the
+cancellation token and stalls past the client timeout).
+
+**It has since been fixed**, in commit `0625420`, using the first of these two approaches. See the
+addendum near the end of this record for the fix, why the existing tests could not have caught it,
+and the new tests that now pin it.
 
 ### What Ollama actually returns for BB-QA-003 (obtained outside the crash)
 
@@ -227,8 +241,9 @@ tested, just not the real network round-trip.
 **The Ollama live capture, completed through the app's own UI, without crashing.** This was
 attempted twice and crashed both times (see above). The reported drafts came from a supplementary
 direct-to-Ollama probe outside the app, not from a successful live run of the feature's own
-end-to-end path. Until the timeout/exception-handling defect above is fixed, this check cannot be
-completed as a true live verification.
+end-to-end path. The underlying defect has since been fixed and is covered by regression tests
+(commit `0625420`, addendum below), but this record does not include a live re-run of the Ollama
+capture against a real model after the fix — that re-verification has not been performed here.
 
 **Whether the same crash occurs on the Claude backend under a slow-but-live network.** The fallback
 check here used the no-key path, which fails before any HTTP call — it never approaches the
@@ -244,13 +259,72 @@ in this task; only `ExtractTasksAsync` (the composer path) was driven through th
 **No screen reader was run**, matching the phase-1 record's own caveat — no claim is made about how
 any assistive technology announces the Capture model card or the chat notice.
 
+## Addendum 2026-09-03 — the crash is fixed and independently re-reviewed
+
+Commit `0625420` fixes the timeout-misclassification defect described above, in
+`src/BeBoosted.Infrastructure/Ai/RoutedAiProvider.cs`. Both catch sites previously read:
+
+```csharp
+catch (Exception error) when (error is not OperationCanceledException)
+```
+
+which cannot distinguish a genuine caller cancellation from an `HttpClient`-internal timeout, since
+.NET represents both as `TaskCanceledException : OperationCanceledException`. Both sites now read:
+
+```csharp
+catch (Exception) when (!cancellationToken.IsCancellationRequested)
+```
+
+testing the caller's own token instead of the exception's type. A timeout — or any other backend
+failure — now falls back through `DegradeAsync` like every other case; a request the caller actually
+cancelled still propagates. The class's doc comment was rewritten to explain why the exception's
+type is not a usable signal here, ending with an explicit instruction not to "fix" it back to a
+type check.
+
+**Why none of the router's existing tests caught this, stated plainly:** all 11 of
+`RoutedAiProviderTests`'s pre-existing cases passed both before and after this fix, because every
+one of them throws an exception type the old filter happened to let through correctly. A fully
+green suite could not have found this defect — only running the real app against a real, slow model
+did. That is the reason Task 12's live check existed at all, and this crash is the most valuable
+thing it produced.
+
+Two new tests were added to `tests/BeBoosted.Tests/Ai/RoutedAiProviderTests.cs`, with equivalents
+for the metadata-suggestion path as well:
+
+- A timeout — a stub throwing `TaskCanceledException` while the caller's own token is **not**
+  cancelled — must fall back with the degraded notice and must not escape the method. This
+  regression test was confirmed **red** against the old filter before the fix was applied, then
+  green after.
+- A genuine cancellation — an already-cancelled token — must still propagate rather than degrade.
+
+**Suite after the fix:** `RoutedAiProviderTests` 15/15. Full solution: 594 passed / 0 skipped
+(core), 564 passed / 3 skipped (desktop — the same pre-existing, unrelated screenshot-capture skips
+described above). `dotnet build BeBoosted.slnx -warnaserror`: clean. `dotnet format BeBoosted.slnx
+--verify-no-changes`: clean.
+
+The fix was independently re-reviewed on top of the new tests.
+
+**What this addendum does not claim.** The fix is verified by unit tests and code review, and the
+degraded-fallback path itself was exercised live in the Claude no-key check above — but that check
+fails before any HTTP call, so it never approached the 15-second timeout. This addendum does
+**not** claim the app was re-driven live against a real, slow Ollama model after the fix to watch
+the process survive past 15 seconds without crashing. That live re-run has not been performed in
+this record.
+
 ## Status
 
 Gates are clean. The feature's core capability — a real model correctly folding a sentence fragment
 into its parent task, where the built-in heuristic splits it into a third, wrong draft — is
-confirmed working, for the message this defect was originally filed against. But the live Ollama
-check surfaced a **real, reproducible crash** in the router's exception handling that is unrelated
-to model quality and affects any capture that takes longer than 15 seconds, which — on CPU-only
-local inference — is close to the common case rather than an edge case. This needs a fix, and a
-timeout-shaped regression test, before this feature should ship. The Claude live capture remains
-explicitly unperformed pending the user's own key.
+confirmed working, for the message this defect was originally filed against. The live Ollama check
+surfaced a **real, reproducible crash** in the router's exception handling, unrelated to model
+quality, affecting any capture that takes longer than 15 seconds — on CPU-only local inference,
+close to the common case rather than an edge case. That defect has since been **fixed and
+independently re-reviewed**, in commit `0625420` (addendum above): both catch sites now test the
+caller's own cancellation token instead of the exception's type, a timeout-shaped regression test
+was confirmed red against the old code and green against the fix, and the full suite — 594 passed
+core, 564 passed / 3 pre-existing skips desktop — is green under `-warnaserror` and
+`format --verify-no-changes`. No open ship-blocking defect remains on this branch. What this
+addendum does not claim: the app was not re-driven live against a real Ollama model after the fix —
+only the fallback path was exercised live (via the no-key Claude check above), and the fix itself
+was verified by tests and review rather than by a fresh live GUI run. The Claude live capture with
+a real API key remains explicitly unperformed, pending the user's own key.
