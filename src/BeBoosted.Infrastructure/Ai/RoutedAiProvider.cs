@@ -10,9 +10,18 @@ namespace BeBoosted.Infrastructure.Ai;
 /// changing it in Settings takes effect on the next capture with no restart, and it is
 /// the single place fallback lives: every failure a backend can have — no key, offline,
 /// timeout, refused, unparseable — is the same event to the user, so all of them land
-/// here and produce one plain sentence. A user-cancelled request is not a backend
-/// failure, so <see cref="OperationCanceledException"/> is deliberately excluded from
-/// every catch below and left to propagate.
+/// here and produce one plain sentence.
+///
+/// A genuinely user-cancelled request should still propagate rather than degrade — but
+/// every catch below tests <c>cancellationToken.IsCancellationRequested</c>, never the
+/// exception's type. .NET surfaces an <c>HttpClient</c> timeout as a
+/// <see cref="TaskCanceledException"/>, which derives from
+/// <see cref="OperationCanceledException"/> — the same shape a real cancellation takes.
+/// Filtering on the exception type cannot tell a 15-second timeout from the user
+/// cancelling, and mistaking the former for the latter used to let a timeout escape
+/// this class uncaught and crash the app. The caller's own token is the only signal
+/// that actually distinguishes "I cancelled this" from "this backend was too slow to
+/// answer" — do not "fix" this back to an exception-type check.
 ///
 /// Project Q&amp;A is delegated to the heuristic unconditionally: answering well needs
 /// resource content that is not indexed yet (only titles and filenames are), and a
@@ -44,7 +53,7 @@ public sealed class RoutedAiProvider(
                 cancellationToken);
             return new CaptureExtractionResult([.. drafts.Select(draft => ToDraft(draft, known, context))]);
         }
-        catch (Exception error) when (error is not OperationCanceledException)
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             return await DegradeAsync(source, message, context, cancellationToken);
         }
@@ -69,7 +78,7 @@ public sealed class RoutedAiProvider(
                         draft.Deadline);
                 }
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
                 // Silent by design: this fills an optional hint field, and a notice
                 // about a missing duration estimate would be noise.

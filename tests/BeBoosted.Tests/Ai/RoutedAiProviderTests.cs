@@ -147,6 +147,77 @@ public sealed class RoutedAiProviderTests : IDisposable
         Assert.DoesNotContain("127.0.0.1", result.DegradedNotice!, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Regression test for a ship-blocking crash: an <c>HttpClient</c> timeout surfaces
+    /// as <see cref="TaskCanceledException"/>, which derives from
+    /// <see cref="OperationCanceledException"/> — the same shape a genuine cancellation
+    /// takes. A filter that tested the exception's type let this escape uncaught and
+    /// killed the app. The caller's token here is never cancelled, so this must degrade
+    /// exactly like any other backend failure.
+    /// </summary>
+    [Fact]
+    public async Task ATimeout_FallsBackRatherThanEscaping()
+    {
+        var claude = new StubCaptureModel(_ => throw new TaskCanceledException(
+            "The request was canceled due to the configured HttpClient.Timeout of 15 seconds elapsing."));
+        var (provider, settings, _) = Create(claude: claude);
+        settings.Source = CaptureModelSource.Claude;
+
+        var result = await provider.ExtractTasksAsync(
+            "Draft the essay outline", Context(), TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(result.Drafts); // the capture is not lost
+        Assert.NotNull(result.DegradedNotice);
+        Assert.Contains("Claude", result.DegradedNotice, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The other half of the same rule, pinned so the fix above can't be over-corrected
+    /// into swallowing every cancellation: when the caller's own token is the one that
+    /// was cancelled, this must still propagate rather than quietly degrade.
+    /// </summary>
+    [Fact]
+    public async Task AGenuineCancellation_StillPropagates()
+    {
+        var claude = new StubCaptureModel(_ => throw new OperationCanceledException());
+        var (provider, settings, _) = Create(claude: claude);
+        settings.Source = CaptureModelSource.Claude;
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => provider.ExtractTasksAsync("Draft the essay outline", Context(), cts.Token));
+    }
+
+    /// <summary>The metadata path's silent degrade must survive a timeout the same way.</summary>
+    [Fact]
+    public async Task SuggestMetadata_ATimeout_DegradesSilentlyRatherThanEscaping()
+    {
+        var claude = new StubCaptureModel(_ => throw new TaskCanceledException(
+            "The request was canceled due to the configured HttpClient.Timeout of 15 seconds elapsing."));
+        var (provider, settings, _) = Create(claude: claude);
+        settings.Source = CaptureModelSource.Claude;
+
+        var suggestion = await provider.SuggestMetadataAsync(
+            "Email Ms. Rivera", Context(), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(suggestion); // the heuristic answered instead of the call escaping
+    }
+
+    /// <summary>And the metadata path's cancellation must still propagate, not degrade.</summary>
+    [Fact]
+    public async Task SuggestMetadata_AGenuineCancellation_StillPropagates()
+    {
+        var claude = new StubCaptureModel(_ => throw new OperationCanceledException());
+        var (provider, settings, _) = Create(claude: claude);
+        settings.Source = CaptureModelSource.Claude;
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => provider.SuggestMetadataAsync("Email Ms. Rivera", Context(), cts.Token));
+    }
+
     [Fact]
     public async Task AConfiguredSourceWithNoRegisteredBackend_FallsBack()
     {
