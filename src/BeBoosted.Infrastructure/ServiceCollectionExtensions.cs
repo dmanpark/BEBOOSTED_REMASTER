@@ -12,6 +12,7 @@ using BeBoosted.Infrastructure.Persistence;
 using BeBoosted.Infrastructure.Planning;
 using BeBoosted.Infrastructure.Prioritization;
 using BeBoosted.Infrastructure.Projects;
+using BeBoosted.Infrastructure.Security;
 using BeBoosted.Infrastructure.Settings;
 using BeBoosted.Infrastructure.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -50,7 +51,24 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ResourceLayoutStartup>();
         services.AddSingleton<IResourceIndexer, SimpleLocalIndexer>();
         services.AddSingleton<ProjectService>();
-        services.AddSingleton<IAiProvider, LocalHeuristicAiProvider>();
+        services.AddSingleton<CaptureModelSettings>();
+        services.AddSingleton<ISecretProtector>(_ => OperatingSystem.IsWindows()
+            ? new DpapiSecretProtector()
+            : new UnavailableSecretProtector());
+        services.AddSingleton<LocalHeuristicAiProvider>();
+        services.AddSingleton(_ => new HttpClient { Timeout = TimeSpan.FromSeconds(15) });
+        services.AddSingleton<OllamaCaptureModel>();
+        services.AddSingleton<ClaudeCaptureModel>();
+        services.AddSingleton<IAiProvider>(sp => new RoutedAiProvider(
+            sp.GetRequiredService<LocalHeuristicAiProvider>(),
+            source => source switch
+            {
+                CaptureModelSource.Ollama => sp.GetRequiredService<OllamaCaptureModel>(),
+                CaptureModelSource.Claude => sp.GetRequiredService<ClaudeCaptureModel>(),
+                _ => null,
+            },
+            sp.GetRequiredService<CaptureModelSettings>(),
+            sp.GetRequiredService<IProjectRepository>()));
         services.AddSingleton<IAiProvenanceRepository, SqliteAiProvenanceRepository>();
         services.AddSingleton<AiPermissionSettings>();
         services.AddSingleton<AiService>();
