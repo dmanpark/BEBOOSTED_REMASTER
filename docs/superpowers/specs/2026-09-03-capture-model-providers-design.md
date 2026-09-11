@@ -160,7 +160,7 @@ the model did not answer:
 | Situation | Result |
 | --- | --- |
 | Source is Claude, no key saved | Heuristic, notice |
-| Network unreachable, DNS failure, timeout (15 s) | Heuristic, notice |
+| Network unreachable, DNS failure, timeout | Heuristic, notice |
 | HTTP 4xx (bad key, refused) or 5xx | Heuristic, notice |
 | Ollama not running, or the named model absent | Heuristic, notice |
 | Response is not valid JSON, or fails validation | Heuristic, notice |
@@ -172,6 +172,20 @@ notice for a missing duration estimate would be noise.
 
 The notice names the configured source ("Claude", "Ollama"), never a raw exception
 message: the surface that shows it is a chat reply, not a log.
+
+### Why the two backends have different budgets
+
+Measured on the development machine, `qwen2.5:7b-instruct` answers a capture in
+**16–21 s cold and ~10 s warm**, and Ollama evicts an idle model after about five
+minutes. A single 15-second budget therefore sat *inside* the real spread: captures
+failed roughly half the time, and failed expensively — the user waited the whole
+budget before getting the built-in parser's answer anyway, which is strictly worse
+than leaving the model off.
+
+So the local backend gets 60 s (a ceiling for a wedged server, not a target) plus
+`keep_alive`, which is what actually moves the common case off the timeout. The
+cloud backend keeps 15 s: a hosted API that slow has already failed, and a longer
+ceiling would only freeze the composer for longer.
 
 ## Components
 
@@ -229,13 +243,15 @@ the macOS build still has a real model backend before the Keychain protector lan
 
 The official Anthropic C# SDK (`Anthropic` NuGet package), model `claude-sonnet-4-6`
 by default, structured output for the draft array, `max_tokens` sized for a short
-list, and a 15-second timeout. It reads the key through `ISecretProtector` at call
+list, and a 15-second timeout — a cloud call that slow is already wrong. It reads
+the key through `ISecretProtector` at call
 time, so saving a key in Settings takes effect immediately.
 
 ### `BeBoosted.Infrastructure` — `OllamaCaptureModel`
 
 Plain `HttpClient` against Ollama's native `/api/generate` with `format: json` and
-`stream: false`; endpoint and model from settings; the same 15-second timeout. No SDK
+`stream: false`; endpoint and model from settings; a **60-second** timeout, and
+`keep_alive` so Ollama holds the model in memory between captures. No SDK
 dependency — the surface used is one POST.
 
 ### `BeBoosted.Infrastructure` — `RoutedAiProvider`
@@ -323,7 +339,7 @@ Ollama needs no package: it is one `HttpClient` POST to a local endpoint.
 - On non-Windows platforms the Claude backend cannot be configured at all until a
   Keychain protector ships; Ollama is the model backend there.
 - Ollama must be started by the user; the app does not launch or install it.
-- No streaming, so a slow local model shows nothing until it answers or the 15-second
+- No streaming, so a slow local model shows nothing until it answers or the 60-second
   timeout fires.
 - The prompt is tuned against Claude and a 7B-class instruction-tuned local model. A
   much smaller model — a 3B, or a base model rather than an instruct one — may ignore

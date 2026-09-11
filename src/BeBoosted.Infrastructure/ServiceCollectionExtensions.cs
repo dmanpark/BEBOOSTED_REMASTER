@@ -56,7 +56,9 @@ public static class ServiceCollectionExtensions
             ? new DpapiSecretProtector()
             : new UnavailableSecretProtector());
         services.AddSingleton<LocalHeuristicAiProvider>();
-        services.AddSingleton(_ => new HttpClient { Timeout = TimeSpan.FromSeconds(15) });
+        // The capture HttpClient. Its budget belongs to the Ollama backend that
+        // consumes it, so the number lives there rather than floating here.
+        services.AddSingleton(_ => new HttpClient { Timeout = OllamaCaptureModel.RequestTimeout });
         services.AddSingleton<OllamaCaptureModel>();
         services.AddSingleton<ClaudeCaptureModel>();
         services.AddSingleton<IAiProvider>(sp => new RoutedAiProvider(

@@ -116,4 +116,36 @@ public sealed class OllamaCaptureModelTests
             new CaptureRequest("Email Ms. Rivera", [], new DateOnly(2026, 9, 3)),
             TestContext.Current.CancellationToken));
     }
+
+    /// <summary>
+    /// Ollama evicts an idle model after about five minutes, so without this every
+    /// capture that follows a pause pays the cold-load cost again. Measured on the
+    /// development machine: a cold qwen2.5:7b-instruct answers in 16-18s, a warm one
+    /// in ~11s. Keeping the model resident is what moves the common case off the
+    /// timeout, so it is pinned on the wire rather than left to a default.
+    /// </summary>
+    [Fact]
+    public async Task TheRequest_AsksOllamaToKeepTheModelResident()
+    {
+        var (model, handler) = Create(_ => Json("""{"response": "{\"tasks\":[]}"}"""));
+
+        await model.ExtractAsync(Request(), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(handler.LastBody);
+        Assert.Contains("\"keep_alive\":\"30m\"", handler.LastBody, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The timeout is a ceiling for a wedged server, not a target. It has to clear a
+    /// cold local model load: 15s (the original value) sat in the middle of the real
+    /// 10.8-18.1s spread, so captures failed about half the time and fell back to the
+    /// built-in parser after making the user wait the full budget first.
+    /// </summary>
+    [Fact]
+    public void TheRequestTimeout_ClearsAColdModelLoad()
+    {
+        Assert.True(
+            OllamaCaptureModel.RequestTimeout >= TimeSpan.FromSeconds(30),
+            $"a cold 7B load measured 18.1s; {OllamaCaptureModel.RequestTimeout} leaves no headroom");
+    }
 }

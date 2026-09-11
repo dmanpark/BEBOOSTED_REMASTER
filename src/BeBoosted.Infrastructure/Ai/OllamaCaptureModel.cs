@@ -13,12 +13,31 @@ namespace BeBoosted.Infrastructure.Ai;
 public sealed class OllamaCaptureModel(HttpClient client, CaptureModelSettings settings)
     : ICaptureModel
 {
+    /// <summary>
+    /// The ceiling on one capture, not a target. It has to clear a cold local model
+    /// load: measured on a development machine, qwen2.5:7b-instruct answers in
+    /// 16-18s cold and ~11s warm. The original 15s sat inside that spread, so
+    /// captures failed roughly half the time — and failed expensively, making the
+    /// user wait the whole budget before falling back to the built-in parser.
+    /// </summary>
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// How long Ollama should keep the model in memory after answering. Ollama
+    /// evicts an idle model after about five minutes, so without this every capture
+    /// following a pause pays the cold-load cost again — which is what pushed the
+    /// common case over the old timeout. This is what makes a capture ~11s rather
+    /// than ~17s; the timeout above only stops a wedged server.
+    /// </summary>
+    internal const string KeepAlive = "30m";
+
     private sealed record GenerateRequest(
         [property: JsonPropertyName("model")] string Model,
         [property: JsonPropertyName("system")] string System,
         [property: JsonPropertyName("prompt")] string Prompt,
         [property: JsonPropertyName("format")] string Format,
-        [property: JsonPropertyName("stream")] bool Stream);
+        [property: JsonPropertyName("stream")] bool Stream,
+        [property: JsonPropertyName("keep_alive")] string KeepAliveFor);
 
     private sealed record GenerateResponse(
         [property: JsonPropertyName("response")] string? Response);
@@ -42,7 +61,7 @@ public sealed class OllamaCaptureModel(HttpClient client, CaptureModelSettings s
         var endpoint = settings.OllamaEndpoint.TrimEnd('/') + "/api/generate";
         var payload = new GenerateRequest(
             settings.OllamaModel, system, CaptureExtractionPrompt.BuildUser(request),
-            Format: "json", Stream: false);
+            Format: "json", Stream: false, KeepAliveFor: KeepAlive);
 
         using var response = await client.PostAsJsonAsync(endpoint, payload, cancellationToken);
         response.EnsureSuccessStatusCode();
