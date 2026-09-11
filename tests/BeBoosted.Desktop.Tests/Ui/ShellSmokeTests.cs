@@ -27,9 +27,12 @@ public sealed class ShellSmokeTests
             .ToList();
         Assert.Equal(4, railButtons.Count); // Calendar, Inbox, Projects, Settings
 
+        // Tracks the view model rather than a copy literal: the placeholder is the
+        // composer's only guidance and has been reworded once already, which broke
+        // this assertion for a reason that had nothing to do with the shell rendering.
         var composer = window.GetVisualDescendants()
             .OfType<TextBlock>()
-            .FirstOrDefault(text => text.Text?.StartsWith("Tell BeBoosted", StringComparison.Ordinal) == true);
+            .FirstOrDefault(text => text.Text == shell.Chat.Placeholder);
         Assert.NotNull(composer);
     }
 

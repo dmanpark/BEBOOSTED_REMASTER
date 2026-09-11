@@ -156,6 +156,18 @@
             <Path Classes="icon" Data="{StaticResource IconSpark}" Width="12" Height="12"
                   StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Border>
+          <!-- Same send affordance the expanded chat has always had. Without it,
+               submitting was Enter-only and the one visible hint (Ctrl+J) tells you
+               how to jump TO the box, not how to send FROM it. -->
+          <Button DockPanel.Dock="Right" Width="28" Height="28" Padding="0"
+                  Background="{StaticResource BrushGraphite}" CornerRadius="6"
+                  VerticalAlignment="Center" Margin="8,0,0,0"
+                  Command="{Binding Chat.SubmitCommand}"
+                  AutomationProperties.Name="Send"
+                  ToolTip.Tip="Send (Enter)">
+            <Path Data="M6,10 L6,2 M2.5,5.5 L6,2 L9.5,5.5" Stroke="{StaticResource BrushHighlighterLime}"
+                  StrokeThickness="1.6" Fill="{x:Null}" Width="12" Height="12" />
+          </Button>
           <Border DockPanel.Dock="Right"
                   BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
                   CornerRadius="4" Padding="6,2" VerticalAlignment="Center">

@@ -185,14 +185,22 @@ public sealed partial class ChatViewModel : ViewModelBase
     public partial string InputText { get; set; } = string.Empty;
 
     [ObservableProperty]
-    public partial string Placeholder { get; set; } = "Tell BeBoosted what you need…";
+    /// <summary>
+    /// The composer's only guidance, so it has to teach the feature rather than name
+    /// the app: a first-time user has no other reason to believe a whole paragraph is
+    /// welcome here.
+    /// </summary>
+    public partial string Placeholder { get; set; } = DefaultPlaceholder;
+
+    internal const string DefaultPlaceholder =
+        "Describe your tasks in your own words — one line or a paragraph…";
 
     public bool HasItems => Items.Count > 0;
 
     /// <summary>Scopes the composer to a project ("Ask about College Admissions…").</summary>
     public void SetScope(string? projectName)
         => Placeholder = projectName is null
-            ? "Tell BeBoosted what you need…"
+            ? DefaultPlaceholder
             : $"Ask about {projectName}…";
 
     [RelayCommand]
