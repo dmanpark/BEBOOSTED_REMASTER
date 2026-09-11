@@ -820,8 +820,12 @@
               </DockPanel>
             </Border>
 
-            <!-- preview / reading pane -->
-            <ScrollViewer Grid.Column="1">
+            <!-- preview / reading pane. Gated on the selection, not just bound to it:
+                 the pane's buttons and section headers are static markup, so with a
+                 null DataContext they still rendered - a brand-new File offered
+                 "Open in browser" and "Remove from File" for a resource that did not
+                 exist. The list beside it already carries the empty state. -->
+            <ScrollViewer Grid.Column="1" IsVisible="{Binding HasSelection}">
               <StackPanel Margin="28,22" Spacing="14"
                           DataContext="{Binding Selected}" x:DataType="vm:ResourceRowViewModel">
                 <StackPanel Orientation="Horizontal" Spacing="10">

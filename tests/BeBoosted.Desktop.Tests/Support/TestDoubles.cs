@@ -17,6 +17,24 @@ using BeBoosted.Domain.Tasks;
 
 namespace BeBoosted.Desktop.Tests.Support;
 
+/// <summary>
+/// A protector that reports itself available and round-trips in memory. The shell
+/// previously wired the real <c>UnavailableSecretProtector</c>, which made every
+/// rendered Settings screenshot show the Claude option permanently disabled with
+/// "Saving an API key isn't supported on this platform yet" - a state that never
+/// occurs on the platform those screenshots are reviewed as a reference for. It
+/// protects nothing: the value only has to survive a round trip inside one test.
+/// </summary>
+public sealed class ReversibleTestProtector : BeBoosted.Application.Abstractions.ISecretProtector
+{
+    public bool IsAvailable => true;
+
+    public string Protect(string plaintext) => "test:" + plaintext;
+
+    public string? TryUnprotect(string ciphertext)
+        => ciphertext.StartsWith("test:", StringComparison.Ordinal) ? ciphertext[5..] : null;
+}
+
 public sealed class InMemorySettingsStore : ISettingsStore
 {
     private readonly Dictionary<string, string> _values = [];
@@ -745,7 +763,7 @@ public static class TestShell
                 calendarService, reveal ?? new FakeFileReveal(), aiService),
             new SettingsViewModel(
                 new FakePaths(), aiPermissions, new CaptureModelSettings(settingsStore),
-                new BeBoosted.Infrastructure.Security.UnavailableSecretProtector()),
+                new ReversibleTestProtector()),
             new ChatViewModel(aiService, aiPermissions, clock),
             prioritySort,
             aiPermissions,
