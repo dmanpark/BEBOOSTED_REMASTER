@@ -116,9 +116,12 @@ public sealed class CaptureModelSettingsUiTests
         CaptureModelSource.Claude,
         "The message you type, your project names, and today's date leave your computer — "
         + "only when you press send.")]
+    // The Ollama line is the default-address wording. It is no longer a fixed string:
+    // it follows the endpoint, because the endpoint is what decides whether the claim
+    // is true. The address-dependent cases are pinned separately below.
     [InlineData(
         CaptureModelSource.Ollama,
-        "Your message goes to the model running on this computer. Nothing leaves it.")]
+        "Your message goes to Ollama on this computer. Nothing leaves this computer.")]
     [InlineData(
         CaptureModelSource.Heuristic,
         "Nothing is sent anywhere. Task capture uses built-in rules.")]
@@ -129,5 +132,48 @@ public sealed class CaptureModelSettingsUiTests
         settings.Source = source;
 
         Assert.Equal(expected, vm.ConsentText);
+    }
+
+    /// <summary>
+    /// The old copy promised "Nothing leaves it" unconditionally, which the app cannot
+    /// guarantee: the endpoint is a text box, and pointing it at another machine makes
+    /// that sentence false while it is still on screen. The promise now follows the
+    /// address, because the address is what decides it.
+    /// </summary>
+    [Theory]
+    [InlineData("http://localhost:11434")]
+    [InlineData("http://127.0.0.1:11434")]
+    [InlineData("http://[::1]:11434")]
+    public void WithALocalOllamaAddress_TheConsentTextPromisesNothingLeaves(string endpoint)
+    {
+        var (vm, settings) = Create();
+        settings.OllamaEndpoint = endpoint;
+        vm.IsCaptureOllama = true;
+
+        Assert.Contains("Nothing leaves this computer", vm.ConsentText, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("http://192.168.1.50:11434")]
+    [InlineData("http://ollama.example.com:11434")]
+    public void WithARemoteOllamaAddress_TheConsentTextSaysTheMessageLeaves(string endpoint)
+    {
+        var (vm, settings) = Create();
+        settings.OllamaEndpoint = endpoint;
+        vm.IsCaptureOllama = true;
+
+        Assert.DoesNotContain("Nothing leaves this computer", vm.ConsentText, StringComparison.Ordinal);
+        Assert.Contains("leaves this computer", vm.ConsentText, StringComparison.Ordinal);
+    }
+
+    /// <summary>A malformed address is not a promise the app can keep either.</summary>
+    [Fact]
+    public void WithAnUnparseableOllamaAddress_TheConsentTextDoesNotPromiseLocality()
+    {
+        var (vm, settings) = Create();
+        settings.OllamaEndpoint = "not a url";
+        vm.IsCaptureOllama = true;
+
+        Assert.DoesNotContain("Nothing leaves this computer", vm.ConsentText, StringComparison.Ordinal);
     }
 }

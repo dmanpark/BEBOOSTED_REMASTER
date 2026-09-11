@@ -323,4 +323,74 @@ public sealed class RoutedAiProviderTests : IDisposable
         Assert.NotNull(answer);
         Assert.Equal(0, claude.Calls);
     }
+
+    /// <summary>
+    /// A timeout and an unreachable server are different problems with different next
+    /// steps, and the app knows which one happened. Telling a user "couldn't be
+    /// reached" when the server is running and merely slow sends them to check the one
+    /// thing that is already fine.
+    /// </summary>
+    [Fact]
+    public async Task ATimeout_SaysTheModelWasTooSlow_NotThatItWasUnreachable()
+    {
+        var ollama = new StubCaptureModel(
+            _ => throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout"));
+        var (provider, settings, _) = Create(ollama: ollama);
+        settings.Source = CaptureModelSource.Ollama;
+
+        var result = await provider.ExtractTasksAsync(
+            "Draft the essay outline", Context(), TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(result.Drafts);
+        Assert.DoesNotContain("couldn't be reached", result.DegradedNotice!, StringComparison.Ordinal);
+        Assert.Contains("in time", result.DegradedNotice!, StringComparison.Ordinal);
+        Assert.Contains("Ollama", result.DegradedNotice!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnUnreachableServer_StillSaysItCouldNotBeReached()
+    {
+        var ollama = new StubCaptureModel(_ => throw new HttpRequestException("connection refused"));
+        var (provider, settings, _) = Create(ollama: ollama);
+        settings.Source = CaptureModelSource.Ollama;
+
+        var result = await provider.ExtractTasksAsync(
+            "Draft the essay outline", Context(), TestContext.Current.CancellationToken);
+
+        Assert.Contains("couldn't be reached", result.DegradedNotice!, StringComparison.Ordinal);
+    }
+
+    /// <summary>A model that answered with something unusable is a third thing again.</summary>
+    [Fact]
+    public async Task AnUnreadableReply_SaysSo_RatherThanBlamingTheConnection()
+    {
+        var ollama = new StubCaptureModel(_ => throw new FormatException("not json"));
+        var (provider, settings, _) = Create(ollama: ollama);
+        settings.Source = CaptureModelSource.Ollama;
+
+        var result = await provider.ExtractTasksAsync(
+            "Draft the essay outline", Context(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain("couldn't be reached", result.DegradedNotice!, StringComparison.Ordinal);
+        Assert.Contains("couldn't be read", result.DegradedNotice!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Claude with no key saved is not a connection problem either, and the fix is
+    /// somewhere the user can act on: Settings.
+    /// </summary>
+    [Fact]
+    public async Task AMissingKey_PointsAtSettings_RatherThanTheNetwork()
+    {
+        var claude = new StubCaptureModel(
+            _ => throw new InvalidOperationException("No usable Claude API key is saved."));
+        var (provider, settings, _) = Create(claude: claude);
+        settings.Source = CaptureModelSource.Claude;
+
+        var result = await provider.ExtractTasksAsync(
+            "Draft the essay outline", Context(), TestContext.Current.CancellationToken);
+
+        Assert.Contains("key", result.DegradedNotice!, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("couldn't be reached", result.DegradedNotice!, StringComparison.Ordinal);
+    }
 }

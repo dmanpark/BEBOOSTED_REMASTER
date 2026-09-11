@@ -137,15 +137,50 @@ public sealed partial class SettingsViewModel(
         CaptureModelSource.Claude =>
             "The message you type, your project names, and today's date leave your computer — "
             + "only when you press send.",
-        CaptureModelSource.Ollama =>
-            "Your message goes to the model running on this computer. Nothing leaves it.",
+        CaptureModelSource.Ollama => OllamaConsentText,
         _ => "Nothing is sent anywhere. Task capture uses built-in rules.",
     };
+
+    /// <summary>
+    /// What the Ollama choice actually sends, which depends on the address below it.
+    /// The previous wording promised "Nothing leaves it" unconditionally — but the
+    /// endpoint is an editable text box, so pointing it at another machine made that
+    /// sentence false while it was still on screen. A consent line the app cannot keep
+    /// is worse than no consent line, so the promise follows the address.
+    /// </summary>
+    public string OllamaConsentText
+        => IsLocalAddress(captureModel.OllamaEndpoint)
+            ? "Your message goes to Ollama on this computer. Nothing leaves this computer."
+            : $"Your message goes to the Ollama server at {DisplayHost(captureModel.OllamaEndpoint)}. "
+                + "It leaves this computer.";
+
+    /// <summary>
+    /// Loopback only. Anything unparseable is treated as remote on purpose: when the
+    /// app cannot tell where a message is going, the honest answer is not a promise
+    /// that it stays put.
+    /// </summary>
+    private static bool IsLocalAddress(string endpoint)
+        => Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+            && (uri.IsLoopback
+                || string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase));
+
+    private static string DisplayHost(string endpoint)
+        => Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) && uri.Host.Length > 0
+            ? uri.Host
+            : "the address below";
 
     public string OllamaEndpoint
     {
         get => captureModel.OllamaEndpoint;
-        set { captureModel.OllamaEndpoint = value; OnPropertyChanged(); }
+        set
+        {
+            captureModel.OllamaEndpoint = value;
+            OnPropertyChanged();
+            // The consent line is derived from this address, so it is stale the moment
+            // the address changes.
+            OnPropertyChanged(nameof(OllamaConsentText));
+            OnPropertyChanged(nameof(ConsentText));
+        }
     }
 
     public string OllamaModel

@@ -42,7 +42,7 @@ public sealed class RoutedAiProvider(
         {
             return source == CaptureModelSource.Heuristic
                 ? await heuristic.ExtractTasksAsync(message, context, cancellationToken)
-                : await DegradeAsync(source, message, context, cancellationToken);
+                : await DegradeAsync(source, message, context, error: null, cancellationToken);
         }
 
         var known = projects.GetAll();
@@ -53,9 +53,9 @@ public sealed class RoutedAiProvider(
                 cancellationToken);
             return new CaptureExtractionResult([.. drafts.Select(draft => ToDraft(draft, known, context))]);
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            return await DegradeAsync(source, message, context, cancellationToken);
+            return await DegradeAsync(source, message, context, error, cancellationToken);
         }
     }
 
@@ -94,19 +94,67 @@ public sealed class RoutedAiProvider(
 
     private async Task<CaptureExtractionResult> DegradeAsync(
         CaptureModelSource source, string message, AiContext context,
-        CancellationToken cancellationToken)
+        Exception? error, CancellationToken cancellationToken)
     {
         var fallback = await heuristic.ExtractTasksAsync(message, context, cancellationToken);
-        return fallback with { DegradedNotice = NoticeFor(source) };
+        return fallback with { DegradedNotice = NoticeFor(source, Classify(error)) };
     }
 
-    /// <summary>Chat copy, never a log line: it names the source and nothing else.</summary>
-    private static string NoticeFor(CaptureModelSource source) => source switch
+    /// <summary>Why the model did not answer, at the granularity a user can act on.</summary>
+    private enum DegradeReason
     {
-        CaptureModelSource.Claude => "Parsed locally — Claude couldn't be reached.",
-        CaptureModelSource.Ollama => "Parsed locally — Ollama couldn't be reached.",
-        _ => "Parsed locally.",
+        /// <summary>Nothing answered at the address: not running, wrong port, no network.</summary>
+        Unreachable,
+
+        /// <summary>It is there and it answered, just past the budget.</summary>
+        TooSlow,
+
+        /// <summary>It answered with something that was not usable drafts.</summary>
+        UnreadableReply,
+
+        /// <summary>It cannot run at all as configured — a missing key, a missing backend.</summary>
+        NotConfigured,
+    }
+
+    /// <summary>
+    /// A timeout is not an outage, and saying so matters: told "couldn't be reached", a
+    /// user checks whether the server is running, finds that it is, and has nowhere to
+    /// go next. The catch filter has already established the caller did not cancel, so a
+    /// cancellation-shaped exception here is the client's own timeout expiring.
+    /// </summary>
+    private static DegradeReason Classify(Exception? error) => error switch
+    {
+        null => DegradeReason.NotConfigured,
+        OperationCanceledException => DegradeReason.TooSlow,
+        FormatException => DegradeReason.UnreadableReply,
+        InvalidOperationException => DegradeReason.NotConfigured,
+        _ => DegradeReason.Unreachable,
     };
+
+    /// <summary>
+    /// Chat copy, never a log line. Every branch is a fixed sentence — the caught
+    /// exception's own message is never interpolated, because it is written for a
+    /// developer reading a stack trace, not for someone who just typed a thought into
+    /// a box.
+    /// </summary>
+    private static string NoticeFor(CaptureModelSource source, DegradeReason reason)
+    {
+        if (source == CaptureModelSource.Heuristic)
+        {
+            return "Parsed locally.";
+        }
+
+        var name = source == CaptureModelSource.Claude ? "Claude" : "Ollama";
+        return reason switch
+        {
+            DegradeReason.TooSlow => $"Parsed locally — {name} didn't answer in time.",
+            DegradeReason.UnreadableReply => $"Parsed locally — {name}'s reply couldn't be read.",
+            DegradeReason.NotConfigured when source == CaptureModelSource.Claude =>
+                "Parsed locally — no Claude API key is saved. Add one in Settings.",
+            DegradeReason.NotConfigured => "Parsed locally — Ollama isn't set up yet. Check Settings.",
+            _ => $"Parsed locally — {name} couldn't be reached.",
+        };
+    }
 
     private static ExtractedTaskDraft ToDraft(
         CaptureDraft draft, IReadOnlyList<Project> known, AiContext context)

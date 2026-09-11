@@ -100,7 +100,11 @@ Settings gains a **Capture model** card with three exclusive choices:
 The card states, in plain language and without hedging, what each choice sends. For
 Claude: *the message you type, your project names, and today's date leave your
 computer, only when you press send.* For Ollama: *your message goes to the model
-running on this computer; nothing leaves it.* For built-in: nothing is sent anywhere.
+running at the configured address.* That line follows the address rather than
+asserting locality: the endpoint is an editable field, so pointing it at another
+machine would otherwise leave a false promise on screen. A loopback address says
+*nothing leaves this computer*; anything else, including an address the app cannot
+parse, says plainly that the message leaves. For built-in: nothing is sent anywhere.
 
 Switching takes effect on the next capture. No restart.
 
@@ -131,8 +135,13 @@ treats that exactly like a missing key.
 5. Drafts enter the existing review list, subject to the unchanged task-capture
    permission. Their `SourceDescription` stays "from your message".
 6. If anything in steps 3–4 fails, the heuristic parses the same message and the
-   result carries a **degraded notice** the chat displays: *"Parsed locally — Claude
-   couldn't be reached."*
+   result carries a **degraded notice** the chat displays, naming the cause at the
+   granularity the user can act on — *didn't answer in time* (a timeout), *couldn't be
+   reached* (nothing at the address), *reply couldn't be read* (it answered with
+   something unusable), or *no Claude API key is saved* (not configured). A timeout is
+   not an outage: told "couldn't be reached", a user checks whether the server is
+   running, finds that it is, and has nowhere to go next. Every branch is a fixed
+   sentence; the caught exception's own message is never interpolated.
 
 The model never sees a domain identifier. It is given project *names* and returns a
 project name; the router maps that back to a `ProjectId`, and an unrecognised name
