@@ -1,6 +1,7 @@
 using BeBoosted.Desktop.Tests.Support;
 using BeBoosted.Desktop.ViewModels;
 using BeBoosted.Domain.Calendar;
+using BeBoosted.Domain.Scheduling;
 using BeBoosted.Domain.Tasks;
 
 namespace BeBoosted.Desktop.Tests.ViewModels;
@@ -112,10 +113,36 @@ public sealed class ProjectTaskStatusTests
         blocks.Add(CalendarBlock.CreateTaskSession(
             stuck.Id, Today.AddDays(-1), new TimeOnly(9, 0), new TimeOnly(10, 0), DateTimeOffset.Now));
 
+        var done = AddTask(detail, tasks, "Done one");
+        done.Complete(DateTimeOffset.Now);
+        tasks.Update(done);
+
         detail.Refresh();
 
         Assert.Equal(
-            new[] { "Stuck one", "Scheduled one", "Unscheduled one" },
+            new[] { "Stuck one", "Scheduled one", "Unscheduled one", "Done one" },
             detail.Tasks.Select(r => r.Title).ToArray());
+    }
+
+    /// <summary>
+    /// GetScheduledBlocks only expands a repeating series across a +/-14-day window, so a
+    /// series with no occurrence in that window must not be mistaken for a non-repeating
+    /// task - it still completes per occurrence, never as a whole, so the project row's
+    /// whole-task completion control must stay unavailable.
+    /// </summary>
+    [Fact]
+    public void ARepeatingSeriesOutsideTheWindow_StillForbidsWholeTaskCompletion()
+    {
+        var (detail, tasks, blocks) = OpenProject();
+        var task = AddTask(detail, tasks, "Weekly review");
+        var farAnchor = Today.AddDays(30);
+        blocks.Add(CalendarBlock.CreateTaskSession(
+            task.Id, farAnchor, new TimeOnly(9, 0), new TimeOnly(10, 0), DateTimeOffset.Now,
+            RecurrenceRule.Weekly(1, farAnchor.DayOfWeek)));
+
+        detail.Refresh();
+
+        var row = Assert.Single(detail.Tasks);
+        Assert.False(row.CanComplete);
     }
 }

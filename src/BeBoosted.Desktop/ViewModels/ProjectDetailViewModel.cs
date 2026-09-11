@@ -179,7 +179,13 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
         foreach (var task in open)
         {
             var sessions = sessionsByTask.GetValueOrDefault(task.Id) ?? [];
-            var repeating = sessions.Any(s => s.Block.Recurrence is not null);
+
+            // Unwindowed on purpose: GetScheduledBlocks only expands a repeating series
+            // across a +/-14-day window, so a series with no occurrence in that window
+            // (starting three weeks out, say) would otherwise read as non-repeating and
+            // let a repeating task be completed as a whole from this list - a task that
+            // completes per occurrence, never as a whole, must never offer that control.
+            var repeating = _calendar.GetSessionsForTask(task.Id).Any(b => b.Recurrence is not null);
             rows.Add(new ProjectTaskRowViewModel(
                 task, StatusForOpenTask(sessions), CompleteTaskRow, !repeating, RequestTaskEdit));
         }
@@ -224,7 +230,11 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     private static ProjectTaskStatusInfo StatusForOpenTask(
         IReadOnlyList<Application.Projects.ProjectScheduledBlock> sessions)
     {
-        if (sessions.FirstOrDefault(s => s.State == Application.Projects.ProjectBlockState.Overdue)
+        if (sessions
+            .Where(s => s.State == Application.Projects.ProjectBlockState.Overdue)
+            .OrderBy(s => s.Date)
+            .ThenBy(s => s.Block.StartTime)
+            .FirstOrDefault()
             is { } overdue)
         {
             return new ProjectTaskStatusInfo(
@@ -393,7 +403,7 @@ public sealed partial class ProjectTaskRowViewModel(
             ? $"done {on:ddd}"
             : "done",
         _ => task.EstimatedDuration is { } estimate
-            ? $"unscheduled · {FormatDuration(estimate)}"
+            ? $"unscheduled · {TaskRowViewModel.FormatDuration(estimate)}"
             : "unscheduled",
     };
 
@@ -401,16 +411,9 @@ public sealed partial class ProjectTaskRowViewModel(
     {
         var when = $"{status.SessionDate:ddd} {status.SessionStart:h:mm tt}";
         return task.EstimatedDuration is { } estimate
-            ? $"{when} · {FormatDuration(estimate)}"
+            ? $"{when} · {TaskRowViewModel.FormatDuration(estimate)}"
             : when;
     }
-
-    private static string FormatDuration(TimeSpan value)
-        => value.TotalMinutes < 60
-            ? $"{(int)value.TotalMinutes} min"
-            : value.Minutes == 0
-                ? $"{(int)value.TotalHours}h"
-                : $"{(int)value.TotalHours}h {value.Minutes}m";
 
     public string MetaText
     {
