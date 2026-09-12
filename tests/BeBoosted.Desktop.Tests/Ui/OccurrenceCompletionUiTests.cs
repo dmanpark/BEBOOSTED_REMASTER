@@ -191,8 +191,10 @@ public sealed class OccurrenceCompletionUiTests
 
         var oneOff = FindBlockView(window, "Practice DECA role-play");
         Assert.False(oneOff.FindControl<Button>("OccurrenceDoneButton")!.IsVisible);
-        // One-off sessions keep their multi-outcome flyout control instead.
+        // One-off sessions get the equivalent pair instead: a checkbox, plus the
+        // overflow holding the outcomes that are not a simple finish.
         Assert.True(oneOff.FindControl<Button>("CompleteButton")!.IsVisible);
+        Assert.True(oneOff.FindControl<Button>("OutcomeButton")!.IsVisible);
         window.Close();
     }
 

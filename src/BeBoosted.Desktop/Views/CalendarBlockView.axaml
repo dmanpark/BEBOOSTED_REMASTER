@@ -13,6 +13,11 @@
       <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
       <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
     </Style>
+    <!-- The same checked treatment for the one-off session checkbox -->
+    <Style Selector="Button#CompleteButton.checked">
+      <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    </Style>
     <!-- The source block keeps a lime halo behind the scrim while edited (frame 3b).
          The literal equals ColorLimeHalo — BoxShadows cannot compose a resource color. -->
     <Style Selector="Border#BlockBorder.editing">
@@ -34,16 +39,33 @@
         <Border DockPanel.Dock="Left" Width="3"
                 Background="{StaticResource BrushAccentSlate}"
                 IsVisible="{Binding IsSession}" />
-        <Grid Margin="8,5,8,5" RowDefinitions="Auto,*" ColumnDefinitions="Auto,*">
-          <!-- Outcome control (approved task blocks) -->
+        <Grid Margin="8,5,8,5" RowDefinitions="Auto,*" ColumnDefinitions="Auto,*,Auto">
+          <!-- Checkbox (one-off task sessions): one click done, one click back.
+               Mirrors the Today row and the repeating-occurrence circle beside it. -->
           <Button Grid.Row="0" Grid.Column="0" Grid.RowSpan="2"
                   Name="CompleteButton"
-                  Classes="icon" Width="20" Height="20" CornerRadius="10"
+                  Classes="icon" Classes.checked="{Binding IsDone}"
+                  Width="20" Height="20" CornerRadius="10"
                   Margin="0,1,8,0" VerticalAlignment="Top"
                   BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1.5"
                   IsVisible="{Binding ShowCompletionControl}"
+                  Command="{Binding ToggleSessionDoneCommand}"
+                  AutomationProperties.Name="{Binding CompletionControlName}"
+                  ToolTip.Tip="{Binding CompletionControlName}">
+            <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
+                  StrokeThickness="1.8" IsVisible="{Binding IsDone}" />
+          </Button>
+
+          <!-- The other outcomes: quiet, never competing with the checkbox -->
+          <Button Grid.Row="0" Grid.Column="2" Grid.RowSpan="2"
+                  Name="OutcomeButton"
+                  Classes="icon" Width="20" Height="20"
+                  Margin="6,1,0,0" VerticalAlignment="Top"
+                  IsVisible="{Binding ShowOutcomeAction}"
                   AutomationProperties.Name="{Binding Title, StringFormat='Record outcome for {0}'}"
-                  ToolTip.Tip="Record outcome">
+                  ToolTip.Tip="Needs more time, or didn't happen">
+            <Path Classes="icon" Data="{StaticResource IconMore}" Width="12" Height="12"
+                  StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
             <Button.Flyout>
               <Flyout Placement="BottomEdgeAlignedLeft" ShowMode="Standard">
                 <StackPanel Width="228" Spacing="6" Margin="2">
@@ -174,7 +196,7 @@
                     BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
                     CornerRadius="3" Padding="4,0"
                     IsVisible="{Binding NeedsOutcome}">
-              <TextBlock Classes="meta" Text="outcome?" />
+              <TextBlock Classes="meta" Text="Needs outcome" />
             </Border>
           </StackPanel>
           <TextBlock Grid.Row="1" Grid.Column="1" Classes="meta"

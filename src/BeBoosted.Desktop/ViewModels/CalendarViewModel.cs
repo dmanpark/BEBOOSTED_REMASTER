@@ -1119,6 +1119,28 @@ public sealed partial class CalendarViewModel : ViewModelBase
         DataChanged?.Invoke();
     }
 
+    /// <summary>
+    /// Undo for a finished session. When the session is only done because its parent
+    /// task was completed as a whole, the inverse is reopening the task — clearing
+    /// just this session would leave the task complete and the session unresolved.
+    /// The same aggregate-inverse rule DailyListViewModel.ReopenRow applies.
+    /// </summary>
+    public void ReopenSession(CalendarBlockId id)
+    {
+        if (_calendar.GetBlock(id)?.TaskId is { } taskId
+            && _tasks.GetById(taskId)?.IsCompleted == true)
+        {
+            if (_calendar.ReopenTask(taskId))
+            {
+                NotifyTasksMutated();
+            }
+
+            return;
+        }
+
+        ClearSessionOutcome(id);
+    }
+
     /// <summary>Takes back one session's outcome; a no-op announces nothing.</summary>
     public void ClearSessionOutcome(CalendarBlockId id)
     {

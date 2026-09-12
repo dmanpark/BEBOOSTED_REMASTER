@@ -109,13 +109,25 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
     /// <summary>External events show the lock icon and reject every mutation.</summary>
     public bool IsLocked => IsExternal;
 
-    /// <summary>One-off sessions record what happened through the outcome flyout.</summary>
-    public bool ShowCompletionControl => IsLocalSession && !IsRecurring && !IsDone;
+    /// <summary>
+    /// The checkbox. It deliberately survives completion: the previous gate excluded
+    /// IsDone, so using the control removed it and a done one-off session could not be
+    /// reopened from this surface at all. Today's equivalent has always kept its
+    /// checkbox visible when done; this is that rule.
+    /// </summary>
+    public bool ShowCompletionControl => IsLocalSession && !IsRecurring;
+
+    /// <summary>
+    /// The quiet side action holding "Needs more time", "Didn't happen" and "Remove
+    /// from calendar" — the outcomes that are not a simple finish. Mirrors
+    /// DailyRowViewModel.ShowSessionOutcomeAction.
+    /// </summary>
+    public bool ShowOutcomeAction => IsLocalSession && !IsRecurring && !IsDone;
 
     /// <summary>
     /// The single-click done circle for repeating sessions (completes one occurrence)
-    /// — never for one-off sessions (they keep the multi-outcome flyout), proposals,
-    /// or locked external events.
+    /// — never for one-off sessions (they get <see cref="ShowCompletionControl"/>'s
+    /// checkbox instead), proposals, or locked external events.
     /// </summary>
     public bool ShowOccurrenceCompletionControl => IsLocalSession && IsRecurring;
 
@@ -173,6 +185,26 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
 
     [RelayCommand]
     private void RecordDidntHappen() => _owner.RecordOutcome(Id, BlockOutcome.DidntHappen, null);
+
+    /// <summary>
+    /// One click finishes, another reopens. Reopening is routed through the owner
+    /// rather than clearing this session's outcome directly: when a session renders
+    /// done because its parent task was completed as a whole, clearing the session
+    /// alone would leave the task complete and strand an unresolved session on it.
+    /// DailyListViewModel.ReopenRow carries the same reasoning.
+    /// </summary>
+    [RelayCommand]
+    private void ToggleSessionDone()
+    {
+        if (IsDone)
+        {
+            _owner.ReopenSession(Id);
+        }
+        else
+        {
+            _owner.RecordOutcome(Id, BlockOutcome.Done, null);
+        }
+    }
 
     /// <summary>
     /// Delete dispatch by kind: proposals leave the draft, one-off sessions

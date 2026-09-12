@@ -96,7 +96,8 @@ public sealed class CalendarBlockCapabilityTests
         var (oneOff, _) = AddMixedScheduleTask(context);
 
         var vm = FindBlock(context, oneOff.Id);
-        Assert.True(vm.ShowCompletionControl); // the flyout itself stays available
+        Assert.True(vm.ShowCompletionControl); // the checkbox
+        Assert.True(vm.ShowOutcomeAction); // the overflow holding the rest
         Assert.True(vm.RecordDoneCommand.CanExecute(null));
         Assert.True(vm.RecordNeedsMoreTimeCommand.CanExecute(null));
         Assert.True(vm.RecordDidntHappenCommand.CanExecute(null));
@@ -309,7 +310,8 @@ public sealed class CalendarBlockCapabilityTests
 
         var oneOffVm = FindBlock(context, oneOff.Id);
         Assert.False(oneOffVm.ShowOccurrenceCompletionControl);
-        Assert.True(oneOffVm.ShowCompletionControl); // the multi-outcome flyout
+        Assert.True(oneOffVm.ShowCompletionControl); // the checkbox
+        Assert.True(oneOffVm.ShowOutcomeAction); // and the outcome overflow beside it
 
         Assert.False(FindBlock(context, external.Id).ShowOccurrenceCompletionControl);
         Assert.False(FindBlock(context, external.Id).ShowCompletionControl);

@@ -269,9 +269,12 @@ public partial class CalendarBlockView : UserControl
                 e.Handled = true;
                 return;
             case Key.Enter or Key.Space:
-                if (CompleteButton.IsVisible && CompleteButton.Flyout is { } outcomeFlyout)
+                // The outcome flyout moved off the checkbox onto its own control, so
+                // the keyboard opens it there. A done session has no flyout left and
+                // falls through to the editor.
+                if (OutcomeButton.IsVisible && OutcomeButton.Flyout is { } outcomeFlyout)
                 {
-                    outcomeFlyout.ShowAt(CompleteButton);
+                    outcomeFlyout.ShowAt(OutcomeButton);
                     e.Handled = true;
                 }
                 else if (ProposalButton.IsVisible && ProposalButton.Flyout is { } proposalFlyout)
