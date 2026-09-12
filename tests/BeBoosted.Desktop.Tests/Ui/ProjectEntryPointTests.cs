@@ -127,6 +127,7 @@ public sealed class ProjectEntryPointTests
 
         // Occurrence completion lives right here (F-15 resolves today).
         var session = Assert.IsType<SessionEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
+        Assert.Equal("Stats HW", session.TaskTitle);
         Assert.Equal(TestShell.DesignDate, session.OccurrenceDate);
         Assert.False(session.IsOccurrenceCompleted);
         session.IsOccurrenceCompleted = true;
@@ -159,6 +160,7 @@ public sealed class ProjectEntryPointTests
         ClickByName(fixture.Window, "Edit session for Stats HW");
 
         var editor = Assert.IsType<SessionEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
+        Assert.Equal("Stats HW", editor.TaskTitle);
         Assert.Equal(TestShell.DesignDate.AddDays(7), editor.OccurrenceDate);
         fixture.Window.Close();
     }
