@@ -20,6 +20,24 @@
       <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
       <Setter Property="BoxShadow" Value="0 0 0 3 #8CC8F24A" />
     </Style>
+    <!-- Both controls need 75px of block to sit inside one — see BothControlsFitWidth,
+         which sums these very numbers. Overlapping sessions at the smallest supported
+         window squeeze blocks well under that, so below it the overflow hides and the
+         checkbox stays: finishing is the common case. Nothing is lost with it — a click
+         on the block opens the session editor, which carries Remove this session, and
+         Needs more time / Didn't happen stay on Today's row and in the timeline header's
+         Review bar. Visibility is style-driven rather than bound because a local binding
+         outranks a style, so the narrow rule could never overrule a bound IsVisible;
+         .offered is ShowOutcomeAction wearing a class instead. -->
+    <Style Selector="Button#OutcomeButton">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="Button#OutcomeButton.offered">
+      <Setter Property="IsVisible" Value="True" />
+    </Style>
+    <Style Selector="Border#BlockBorder.narrow Button#OutcomeButton">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
   </UserControl.Styles>
 
   <Border Name="BlockBorder"
@@ -55,9 +73,9 @@
           <!-- The other outcomes: quiet, never competing with the checkbox -->
           <Button Grid.Row="0" Grid.Column="2" Grid.RowSpan="2"
                   Name="OutcomeButton"
-                  Classes="icon" Width="20" Height="20"
+                  Classes="icon" Classes.offered="{Binding ShowOutcomeAction}"
+                  Width="20" Height="20"
                   Margin="6,1,0,0" VerticalAlignment="Top"
-                  IsVisible="{Binding ShowOutcomeAction}"
                   AutomationProperties.Name="{Binding Title, StringFormat='Record outcome for {0}'}"
                   ToolTip.Tip="Needs more time, or didn't happen">
             <Path Classes="icon" Data="{StaticResource IconMore}" Width="12" Height="12"

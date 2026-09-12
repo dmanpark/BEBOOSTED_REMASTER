@@ -18,6 +18,20 @@ namespace BeBoosted.Desktop.Views;
 /// </summary>
 public partial class CalendarBlockView : UserControl
 {
+    /// <summary>
+    /// The narrowest block that holds the checkbox and the overflow at once, summed
+    /// straight off this view's own AXAML rather than guessed: 1px of border a side (2),
+    /// the project-accent edge (3), the inner grid's 8+8 margin (16), the checkbox's
+    /// 20 wide plus its 8 right margin (28) and the overflow's 20 plus its 6 left margin
+    /// (26) — 75px, with nothing left over for the title. Overlapping sessions at the
+    /// smallest supported window (1100x720) land well under it: two give about 65px and
+    /// three about 43px, where the checkbox alone still fits (it needs 33px) and the
+    /// title is what gets cut. Below this the overflow hides instead of being laid out
+    /// past the block's own edge — see the styles in the AXAML for where its outcomes
+    /// stay reachable from.
+    /// </summary>
+    private const double BothControlsFitWidth = 2 + 3 + 16 + 28 + 26;
+
     private TimelineSurfaceView? _surface;
     private Avalonia.Point _pressPoint;
     private double _originStartMinutes;
@@ -36,7 +50,16 @@ public partial class CalendarBlockView : UserControl
         AddHandler(PointerReleasedEvent, OnPointerReleasedHandler, RoutingStrategies.Tunnel);
         AddHandler(PointerCaptureLostEvent, OnPointerCaptureLostHandler);
         AddHandler(KeyDownEvent, OnKeyDownHandler);
+        SizeChanged += OnSizeChangedHandler;
     }
+
+    /// <summary>
+    /// Blocks are measured at their day column's full width and only arranged narrow
+    /// when they overlap, so the squeeze shows up here and nowhere else. The class does
+    /// the rest — see <see cref="BothControlsFitWidth"/>.
+    /// </summary>
+    private void OnSizeChangedHandler(object? sender, SizeChangedEventArgs e)
+        => BlockBorder.Classes.Set("narrow", e.NewSize.Width < BothControlsFitWidth);
 
     private CalendarBlockViewModel? Vm => DataContext as CalendarBlockViewModel;
 
@@ -282,6 +305,18 @@ public partial class CalendarBlockView : UserControl
                 {
                     surface?.RememberFocus(Vm.Id);
                     Vm.ToggleSessionDoneCommand.Execute(null);
+                    e.Handled = true;
+                }
+
+                // A repeating occurrence carries its own circle instead of a checkbox,
+                // so ShowCompletionControl is false for it and the branch above never
+                // fires - Enter used to open the editor while the equivalent one-off
+                // finished. The keyboard presses whichever control the block offers, and
+                // the already-done exception above applies here word for word.
+                else if (Vm.ShowOccurrenceCompletionControl && !Vm.IsDone)
+                {
+                    surface?.RememberFocus(Vm.Id);
+                    Vm.ToggleOccurrenceDoneCommand.Execute(null);
                     e.Handled = true;
                 }
 
