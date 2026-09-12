@@ -109,7 +109,9 @@ public sealed class EditorScopeSelectionTests
 
         // Projects: a row whose affix names a session is still whole-task scope from
         // its title. Sessions are no longer rows of their own here, so the affix — not
-        // a separate row — is what carries session scope.
+        // a separate row — is what carries session scope. This duplicates the plain-task
+        // case above on purpose: the pair only reads correctly alongside
+        // AProjectRowsTimeAffix_OpensThatSessionsEditor, which is what covers the affix.
         var scheduled = shell.Projects.Detail!.Tasks.First(t => t.Title == "Stats HW");
         Assert.True(scheduled.HasSessionAffix, "the scheduled task's row must name its session");
         scheduled.EditCommand.Execute(null);
@@ -214,6 +216,28 @@ public sealed class EditorScopeSelectionTests
         wholeTask.Sessions.First().EditCommand.Execute(null);
         editor = Assert.IsType<SessionEditorViewModel>(shell.Calendar.ActiveTaskEditor);
         Assert.Equal(new DateOnly(2026, 8, 21), editor.OccurrenceDate);
+    }
+
+    /// <summary>
+    /// The one row that can mean either scope: its title is the whole task, its time
+    /// affix is the single session the affix names, opened on that occurrence.
+    /// </summary>
+    [Fact]
+    public void AProjectRowsTimeAffix_OpensThatSessionsEditor()
+    {
+        var fixture = CreateFixture();
+        var shell = fixture.Shell;
+
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        shell.Projects.OpenProject(fixture.ProjectId);
+
+        var row = shell.Projects.Detail!.Tasks.First(t => t.Title == "Stats HW");
+        Assert.True(row.HasSessionAffix, "the scheduled task's row must name its session");
+        row.OpenSessionCommand.Execute(null);
+
+        var editor = Assert.IsType<SessionEditorViewModel>(shell.Calendar.ActiveTaskEditor);
+        Assert.Equal(row.SessionBlockId, editor.SessionId);
+        Assert.Equal(row.SessionDate, editor.OccurrenceDate);
     }
 
     [Fact]

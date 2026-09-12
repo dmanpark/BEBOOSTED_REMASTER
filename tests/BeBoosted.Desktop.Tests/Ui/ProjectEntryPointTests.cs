@@ -17,10 +17,10 @@ using BeBoosted.Domain.Tasks;
 namespace BeBoosted.Desktop.Tests.Ui;
 
 /// <summary>
-/// The Projects surface is a full editor entry point: a task row AND the session
-/// affix on it are task-scoped and open the whole-task editor (the F-03 rule),
-/// and completing from the project detail refreshes every surface through one
-/// notification chain.
+/// The Projects surface is a full editor entry point: a task row's title opens the
+/// whole-task editor (the F-03 rule — never a silently picked session), while its
+/// time affix, when present, opens the one session it names. Completing from the
+/// project detail refreshes every surface through one notification chain.
 /// </summary>
 public sealed class ProjectEntryPointTests
 {
@@ -113,22 +113,19 @@ public sealed class ProjectEntryPointTests
         fixture.Window.Close();
     }
 
-    /// <summary>A session invoker in a list is still task-scoped (F-03).</summary>
+    /// <summary>
+    /// The affix names one session, so clicking it opens that session directly — not
+    /// the whole task (the row's title is the whole-task entry point instead).
+    /// </summary>
     [AvaloniaFact]
-    public void SessionAffix_OpensTheWholeTaskEditor()
+    public void SessionAffix_OpensThatSessionsEditor()
     {
         var fixture = CreateProjectShell();
 
         // The Stats HW row's affix, naming its upcoming occurrence (today).
         ClickByName(fixture.Window, "Edit session for Stats HW");
 
-        var editor = Assert.IsType<WholeTaskEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
-        Assert.Equal("Stats HW", editor.Title);
-        Assert.Single(editor.Sessions);
-
-        // Occurrence completion lives in the pushed session editor (F-15 resolves today).
-        editor.Sessions.Single().EditCommand.Execute(null);
-        fixture.Window.CaptureRenderedFrame();
+        // Occurrence completion lives right here (F-15 resolves today).
         var session = Assert.IsType<SessionEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
         Assert.Equal(TestShell.DesignDate, session.OccurrenceDate);
         Assert.False(session.IsOccurrenceCompleted);
@@ -145,7 +142,7 @@ public sealed class ProjectEntryPointTests
 
     /// <summary>
     /// The affix survives its own occurrence being completed — it renames itself to
-    /// the next one and still opens the editor.
+    /// the next one and still opens that (new) session's editor.
     /// </summary>
     [AvaloniaFact]
     public void SessionAffix_AfterTheOccurrenceIsDone_StillOpensTheEditor()
@@ -161,8 +158,8 @@ public sealed class ProjectEntryPointTests
 
         ClickByName(fixture.Window, "Edit session for Stats HW");
 
-        var editor = Assert.IsType<WholeTaskEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
-        Assert.Equal("Stats HW", editor.Title);
+        var editor = Assert.IsType<SessionEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
+        Assert.Equal(TestShell.DesignDate.AddDays(7), editor.OccurrenceDate);
         fixture.Window.Close();
     }
 

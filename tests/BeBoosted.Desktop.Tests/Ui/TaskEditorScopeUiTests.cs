@@ -783,7 +783,7 @@ public sealed class TaskEditorScopeUiTests
         Dispatcher.UIThread.RunJobs();
         pencil.Command!.Execute(pencil.CommandParameter);
         Render(scene);
-        ((WholeTaskEditorViewModel)scene.Shell.Calendar.ActiveTaskEditor!)
+        ((SessionEditorViewModel)scene.Shell.Calendar.ActiveTaskEditor!)
             .SaveCommand.Execute(null);
         Render(scene);
         Render(scene);

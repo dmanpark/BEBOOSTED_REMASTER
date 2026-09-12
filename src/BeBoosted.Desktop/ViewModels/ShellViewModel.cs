@@ -71,8 +71,11 @@ public sealed partial class ShellViewModel : ViewModelBase
         // Project rows share the same canonical editor and the same single
         // post-mutation chain (task completion and occurrence toggles alike).
         Projects.TaskEditRequested += Calendar.OpenTaskEditorForTask;
-        // A scheduled-session row in a project list is still task-scoped (F-03).
-        Projects.SessionEditRequested += (id, _) => Calendar.OpenTaskEditorForBlockOwner(id);
+        // The affix names one session, so clicking it opens that session on that
+        // occurrence. The row's title still opens the whole task - F-03's rule is that
+        // a list never silently picks a session, and an affix that names it is not a
+        // silent pick. Sessions are no longer rows of their own here.
+        Projects.SessionEditRequested += (id, date) => Calendar.OpenTaskEditorForBlock(id, date);
         Projects.TasksMutated += Calendar.NotifyTasksMutated;
 
         Inbox.PropertyChanged += (_, e) =>

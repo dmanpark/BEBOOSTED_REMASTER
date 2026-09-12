@@ -188,7 +188,7 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             var repeating = _calendar.GetSessionsForTask(task.Id).Any(b => b.Recurrence is not null);
             rows.Add(new ProjectTaskRowViewModel(
                 task, StatusForOpenTask(sessions), CompleteTaskRow, !repeating,
-                RequestTaskEdit, RequestRowSessionEdit));
+                RequestTaskEdit, RequestSessionEdit));
         }
 
         foreach (var task in recent)
@@ -336,19 +336,6 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     internal void RequestSessionEdit(Domain.CalendarBlockId blockId, DateOnly occurrenceDate)
         => _owner.RequestSessionEdit(blockId, occurrenceDate);
 
-    /// <summary>
-    /// A task row's status affix routes to the session editor, the way the row itself
-    /// routes to the whole-task editor. The date is nullable only because a row with
-    /// no affix has none; a row that raises this always carries both.
-    /// </summary>
-    private void RequestRowSessionEdit(Domain.CalendarBlockId blockId, DateOnly? occurrenceDate)
-    {
-        if (occurrenceDate is { } date)
-        {
-            RequestSessionEdit(blockId, date);
-        }
-    }
-
     /// <summary>Opens the composer scoped to this project.</summary>
     [RelayCommand]
     private void AskBeBoosted() => _owner.AskRequested?.Invoke();
@@ -378,7 +365,7 @@ public sealed partial class ProjectTaskRowViewModel(
     Action<TaskItem>? onCompleteRequested = null,
     bool canComplete = true,
     Action<TaskItem>? onEditRequested = null,
-    Action<Domain.CalendarBlockId, DateOnly?>? onSessionRequested = null)
+    Action<Domain.CalendarBlockId, DateOnly>? onSessionRequested = null)
     : ViewModelBase
 {
     public string Title => task.Title;
@@ -477,14 +464,16 @@ public sealed partial class ProjectTaskRowViewModel(
 
     /// <summary>
     /// The affix opens the one session it names — the session scope, where the row
-    /// itself is whole-task scope. A row with no affix has nothing to open.
+    /// itself is whole-task scope. A row with no affix has nothing to open. Both the
+    /// block id and its date are always populated together (<see cref="ProjectTaskStatusInfo"/>),
+    /// so requiring both here rather than tolerating a missing date is not a narrowing.
     /// </summary>
     [RelayCommand]
     private void OpenSession()
     {
-        if (status.SessionBlockId is { } blockId)
+        if (status.SessionBlockId is { } blockId && status.SessionDate is { } date)
         {
-            onSessionRequested?.Invoke(blockId, status.SessionDate);
+            onSessionRequested?.Invoke(blockId, date);
         }
     }
 }
