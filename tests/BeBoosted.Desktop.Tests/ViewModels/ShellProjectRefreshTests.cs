@@ -170,11 +170,21 @@ public sealed class ShellProjectRefreshTests
     {
         var (shell, blocks, tasks) = CreateShell();
         var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
+        var detail = shell.Projects.Detail!;
 
-        var changes = 0;
+        var (changes, detailRefreshes) = (0, 0);
         shell.Calendar.DataChanged += () => changes++;
+        detail.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ProjectDetailViewModel.HasTasks))
+            {
+                detailRefreshes++;
+            }
+        };
+
         shell.Calendar.ResizeBlockTo(blockId, new TimeOnly(19, 0));
         Assert.Equal(1, changes);
+        Assert.Equal(1, detailRefreshes);
 
         shell.NavigateCommand.Execute(AppSection.Projects);
         // A resize does not move the session, so the row's affix reads the same; what
@@ -187,6 +197,7 @@ public sealed class ShellProjectRefreshTests
         // A rejected resize (end before start) must not announce a successful change.
         shell.Calendar.ResizeBlockTo(blockId, new TimeOnly(15, 0));
         Assert.Equal(1, changes);
+        Assert.Equal(1, detailRefreshes);
     }
 
     [Fact]

@@ -332,7 +332,8 @@
                         <Button Classes="link" HorizontalAlignment="Left"
                                 Command="{Binding EditCommand}"
                                 AutomationProperties.Name="{Binding EditControlName}">
-                          <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                          <TextBlock Text="{Binding Title}" VerticalAlignment="Center"
+                                     TextTrimming="CharacterEllipsis" />
                         </Button>
                       </DockPanel>
                     </Border>
