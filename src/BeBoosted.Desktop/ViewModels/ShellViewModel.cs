@@ -134,6 +134,7 @@ public sealed partial class ShellViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsCalendarActive))]
     [NotifyPropertyChangedFor(nameof(IsProjectsActive))]
     [NotifyPropertyChangedFor(nameof(IsSettingsActive))]
+    [NotifyPropertyChangedFor(nameof(ShowDragHint))]
     public partial AppSection ActiveSection { get; private set; } = AppSection.Calendar;
 
     /// <summary>The Inbox is a drawer over the current calendar surface, never a full page.</summary>
@@ -145,10 +146,12 @@ public sealed partial class ShellViewModel : ViewModelBase
     /// <summary>
     /// "Drag onto the calendar" is only true when a calendar grid is actually behind
     /// the drawer. Today is a list, and telling someone to drag onto it offers an
-    /// interaction the surface does not have.
+    /// interaction the surface does not have — and so do Projects and Settings, which
+    /// the ungated rail toggle can open this drawer over just as easily. The section
+    /// has to be part of the question, not just the calendar's own view kind.
     /// </summary>
     public bool ShowDragHint
-        => IsInboxOpen && Calendar.ViewKind == CalendarViewKind.Week;
+        => IsInboxOpen && IsCalendarActive && Calendar.ViewKind == CalendarViewKind.Week;
 
     public bool IsCalendarActive => ActiveSection == AppSection.Calendar;
 

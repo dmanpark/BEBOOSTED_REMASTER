@@ -78,4 +78,41 @@ public sealed class InboxDrawerScrimTests
             window.GetVisualDescendants().OfType<TextBlock>(),
             t => t.IsEffectivelyVisible && t.Text == "drag onto the calendar");
     }
+
+    /// <summary>
+    /// The Inbox rail toggle is ungated, so the drawer opens over whatever section is
+    /// current. Standing in Projects there is no grid behind it at all — the calendar's
+    /// own view kind being Week says nothing about what the user is looking at. The
+    /// order here matters: the section changes AFTER the hint was legitimately showing,
+    /// so the property has to re-announce rather than merely be computed once.
+    /// </summary>
+    [AvaloniaFact]
+    public void TheDragHintIsHiddenInProjects_EvenThoughTheCalendarIsOnWeek()
+    {
+        var (window, shell) = Show();
+        shell.Calendar.ViewKind = CalendarViewKind.Week;
+        shell.IsInboxOpen = true;
+        window.CaptureRenderedFrame();
+        Assert.True(shell.ShowDragHint, "the hint must be showing before the move sideways");
+
+        var announcements = 0;
+        shell.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ShellViewModel.ShowDragHint))
+            {
+                announcements++;
+            }
+        };
+
+        shell.NavigateCommand.Execute(AppSection.Projects);
+        window.CaptureRenderedFrame();
+
+        Assert.Equal(CalendarViewKind.Week, shell.Calendar.ViewKind);
+        Assert.True(shell.IsInboxOpen, "the drawer stayed open across the section change");
+        Assert.False(shell.ShowDragHint);
+        Assert.True(announcements > 0, "the hint must re-announce when the section changes");
+        Assert.DoesNotContain(
+            window.GetVisualDescendants().OfType<TextBlock>(),
+            t => t.IsEffectivelyVisible && t.Text == "drag onto the calendar");
+    }
 }
