@@ -21,14 +21,24 @@
       <Setter Property="BoxShadow" Value="0 0 0 3 #8CC8F24A" />
     </Style>
     <!-- Both controls need 75px of block to sit inside one — see BothControlsFitWidth,
-         which sums these very numbers. Overlapping sessions at the smallest supported
-         window squeeze blocks well under that, so below it the overflow hides and the
-         checkbox stays: finishing is the common case. Nothing is lost with it — a click
-         on the block opens the session editor, which carries Remove this session, and
-         Needs more time / Didn't happen stay on Today's row and in the timeline header's
-         Review bar. Visibility is style-driven rather than bound because a local binding
-         outranks a style, so the narrow rule could never overrule a bound IsVisible;
-         .offered is ShowOutcomeAction wearing a class instead. -->
+         which sums these very numbers. Enough sessions sharing an hour squeeze a block
+         under that at any window size, so below it the overflow hides and the checkbox
+         stays: finishing is the common case.
+
+         What that costs, stated exactly rather than waved at. Remove from calendar is
+         unaffected — a block click opens the session editor, which carries it. Needs
+         more time and Didn't happen are reachable for an elapsed session (the header's
+         Review bar lists every elapsed block still without an outcome) and for one today
+         (Today's row carries the same overflow). For a squeezed FUTURE session on another
+         day they are reachable from nowhere while the overflow is hidden. That is judged
+         acceptable rather than overlooked: neither outcome means anything for work that
+         has not happened yet, and the block joins the Review bar the moment it elapses.
+         If that judgement is ever wrong, the answer is a wider threshold, not a control
+         laid outside the block it belongs to.
+
+         Visibility is style-driven rather than bound because a local binding outranks a
+         style, so the narrow rule could never overrule a bound IsVisible; .offered is
+         ShowOutcomeAction wearing a class instead. -->
     <Style Selector="Button#OutcomeButton">
       <Setter Property="IsVisible" Value="False" />
     </Style>
@@ -194,25 +204,38 @@
             </Button.Flyout>
           </Button>
 
-          <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="6">
-            <TextBlock Name="TitleText" Text="{Binding Title}"
+          <!-- A DockPanel, not a StackPanel: a horizontal StackPanel measures its
+               children at infinite width, so TextTrimming on the title never engaged and
+               a long one was laid out clean across the overflow button in the column to
+               its right — and, being declared later, took the button's clicks, which fell
+               through to the block and opened the editor. A Dock="Left" child is measured
+               against the width actually left, so the title trims to its own column while
+               the meta beside it keeps the left-packed order it had. Spacing becomes
+               per-child margins; DockPanel has none. -->
+          <DockPanel Grid.Row="0" Grid.Column="1" LastChildFill="False">
+            <TextBlock Name="TitleText" DockPanel.Dock="Left" Text="{Binding Title}"
                        FontSize="{StaticResource TextSizeSmall}" FontWeight="SemiBold"
                        TextTrimming="CharacterEllipsis" />
-            <TextBlock Classes="meta" Text="{Binding SessionLabel}"
-                       IsVisible="{Binding HasSessionLabel}" VerticalAlignment="Center" />
-            <Path Classes="icon" Data="{StaticResource IconLock}" Width="11" Height="11"
+            <TextBlock DockPanel.Dock="Left" Classes="meta" Text="{Binding SessionLabel}"
+                       IsVisible="{Binding HasSessionLabel}" VerticalAlignment="Center"
+                       Margin="6,0,0,0" />
+            <Path DockPanel.Dock="Left" Classes="icon" Data="{StaticResource IconLock}"
+                  Width="11" Height="11" Margin="6,0,0,0"
                   StrokeThickness="1.2" Stroke="{StaticResource BrushPencilGray}"
                   IsVisible="{Binding IsLocked}" VerticalAlignment="Center"
                   ToolTip.Tip="Synced from an external calendar — BeBoosted never edits it" />
-            <Border Background="{StaticResource BrushWorkbenchCream}"
+            <Border DockPanel.Dock="Left" Background="{StaticResource BrushWorkbenchCream}"
                     BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
-                    CornerRadius="3" Padding="4,0"
+                    CornerRadius="3" Padding="4,0" Margin="6,0,0,0"
                     IsVisible="{Binding NeedsOutcome}">
               <TextBlock Classes="meta" Text="Needs outcome" />
             </Border>
-          </StackPanel>
+          </DockPanel>
+          <!-- The time line under the title is constrained by its star column already,
+               so trimming it only needs asking for. -->
           <TextBlock Grid.Row="1" Grid.Column="1" Classes="meta"
-                     Text="{Binding TimeText}" Margin="0,1,0,0" />
+                     Text="{Binding TimeText}" Margin="0,1,0,0"
+                     TextTrimming="CharacterEllipsis" />
         </Grid>
       </DockPanel>
 

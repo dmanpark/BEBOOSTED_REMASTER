@@ -71,32 +71,19 @@ public sealed class CompletionParityTests
     }
 
     /// <summary>
-    /// A block needs 75px to hold the checkbox and the overflow at once — see
-    /// CalendarBlockView.BothControlsFitWidth, which sums that off the AXAML. At the
-    /// app's smallest supported window (1100x720) overlapping sessions fall well under
-    /// it: one alone gets about 133px, two about 65 and three about 43, and the overflow
-    /// used to be laid out at x=112 regardless, past a squeezed block's own right edge.
-    /// Containment is two separate claims and this pins both, at every width:
-    ///
-    /// 1. Nothing is laid out outside the block. Below the fitting width the overflow
-    ///    hides and the checkbox stays - finishing is the common case, and the outcomes
-    ///    that go with it stay reachable from Today, from the timeline header's Review
-    ///    bar, and (for Remove) from the editor a block click opens. Above the fitting
-    ///    width the overflow is back, so this is a width response and not a deletion.
-    /// 2. Nothing can be clicked outside the block either. The block clips, so a point
-    ///    past its right edge reaches nothing of its own subtree even with no neighbour
-    ///    to occlude it - which is why the probe below is rooted at the block itself.
-    ///    The title, which overhangs its column at any width, is what that catches.
+    /// Shows overlapping sessions of equal length on the design date, so the timeline
+    /// splits one day column between them and every block comes out squeezed alike.
+    /// Long titles on purpose: a short one cannot witness the title overhanging its
+    /// column, and the overhang is what used to swallow the overflow's clicks.
     /// </summary>
-    [AvaloniaTheory]
-    [InlineData(1, true)]
-    [InlineData(2, false)]
-    [InlineData(3, false)]
-    public void TheControlsOfABlock_StayInsideIt(int overlapping, bool expectOverflow)
+    private static (MainWindow Window, List<CalendarBlock> Sessions) ShowWeekWithOverlapping(
+        int overlapping, double windowWidth, double windowHeight)
     {
         var titles = new[]
         {
-            "Practice DECA role-play", "Prepare regional qualifier binder", "Reread the case study",
+            "Practice DECA role-play for the regional qualifier",
+            "Prepare the regional qualifier binder and dividers",
+            "Reread the case study and annotate the exhibits",
         };
         var tasks = new InMemoryTaskRepository();
         var blocks = new InMemoryCalendarBlockRepository();
@@ -112,30 +99,59 @@ public sealed class CompletionParityTests
         }
 
         var shell = TestShell.Create(tasks: tasks, blocks: blocks);
-        var window = new MainWindow { DataContext = shell, Width = 1100, Height = 720 };
+        var window = new MainWindow { DataContext = shell, Width = windowWidth, Height = windowHeight };
         window.Show();
         shell.Calendar.ViewKind = CalendarViewKind.Week;
         shell.Calendar.Reload();
         Dispatcher.UIThread.RunJobs();
         window.CaptureRenderedFrame();
+        return (window, sessions);
+    }
+
+    /// <summary>
+    /// A block needs 75px to hold the checkbox and the overflow at once — see
+    /// CalendarBlockView.BothControlsFitWidth, which sums that off the AXAML, and the
+    /// AXAML's own styles for exactly what hiding the overflow costs. Below 75 it hides
+    /// and the checkbox stays, finishing being the common case; above it the overflow is
+    /// back, so this is a width response and not a deletion.
+    ///
+    /// The rows deliberately cross both the threshold AND two window sizes. The defect
+    /// this replaced put the overflow at a position fixed by the day column's width
+    /// rather than the block's, which is a condition of the overlap count and not of the
+    /// window: at 1100x720 two overlapping give 65px blocks and at 1440x960 they give
+    /// 89px, and the escape was the same at both. A theory pinned at one window size
+    /// would agree with any predicate that happens to be right there.
+    /// </summary>
+    [AvaloniaTheory]
+    [InlineData(1100, 720, 1, true)]
+    [InlineData(1100, 720, 2, false)]
+    [InlineData(1100, 720, 3, false)]
+    [InlineData(1440, 960, 1, true)]
+    [InlineData(1440, 960, 2, true)]
+    [InlineData(1440, 960, 3, false)]
+    public void TheControlsOfABlock_StayInsideIt(
+        double windowWidth, double windowHeight, int overlapping, bool expectOverflow)
+    {
+        var (window, sessions) = ShowWeekWithOverlapping(overlapping, windowWidth, windowHeight);
 
         foreach (var session in sessions)
         {
             var view = SessionView(window, session);
 
-            // The premise, pinned: the squeezed rows really are squeezed narrower than
-            // the checkbox and the overflow together, which is what pushed the overflow
-            // past the right edge in the first place, and the roomy row really is roomy.
-            // Without this the docstring above could quietly become fiction — a layout
-            // change that stopped them overlapping would leave nothing beyond the edge
-            // and every assertion below would still pass while witnessing nothing.
+            // The premise, pinned per row: the squeezed rows really are narrower than the
+            // checkbox and the overflow together and the roomy rows really are wider.
+            // Without this a layout change that stopped them overlapping would leave
+            // nothing at risk and every assertion below would pass witnessing nothing.
             Assert.True(
                 expectOverflow ? view.Bounds.Width >= 75 : view.Bounds.Width < 75,
-                $"{overlapping} overlapping sessions give a {view.Bounds.Width}-wide block, "
-                + $"which is the wrong side of 75 for this row to be witnessing anything");
-            Assert.True(view.Bounds.Width < 100 || expectOverflow);
+                $"{overlapping} overlapping sessions at {windowWidth}x{windowHeight} give a "
+                + $"{view.Bounds.Width}-wide block, which is the wrong side of 75 for this row "
+                + "to be witnessing what it claims");
 
-            // (1) Every control the block still offers is laid out inside it.
+            // Every control the block offers is laid out inside it. This used to clear
+            // the edge by 1px on a lone block and by nothing at all on an overlapping
+            // one — the day column's 4px inset was the whole margin — so the numbers in
+            // the failure message are worth reading even when it is close.
             var rendered = view.GetVisualDescendants().OfType<Button>()
                 .Where(b => b.IsEffectivelyVisible)
                 .ToList();
@@ -159,22 +175,63 @@ public sealed class CompletionParityTests
             Assert.Equal(
                 expectOverflow, view.FindControl<Button>("OutcomeButton")!.IsEffectivelyVisible);
 
-            // (2) Rooted at the block, so no neighbour can occlude the answer: 4 px past
-            // its own right edge, level with its checkbox, the block owns nothing.
-            var checkbox = view.FindControl<Button>("CompleteButton")!;
-            var checkboxCentre = checkbox
-                .TranslatePoint(new Point(checkbox.Bounds.Width / 2, checkbox.Bounds.Height / 2), view)!.Value;
-            var beyondInBlock = new Point(view.Bounds.Width + 4, checkboxCentre.Y);
-            Assert.Null(((Visual)view).GetVisualsAt(beyondInBlock).FirstOrDefault());
-
-            // And in window coordinates the same point belongs to somebody — hitting
-            // nothing at all there would satisfy the line above without proving anything.
-            var origin = view.TranslatePoint(new Point(0, 0), window)!.Value;
-            var beyond = new Point(origin.X + beyondInBlock.X, origin.Y + beyondInBlock.Y);
+            // The title is a control too, in the sense that matters here: it overhung its
+            // own grid column at every width, so it is checked the same way.
+            var title = view.FindControl<TextBlock>("TitleText")!;
+            var titleRight = title.TranslatePoint(new Point(title.Bounds.Width, 0), view)!.Value.X;
             Assert.True(
-                ((Visual)window).GetVisualsAt(beyond).FirstOrDefault() is not null,
-                "nothing was hit 4 px past the block's right edge");
+                titleRight <= view.Bounds.Width,
+                $"the title reaches {titleRight} inside a {view.Bounds.Width}-wide block, so it "
+                + "still overhangs — trimming is not engaging and it can cover the overflow");
         }
+
+        window.Close();
+    }
+
+    // There is deliberately no test here that a block clips its own subtree. One was
+    // written, and it could not be made to fail: with the layout contained there is
+    // nothing outside a block for a clip to catch, so it stayed green even with both of
+    // the redundant clip layers removed (Border.calendarBlock's ClipToBounds, and the one
+    // CalendarBlockView gets free from Avalonia's UserControl default). Those layers are
+    // still there and still worth having as a backstop, but a test that cannot fail is
+    // worse than none — and its inability to fail is itself the point: containment no
+    // longer depends on clipping the way it used to.
+
+    /// <summary>
+    /// The overflow has to be clickable, not merely visible. It sits in the grid's third
+    /// column and the title's panel in the second, but a horizontal StackPanel measures
+    /// its children at infinite width, so TextTrimming never engaged and a long title was
+    /// laid out straight across the button - and, being declared later, took its clicks.
+    /// A click that lands on the title falls through to the block and opens the editor,
+    /// which is how the overflow could be on screen and unreachable at the same time.
+    /// </summary>
+    [AvaloniaFact]
+    public void TheOverflowOfARoomyBlock_TakesItsOwnClicks()
+    {
+        var (window, sessions) = ShowWeekWithOverlapping(1, 1440, 960);
+        var view = SessionView(window, sessions[0]);
+        var overflow = view.FindControl<Button>("OutcomeButton")!;
+        var title = view.FindControl<TextBlock>("TitleText")!;
+
+        // The premise: a roomy block showing the overflow, and a title long enough that
+        // an unconstrained one would run straight over it. A short title would leave the
+        // button clear and this test would witness nothing.
+        Assert.True(overflow.IsEffectivelyVisible);
+        Assert.True(
+            title.Text!.Length > 30,
+            "the fixture's title is too short to reach the overflow, so nothing is at stake");
+
+        var centre = overflow
+            .TranslatePoint(new Point(overflow.Bounds.Width / 2, overflow.Bounds.Height / 2), window)!.Value;
+        var hit = ((Visual)window).GetVisualsAt(centre).FirstOrDefault();
+
+        Assert.True(hit is not null, "nothing was hit at the overflow's own centre");
+        Assert.True(
+            ReferenceEquals(hit, overflow) || hit!.GetVisualAncestors().Contains(overflow),
+            $"a click on the overflow's own centre reached {hit!.GetType().Name} "
+            + $"#{(hit as Control)?.Name} instead, so the button is unreachable");
+
+        window.Close();
     }
 
     private static CalendarBlockView SessionView(MainWindow window, CalendarBlock session)
