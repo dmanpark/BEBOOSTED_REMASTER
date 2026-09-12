@@ -391,7 +391,11 @@ public sealed partial class ProjectTaskRowViewModel(
 
     public DateOnly? CompletedOn => status.CompletedOn;
 
-    public bool HasSessionAffix => status.SessionBlockId is not null;
+    /// <summary>
+    /// Both halves, because opening the session needs both. Checking only the block
+    /// would let a half-built status render an affix that silently does nothing.
+    /// </summary>
+    public bool HasSessionAffix => status.SessionBlockId is not null && status.SessionDate is not null;
 
     /// <summary>Completed rows stay in place and recede rather than moving away.</summary>
     public bool IsCompletedRow => status.Kind == ProjectTaskStatus.Done;
