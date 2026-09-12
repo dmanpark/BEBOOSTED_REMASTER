@@ -248,7 +248,9 @@ public sealed class ProjectDetailSingleListTests
         var row = Assert.Single(detail.Tasks);
         Assert.False(row.CanComplete, "a repeating task never completes as a whole");
 
-        var circle = GutterCheck(window, "Complete Weekly review");
+        // Named for the occurrence, not the task: rendered and read back the way a
+        // screen reader would, so the scope the control announces is the scope it has.
+        var circle = GutterCheck(window, $"Complete Weekly review on {Today:ddd d MMM}");
 
         Assert.NotNull(circle);
         Assert.True(circle!.IsEnabled);

@@ -281,6 +281,100 @@ public sealed class ProjectTaskStatusTests
     }
 
     /// <summary>
+    /// GetScheduledBlocks trims completed rows to a project-wide top five, so a project
+    /// where enough OTHER tasks were finished today pushes this task's today-occurrence
+    /// out of the list it returns. Deriving "today's occurrence" from those rows made
+    /// this row fall through to naming next week — silently losing the undo the whole
+    /// design exists for, on no evidence about this task at all. Today's occurrence is
+    /// resolved from the task's own blocks and the completion store, where no cap
+    /// applies, so how many other tasks were finished today cannot reach it.
+    /// </summary>
+    [Fact]
+    public void ARepeatingRowsTodaysOccurrence_SurvivesTheRecentlyCompletedCap()
+    {
+        var (shell, detail, tasks, blocks, completions) = OpenProjectWithCompletions();
+        var task = AddTask(detail, tasks, "Weekly review");
+
+        // Early in the day, so it sorts last in the completed list and is the one cut.
+        var block = CalendarBlock.CreateTaskSession(
+            task.Id, Today, new TimeOnly(8, 0), new TimeOnly(9, 0), DateTimeOffset.Now,
+            RecurrenceRule.Weekly(1, Today.DayOfWeek));
+        blocks.Add(block);
+        completions.Add(OccurrenceCompletion.Create(block, Today, DateTimeOffset.Now));
+
+        // Enough other tasks finished today to fill the project-wide cap, each later in
+        // the day so every one of them outranks this task's occurrence in that list.
+        for (var i = 0; i < BeBoosted.Application.Projects.ProjectService.RecentlyCompletedLimit; i++)
+        {
+            var filler = AddTask(detail, tasks, $"Filler {i}");
+            var session = CalendarBlock.CreateTaskSession(
+                filler.Id, Today, new TimeOnly(17 + i, 0), new TimeOnly(17 + i, 30),
+                DateTimeOffset.Now);
+            session.RecordOutcome(BlockOutcome.Done, DateTimeOffset.Now);
+            blocks.Add(session);
+        }
+
+        detail.Refresh();
+
+        var row = shell.Projects.Detail!.Tasks.Single(t => t.Title == "Weekly review");
+        Assert.Equal(Today, row.SessionDate);
+        Assert.True(row.IsDone, "the row must still know its own occurrence is ticked");
+        Assert.True(row.ShowCheck);
+
+        row.ToggleDoneCommand.Execute(null);
+
+        Assert.Null(completions.Get(block.Id, Today));
+        var unticked = shell.Projects.Detail!.Tasks.Single(t => t.Title == "Weekly review");
+        Assert.Equal(Today, unticked.SessionDate);
+        Assert.False(unticked.IsDone);
+    }
+
+    /// <summary>
+    /// The circle on a repeating row acts on one occurrence, not on the task, so its
+    /// accessible name has to say which — "Complete Stats HW" read out over a row that
+    /// means Tuesday's session tells a screen-reader user the wrong scope.
+    /// </summary>
+    [Fact]
+    public void ARepeatingRowsCircle_NamesTheOccurrenceItActsOn()
+    {
+        var (shell, detail, tasks, blocks, _) = OpenProjectWithCompletions();
+        var task = AddTask(detail, tasks, "Weekly review");
+        AddWeeklyFromToday(blocks, task, Today);
+        detail.Refresh();
+
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal($"Complete Weekly review on {Today:ddd d MMM}", row.CheckControlName);
+
+        row.ToggleDoneCommand.Execute(null);
+
+        var ticked = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal($"Reopen Weekly review on {Today:ddd d MMM}", ticked.CheckControlName);
+    }
+
+    /// <summary>
+    /// The whole-task circle keeps saying the whole task, with no date: adding one would
+    /// claim a scope the control does not have.
+    /// </summary>
+    [Fact]
+    public void AOneOffRowsCircle_NamesTheTask_WithNoOccurrence()
+    {
+        var (shell, detail, tasks, blocks, _) = OpenProjectWithCompletions();
+        var task = AddTask(detail, tasks, "Essay plan");
+        blocks.Add(CalendarBlock.CreateTaskSession(
+            task.Id, Today.AddDays(1), new TimeOnly(9, 0), new TimeOnly(10, 0), DateTimeOffset.Now));
+        detail.Refresh();
+
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal("Complete Essay plan", row.CheckControlName);
+
+        row.ToggleDoneCommand.Execute(null);
+
+        Assert.Equal(
+            "Reopen Essay plan",
+            Assert.Single(shell.Projects.Detail!.Tasks).CheckControlName);
+    }
+
+    /// <summary>
     /// The other side of "keeps naming it": holding on to a ticked occurrence is about
     /// the day it belongs to, not for ever. Stand a day later, with yesterday's
     /// occurrence done, and the row has moved on to the following week's — unticked,
