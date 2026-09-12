@@ -74,5 +74,8 @@ public sealed class InboxDrawerScrimTests
         window.CaptureRenderedFrame();
 
         Assert.True(shell.ShowDragHint);
+        Assert.Contains(
+            window.GetVisualDescendants().OfType<TextBlock>(),
+            t => t.IsEffectivelyVisible && t.Text == "drag onto the calendar");
     }
 }
