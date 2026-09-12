@@ -258,6 +258,45 @@ public sealed class ProjectDetailSingleListTests
     }
 
     /// <summary>
+    /// The rendered half of the future-occurrence state: clicking the circle on a row
+    /// naming a session three days out must leave a checked circle on screen, named for
+    /// that same day. Read off the visual tree after the click, because a row that
+    /// re-renders naming the week after would still satisfy any view-model assertion
+    /// made before it.
+    /// </summary>
+    [AvaloniaFact]
+    public void TickingAFutureOccurrence_LeavesACheckedCircleOnTheSameDay()
+    {
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var completions = new InMemoryOccurrenceCompletionRepository();
+        var (window, detail) = ShowProject(tasks, blocks, completions);
+
+        var task = TaskItem.Create("Weekly review", DateTimeOffset.Now, projectId: detail.Project.Id);
+        tasks.Add(task);
+        var friday = Today.AddDays(3);
+        blocks.Add(CalendarBlock.CreateTaskSession(
+            task.Id, friday, new TimeOnly(16, 0), new TimeOnly(17, 0), DateTimeOffset.Now,
+            BeBoosted.Domain.Scheduling.RecurrenceRule.Weekly(1, friday.DayOfWeek)));
+        detail.Refresh();
+        window.CaptureRenderedFrame();
+
+        var circle = GutterCheck(window, $"Complete Weekly review on {friday:ddd d MMM}");
+        Assert.NotNull(circle);
+
+        circle!.Command!.Execute(circle.CommandParameter);
+        window.CaptureRenderedFrame();
+
+        var ticked = GutterCheck(window, $"Reopen Weekly review on {friday:ddd d MMM}");
+        Assert.NotNull(ticked);
+        Assert.Contains("checked", ticked!.Classes);
+        Assert.True(
+            ticked.GetVisualDescendants().OfType<Avalonia.Controls.Shapes.Path>().Single()
+                .IsEffectivelyVisible,
+            "the tick must be on screen after the click");
+    }
+
+    /// <summary>
     /// Adding a task while standing in a project should not make the user re-pick the
     /// project they are already looking at.
     /// </summary>

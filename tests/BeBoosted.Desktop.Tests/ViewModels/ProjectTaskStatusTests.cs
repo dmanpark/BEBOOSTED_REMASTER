@@ -375,6 +375,126 @@ public sealed class ProjectTaskStatusTests
     }
 
     /// <summary>
+    /// The rejected design, reproduced in the one state no test executed the tick in.
+    /// Standing on a day the series does not fall on, the row names its next occurrence
+    /// — and ticking that used to delete the very row the status was derived from
+    /// (GetScheduledBlocks' nextUpcoming skips completed occurrences), so the affix
+    /// jumped to the week after, unchecked, the instant you clicked. The row holds the
+    /// occurrence it named: its day has not passed, so the tick stays undoable here.
+    /// </summary>
+    [Fact]
+    public void AFutureOccurrence_StaysNamed_AndUndoable_WhenItIsTicked()
+    {
+        var (shell, detail, tasks, blocks, completions) = OpenProjectWithCompletions();
+        var task = AddTask(detail, tasks, "Weekly review");
+
+        // Anchored three days out, so the series never falls on today and has no
+        // elapsed occurrence at all — the "only future occurrences" state, alone.
+        var friday = Today.AddDays(3);
+        var block = CalendarBlock.CreateTaskSession(
+            task.Id, friday, new TimeOnly(16, 0), new TimeOnly(17, 0), DateTimeOffset.Now,
+            RecurrenceRule.Weekly(1, friday.DayOfWeek));
+        blocks.Add(block);
+        detail.Refresh();
+
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(friday, row.SessionDate);
+        Assert.True(row.ShowCheck);
+        Assert.False(row.IsDone);
+
+        row.ToggleDoneCommand.Execute(null);
+
+        Assert.NotNull(completions.Get(block.Id, friday));
+        var ticked = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(friday, ticked.SessionDate);
+        Assert.NotEqual(friday.AddDays(7), ticked.SessionDate);
+        Assert.True(ticked.IsDone, "the circle it was just clicked with must read checked");
+
+        ticked.ToggleDoneCommand.Execute(null);
+
+        Assert.Null(completions.Get(block.Id, friday));
+        var unticked = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(friday, unticked.SessionDate);
+        Assert.False(unticked.IsDone);
+    }
+
+    /// <summary>
+    /// GetScheduledBlocks' rows include the task's ONE-OFF sessions, so a repeating task
+    /// that also has a one-off dated sooner names that one-off. Wiring the circle to
+    /// SetOccurrenceCompletion over it throws DomainException ("A one-off session records
+    /// an outcome, not an occurrence completion") — and this view model has no catch, nor
+    /// does anything else in the Desktop project, so the click takes the app down. The
+    /// row must offer no circle at all there: a one-off records an outcome, and this task
+    /// cannot be completed as a whole either.
+    /// </summary>
+    [Fact]
+    public void ARepeatingTaskNamingAOneOffSession_OffersNoCircle_RatherThanThrowing()
+    {
+        var (shell, detail, tasks, blocks, _) = OpenProjectWithCompletions();
+        var task = AddTask(detail, tasks, "Weekly review");
+
+        var friday = Today.AddDays(3);
+        blocks.Add(CalendarBlock.CreateTaskSession(
+            task.Id, friday, new TimeOnly(16, 0), new TimeOnly(17, 0), DateTimeOffset.Now,
+            RecurrenceRule.Weekly(1, friday.DayOfWeek)));
+
+        // Sooner than the series' next occurrence, so this is what the row names.
+        blocks.Add(CalendarBlock.CreateTaskSession(
+            task.Id, Today.AddDays(1), new TimeOnly(9, 0), new TimeOnly(10, 0), DateTimeOffset.Now));
+        detail.Refresh();
+
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(Today.AddDays(1), row.SessionDate);
+        Assert.False(row.CanComplete, "a repeating task never completes as a whole");
+
+        // Executed, not merely constructed: this is the click that crashed.
+        row.ToggleDoneCommand.Execute(null);
+
+        Assert.False(row.ShowCheck, "a circle whose click would throw must not be drawn");
+    }
+
+    /// <summary>
+    /// The one state whose tick is deliberately NOT undoable from the row, pinned so the
+    /// choice is visible rather than accidental. Ticking an elapsed occurrence records
+    /// the outcome it was asking for; the occurrence's day has already passed, so the
+    /// row stops holding it and points at what is next. Holding it instead would leave a
+    /// past date on screen for the rest of the series' period, with the upcoming session
+    /// unreachable from the affix.
+    /// </summary>
+    [Fact]
+    public void AnOverdueOccurrence_IsResolvedByItsTick_AndTheRowThenPointsAtTheNextOne()
+    {
+        var (shell, detail, tasks, blocks, completions) = OpenProjectWithCompletions();
+        var task = AddTask(detail, tasks, "Weekly review");
+
+        // Yesterday's weekday, so the series has an elapsed occurrence and none today.
+        var yesterday = Today.AddDays(-1);
+        var block = CalendarBlock.CreateTaskSession(
+            task.Id, yesterday, new TimeOnly(16, 0), new TimeOnly(17, 0), DateTimeOffset.Now,
+            RecurrenceRule.Weekly(1, yesterday.DayOfWeek));
+        blocks.Add(block);
+        detail.Refresh();
+
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(ProjectTaskStatus.NeedsOutcome, row.Status);
+        Assert.Equal(yesterday, row.SessionDate);
+        Assert.True(row.ShowCheck);
+        Assert.Equal($"Complete Weekly review on {yesterday:ddd d MMM}", row.CheckControlName);
+
+        row.ToggleDoneCommand.Execute(null);
+
+        // The outcome is recorded on the occurrence that was asking for it...
+        Assert.NotNull(completions.Get(block.Id, yesterday));
+        Assert.False(tasks.GetById(task.Id)!.IsCompleted);
+
+        // ...and the row moves on, because that occurrence's day is behind us.
+        var resolved = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(ProjectTaskStatus.Scheduled, resolved.Status);
+        Assert.Equal(yesterday.AddDays(7), resolved.SessionDate);
+        Assert.False(resolved.IsDone);
+    }
+
+    /// <summary>
     /// The other side of "keeps naming it": holding on to a ticked occurrence is about
     /// the day it belongs to, not for ever. Stand a day later, with yesterday's
     /// occurrence done, and the row has moved on to the following week's — unticked,

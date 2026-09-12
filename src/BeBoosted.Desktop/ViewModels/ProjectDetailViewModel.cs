@@ -48,11 +48,12 @@ public sealed record ProjectTaskStatusInfo(
     bool SessionDone = false);
 
 /// <summary>
-/// One repeating series' occurrence on the current day: which session, which day, and
-/// whether the completion store holds a tick for it. Derived from the task's own blocks
-/// rather than from any windowed or capped projection of the project's schedule.
+/// The one occurrence of a repeating series a row is holding on to: which session, which
+/// day, and whether the completion store holds a tick for it. Derived from the task's own
+/// blocks rather than from any windowed or capped projection of the project's schedule,
+/// so that ticking it cannot make it disappear.
 /// </summary>
-internal sealed record TodaysOccurrence(
+internal sealed record HeldOccurrence(
     Domain.CalendarBlockId BlockId, DateOnly Date, TimeOnly StartTime, bool Done);
 
 /// <summary>Frame 05: a deliberately sparse project — tasks, upcoming blocks, and Files.</summary>
@@ -217,11 +218,10 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             // completes per occurrence, never as a whole, must never offer that control.
             var taskBlocks = _calendar.GetSessionsForTask(task.Id);
             var repeating = taskBlocks.Any(b => b.Recurrence is not null);
-            var status = StatusForOpenTask(
-                sessions, repeating, repeating ? TodaysOccurrenceOf(taskBlocks) : null);
+            var status = StatusForOpenTask(sessions, taskBlocks, repeating);
             rows.Add(new ProjectTaskRowViewModel(
-                task, status, OnSetDoneFor(task, status, repeating), !repeating,
-                RequestTaskEdit, RequestSessionEdit, CheckOccurrenceFor(status, repeating)?.Date));
+                task, status, OnSetDoneFor(taskBlocks, task, status, repeating), !repeating,
+                RequestTaskEdit, RequestSessionEdit, CheckOccurrenceFor(taskBlocks, status)?.Date));
         }
 
         foreach (var task in recent)
@@ -261,33 +261,81 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Today's occurrence of a repeating task, and whether it is ticked off — resolved
+    /// The occurrence a repeating row holds on to, and whether it is ticked — resolved
     /// from the task's OWN sessions and the completion store, never from
-    /// GetScheduledBlocks' rows. That matters: those rows keep at most
-    /// <see cref="ProjectService.RecentlyCompletedLimit"/> completed entries for the
-    /// whole PROJECT, so in a project where several other tasks were finished today,
-    /// this task's ticked occurrence is simply absent from them — and a row deriving
-    /// its state from that absence would fall through to naming next week, destroying
-    /// the undo, on evidence about other tasks entirely. The task's own blocks are
-    /// unwindowed and uncapped, and the completion store answers for one occurrence
-    /// directly, so nothing another task does can reach this answer.
+    /// GetScheduledBlocks' rows.
     /// </summary>
-    private TodaysOccurrence? TodaysOccurrenceOf(IReadOnlyList<Domain.Calendar.CalendarBlock> taskBlocks)
+    /// <remarks>
+    /// <para>
+    /// Two distinct reasons the projection cannot answer this. It keeps at most
+    /// <see cref="ProjectService.RecentlyCompletedLimit"/> completed entries for the
+    /// whole PROJECT, so in a project where several other tasks were finished today this
+    /// task's ticked occurrence is simply absent from them. And it drops a completed
+    /// occurrence from its active rows entirely (<c>nextUpcoming</c> skips done dates),
+    /// so a row deriving its state from the projection loses the occurrence at the exact
+    /// moment the user ticks it — the affix jumps forward, the tick cannot be undone,
+    /// and that is the design the user was shown and turned down.
+    /// </para>
+    /// <para>
+    /// The rule is the one the user stated: a row keeps naming an occurrence it ticked
+    /// until that occurrence's day has passed. So this returns today's occurrence, done
+    /// or not, and otherwise the earliest already-ticked occurrence lying between today
+    /// and <paramref name="nextIncomplete"/> — the next thing the projection still has
+    /// something to say about, which bounds the scan so the series is never expanded
+    /// open-endedly here. An ELAPSED occurrence is deliberately not held: its day has
+    /// passed, and pinning a past date to the row would leave the upcoming session
+    /// unreachable from the affix for the rest of the series' period.
+    /// </para>
+    /// </remarks>
+    private HeldOccurrence? HeldOccurrenceOf(
+        IReadOnlyList<Domain.Calendar.CalendarBlock> taskBlocks, DateOnly? nextIncomplete)
     {
         var today = _clock.Today;
-        var block = taskBlocks
-            .Where(b => b.Recurrence is not null
-                && !b.IsExternal
-                && b.Kind == Domain.Calendar.BlockKind.TaskSession
-                && b.OccursOn(today))
-            .OrderBy(b => b.StartTime)
-            .FirstOrDefault();
+        var series = taskBlocks.Where(IsCompletableSeries).ToList();
 
-        return block is null
-            ? null
-            : new TodaysOccurrence(
-                block.Id, today, block.StartTime, _calendar.IsOccurrenceCompleted(block.Id, today));
+        if (series.Where(b => b.OccursOn(today)).OrderBy(b => b.StartTime).FirstOrDefault()
+            is { } todays)
+        {
+            return new HeldOccurrence(
+                todays.Id, today, todays.StartTime, _calendar.IsOccurrenceCompleted(todays.Id, today));
+        }
+
+        if (nextIncomplete is not { } limit)
+        {
+            return null;
+        }
+
+        HeldOccurrence? held = null;
+        foreach (var block in series)
+        {
+            for (var date = today.AddDays(1); date < limit; date = date.AddDays(1))
+            {
+                if (!block.OccursOn(date) || !_calendar.IsOccurrenceCompleted(block.Id, date))
+                {
+                    continue;
+                }
+
+                if (held is null || date < held.Date
+                    || (date == held.Date && block.StartTime < held.StartTime))
+                {
+                    held = new HeldOccurrence(block.Id, date, block.StartTime, true);
+                }
+
+                break;
+            }
+        }
+
+        return held;
     }
+
+    /// <summary>
+    /// A session whose occurrences can be ticked at all: repeating, local, and a task
+    /// session. Anything else makes <c>EnsureOccurrenceCompletable</c> throw.
+    /// </summary>
+    private static bool IsCompletableSeries(Domain.Calendar.CalendarBlock block)
+        => block.Recurrence is not null
+            && !block.IsExternal
+            && block.Kind == Domain.Calendar.BlockKind.TaskSession;
 
     /// <summary>
     /// The occurrence this row's circle acts on, or null when it acts on the whole task
@@ -295,22 +343,45 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     /// ever about the one its affix names — including an overdue one, where ticking it
     /// is exactly the outcome being asked for.
     /// </summary>
+    /// <remarks>
+    /// The named session has to be looked up and checked, not assumed: the overdue and
+    /// upcoming branches read GetScheduledBlocks' rows, and that projection includes the
+    /// task's ONE-OFF sessions. A weekly task that also has a one-off dated sooner names
+    /// that one-off — and pointing SetOccurrenceCompletion at it throws
+    /// "A one-off session records an outcome, not an occurrence completion", which
+    /// neither this view model nor anything else in the Desktop project catches. Same
+    /// rule as everywhere else here: no circle rather than one that cannot be clicked
+    /// safely.
+    /// </remarks>
     private static (Domain.CalendarBlockId BlockId, DateOnly Date)? CheckOccurrenceFor(
-        ProjectTaskStatusInfo status, bool repeating)
-        => repeating && status.SessionBlockId is { } blockId && status.SessionDate is { } date
+        IReadOnlyList<Domain.Calendar.CalendarBlock> taskBlocks, ProjectTaskStatusInfo status)
+    {
+        if (status.SessionBlockId is not { } blockId || status.SessionDate is not { } date)
+        {
+            return null;
+        }
+
+        var block = taskBlocks.FirstOrDefault(b => b.Id == blockId);
+        return block is not null && IsCompletableSeries(block) && block.OccursOn(date)
             ? (blockId, date)
             : null;
+    }
 
     /// <summary>
     /// What this row's gutter circle stands for, or null when it stands for nothing and
     /// must therefore not be drawn. A one-off task's circle is the task; a repeating
     /// task's is the occurrence its affix names, because a repeating task never
-    /// completes as a whole. A repeating series with no occurrence in the window names
-    /// no session, so its row gets no circle rather than one that does nothing.
+    /// completes as a whole. A repeating series naming no tickable occurrence — none in
+    /// the window, or a one-off dated sooner — gets no circle rather than one that does
+    /// nothing or throws.
     /// </summary>
-    private Action<bool>? OnSetDoneFor(TaskItem task, ProjectTaskStatusInfo status, bool repeating)
+    private Action<bool>? OnSetDoneFor(
+        IReadOnlyList<Domain.Calendar.CalendarBlock> taskBlocks,
+        TaskItem task,
+        ProjectTaskStatusInfo status,
+        bool repeating)
     {
-        if (CheckOccurrenceFor(status, repeating) is { } occurrence)
+        if (CheckOccurrenceFor(taskBlocks, status) is { } occurrence)
         {
             return done => SetOccurrenceRowDone(occurrence.BlockId, occurrence.Date, done);
         }
@@ -337,15 +408,14 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     /// cheapest honest answer, and naming one would mean expanding the series here,
     /// duplicating in the view model what GetScheduledBlocks exists to do.
     /// </param>
-    /// <param name="todays">
-    /// Today's occurrence of a repeating series, resolved by the caller from the task's
-    /// own blocks (see <see cref="TodaysOccurrenceOf"/>), or null when the series has
-    /// none today and for every non-repeating task.
+    /// <param name="taskBlocks">
+    /// The task's own sessions, unwindowed and uncapped, from which the occurrence a
+    /// repeating row holds is resolved (see <see cref="HeldOccurrenceOf"/>).
     /// </param>
-    private static ProjectTaskStatusInfo StatusForOpenTask(
+    private ProjectTaskStatusInfo StatusForOpenTask(
         IReadOnlyList<Application.Projects.ProjectScheduledBlock> sessions,
-        bool repeating,
-        TodaysOccurrence? todays)
+        IReadOnlyList<Domain.Calendar.CalendarBlock> taskBlocks,
+        bool repeating)
     {
         if (sessions
             .Where(s => s.State == Application.Projects.ProjectBlockState.Overdue)
@@ -359,25 +429,27 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
                 overdue.Date, overdue.Block.StartTime, overdue.Block.Id);
         }
 
-        // A repeating row names TODAY's occurrence whenever the series has one, done or
-        // not, in preference to a later one. Not a new top-level priority - overdue
-        // still outranks it - but a refinement within the scheduled case, and the whole
-        // of what makes the circle reversible: ticking today off must leave the row
-        // naming today with the circle checked, so a second click undoes it. Advancing
-        // to next week the instant it is ticked is the defect the Week timeline had
-        // removed, and reintroducing it here would put it back one screen over.
-        if (todays is not null)
-        {
-            return new ProjectTaskStatusInfo(
-                ProjectTaskStatus.Scheduled,
-                todays.Date, todays.StartTime, todays.BlockId, SessionDone: todays.Done);
-        }
-
         var next = sessions
             .Where(s => s.State == Application.Projects.ProjectBlockState.Upcoming)
             .OrderBy(s => s.Date)
             .ThenBy(s => s.Block.StartTime)
             .FirstOrDefault();
+
+        // A repeating row holds the occurrence it names - today's whether or not it is
+        // ticked, and any occurrence between today and `next` that is already ticked -
+        // in preference to the projection's next INCOMPLETE one. Not a new top-level
+        // priority (overdue still outranks it) but a refinement within the scheduled
+        // case, and the whole of what makes the circle reversible: ticking must leave
+        // the row naming what it just acted on, with the circle checked, so a second
+        // click undoes it. Letting the affix advance the instant you tick is the design
+        // the user was shown and turned down, and the defect the Week timeline had
+        // removed - reintroducing it here would put it back one screen over.
+        if (HeldOccurrenceOf(taskBlocks, next?.Date) is { } held)
+        {
+            return new ProjectTaskStatusInfo(
+                ProjectTaskStatus.Scheduled,
+                held.Date, held.StartTime, held.BlockId, SessionDone: held.Done);
+        }
 
         if (next is not null)
         {
