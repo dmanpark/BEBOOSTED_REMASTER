@@ -48,6 +48,12 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     /// <summary>Raised when a project row asks for the one canonical Task editor.</summary>
     public event Action<Domain.TaskId>? TaskEditRequested;
 
+    /// <summary>
+    /// Raised when the project detail header's "New task" button is pressed, carrying
+    /// the project the new task should be prefilled with.
+    /// </summary>
+    public event Action<Domain.ProjectId>? NewTaskRequested;
+
     /// <summary>Raised for a scheduled-session row, carrying its concrete occurrence date.</summary>
     public event Action<Domain.CalendarBlockId, DateOnly>? SessionEditRequested;
 
@@ -58,6 +64,8 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     public event Action? TasksMutated;
 
     internal void RequestTaskEdit(Domain.TaskId taskId) => TaskEditRequested?.Invoke(taskId);
+
+    internal void RequestNewTaskInProject(Domain.ProjectId projectId) => NewTaskRequested?.Invoke(projectId);
 
     internal void RequestSessionEdit(Domain.CalendarBlockId blockId, DateOnly occurrenceDate)
         => SessionEditRequested?.Invoke(blockId, occurrenceDate);

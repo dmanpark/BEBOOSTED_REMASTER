@@ -2,6 +2,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using BeBoosted.Desktop.Tests.Support;
 using BeBoosted.Desktop.ViewModels;
@@ -162,5 +163,22 @@ public sealed class ProjectDetailSingleListTests
 
         Assert.NotNull(affix);
         Assert.True(affix!.IsEnabled);
+    }
+
+    /// <summary>
+    /// Adding a task while standing in a project should not make the user re-pick the
+    /// project they are already looking at.
+    /// </summary>
+    [AvaloniaFact]
+    public void NewTaskFromAProject_PrefillsThatProject()
+    {
+        var (window, detail) = ShowProjectWithScheduledTask();
+        var shell = (ShellViewModel)window.DataContext!;
+
+        detail.NewTaskCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var editor = Assert.IsType<WholeTaskEditorViewModel>(shell.Calendar.ActiveTaskEditor);
+        Assert.Equal(detail.Project.Id, editor.SelectedProject?.Id);
     }
 }

@@ -340,6 +340,13 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     [RelayCommand]
     private void AskBeBoosted() => _owner.AskRequested?.Invoke();
 
+    /// <summary>
+    /// Opens the whole-task editor with this project already chosen. Standing in a
+    /// project is itself the statement of where the task belongs.
+    /// </summary>
+    [RelayCommand]
+    private void NewTask() => _owner.RequestNewTaskInProject(Project.Id);
+
     /// <summary>Returns true when the File was created (the view closes its flyout).</summary>
     public bool TryCreateFile()
     {

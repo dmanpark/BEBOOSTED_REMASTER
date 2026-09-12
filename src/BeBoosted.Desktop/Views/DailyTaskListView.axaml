@@ -362,7 +362,7 @@
                     AutomationProperties.Name="{Binding Title, StringFormat='Edit {0}'}"
                     ToolTip.Tip="Edit task">
               <Path Classes="icon" Data="{StaticResource IconEdit}" Width="12" Height="12"
-                    StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+                    StrokeThickness="1.3" Stroke="{StaticResource BrushIconStroke}" />
             </Button>
 
             <!-- Every task row edits through the one canonical Task editor. -->
@@ -372,7 +372,7 @@
                     AutomationProperties.Name="{Binding Title, StringFormat='Edit task {0}'}"
                     ToolTip.Tip="Edit task">
               <Path Classes="icon" Data="{StaticResource IconEdit}" Width="12" Height="12"
-                    StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+                    StrokeThickness="1.3" Stroke="{StaticResource BrushIconStroke}" />
             </Button>
 
             <Button Classes="icon" Width="26" Height="26"
@@ -380,7 +380,7 @@
                     AutomationProperties.Name="{Binding ChangeTimeActionName}"
                     ToolTip.Tip="Change time">
               <Path Classes="icon" Data="{StaticResource IconClock}" Width="12" Height="12"
-                    StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+                    StrokeThickness="1.3" Stroke="{StaticResource BrushIconStroke}" />
               <Button.Flyout>
                 <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard"
                         Opened="OnScheduleFlyoutOpened">
@@ -395,7 +395,7 @@
                     AutomationProperties.Name="{Binding Title, StringFormat='Unschedule {0}'}"
                     ToolTip.Tip="Unschedule — the task returns to Unscheduled">
               <Path Classes="icon" Data="{StaticResource IconClose}" Width="10" Height="10"
-                    StrokeThickness="1.4" Stroke="{StaticResource BrushPencilGray}" />
+                    StrokeThickness="1.4" Stroke="{StaticResource BrushIconStroke}" />
             </Button>
 
             <!-- The other outcomes: quiet, never competing with the checkbox -->
@@ -404,7 +404,7 @@
                     AutomationProperties.Name="{Binding OutcomeControlName}"
                     ToolTip.Tip="Needs more time, or didn't happen">
               <Path Classes="icon" Data="{StaticResource IconMore}" Width="12" Height="12"
-                    StrokeThickness="1.3" Stroke="{StaticResource BrushPencilGray}" />
+                    StrokeThickness="1.3" Stroke="{StaticResource BrushIconStroke}" />
               <Button.Flyout>
                 <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard">
                   <StackPanel Width="228" Spacing="6" Margin="2">

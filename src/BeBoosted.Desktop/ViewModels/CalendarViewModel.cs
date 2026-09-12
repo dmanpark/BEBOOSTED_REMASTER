@@ -183,6 +183,17 @@ public sealed partial class CalendarViewModel : ViewModelBase
         => OpenNewWholeTaskEditor(date, start: null, end: null, scheduled: false);
 
     /// <summary>
+    /// New task from a project's own header: the same unscheduled editor the shell's
+    /// New task button opens, with this project already chosen instead of "No project".
+    /// </summary>
+    internal void OpenNewTaskEditorInProject(ProjectId projectId)
+    {
+        var editor = OpenNewWholeTaskEditor(VisibleDate, start: null, end: null, scheduled: false);
+        editor.SelectedProject = editor.ProjectOptions.FirstOrDefault(o => o.Id == projectId)
+            ?? editor.SelectedProject;
+    }
+
+    /// <summary>
     /// Opens the session editor from a calendar block, scoped to the clicked
     /// occurrence (local sessions only).
     /// </summary>

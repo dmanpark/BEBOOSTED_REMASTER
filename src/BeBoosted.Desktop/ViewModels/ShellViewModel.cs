@@ -77,6 +77,9 @@ public sealed partial class ShellViewModel : ViewModelBase
         // silent pick. Sessions are no longer rows of their own here.
         Projects.SessionEditRequested += (id, date) => Calendar.OpenTaskEditorForBlock(id, date);
         Projects.TasksMutated += Calendar.NotifyTasksMutated;
+        // The header's "New task" button opens the same editor as the shell's own
+        // New task button, with the project already chosen.
+        Projects.NewTaskRequested += Calendar.OpenNewTaskEditorInProject;
 
         Inbox.PropertyChanged += (_, e) =>
         {

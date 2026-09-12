@@ -218,6 +218,9 @@
           </StackPanel>
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8"
                       HorizontalAlignment="Right">
+            <Button Height="30" Padding="12,0" Content="New task"
+                    Command="{Binding NewTaskCommand}"
+                    AutomationProperties.Name="{Binding Project.Name, StringFormat='New task in {0}'}" />
             <Button Height="30" Padding="12,0" Content="Rename" Click="OnBeginProjectRenameClick"
                     AutomationProperties.Name="Rename this project">
               <Button.Flyout>
