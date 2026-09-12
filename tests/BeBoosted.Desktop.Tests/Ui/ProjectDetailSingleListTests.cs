@@ -2,6 +2,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -245,8 +246,10 @@ public sealed class ProjectDetailSingleListTests
         detail.Refresh();
         window.CaptureRenderedFrame();
 
-        var row = Assert.Single(detail.Tasks);
-        Assert.False(row.CanComplete, "a repeating task never completes as a whole");
+        Assert.True(
+            Assert.Single(detail.Tasks).ShowCheck,
+            "a repeating task never completes as a whole, so its circle has to be the "
+                + "occurrence's or there is no circle at all");
 
         // Named for the occurrence, not the task: rendered and read back the way a
         // screen reader would, so the scope the control announces is the scope it has.
@@ -294,6 +297,65 @@ public sealed class ProjectDetailSingleListTests
             ticked.GetVisualDescendants().OfType<Avalonia.Controls.Shapes.Path>().Single()
                 .IsEffectivelyVisible,
             "the tick must be on screen after the click");
+    }
+
+    /// <summary>
+    /// Reversibility from the keyboard, which is the whole deliverable: the circle is a
+    /// checkbox, so the second press has to be able to reach the same control. Refresh()
+    /// clears Tasks and rebuilds every row, which destroys the container the press came
+    /// from — without a restoration path Avalonia focuses nothing in its place and the
+    /// undo is mouse-only. Asserted on the focused element after the rebuild, because
+    /// every view-model assertion about the ticked occurrence stays green either way.
+    /// </summary>
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TickingFromTheKeyboard_LeavesFocusOnTheSameRowsCircle(bool repeating)
+    {
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var completions = new InMemoryOccurrenceCompletionRepository();
+        var (window, detail) = ShowProject(tasks, blocks, completions);
+
+        var task = TaskItem.Create("Weekly review", DateTimeOffset.Now, projectId: detail.Project.Id);
+        tasks.Add(task);
+        if (repeating)
+        {
+            blocks.Add(CalendarBlock.CreateTaskSession(
+                task.Id, Today, new TimeOnly(16, 0), new TimeOnly(17, 0), DateTimeOffset.Now,
+                BeBoosted.Domain.Scheduling.RecurrenceRule.Weekly(1, Today.DayOfWeek)));
+        }
+
+        detail.Refresh();
+        window.CaptureRenderedFrame();
+
+        var name = repeating
+            ? $"Complete Weekly review on {Today:ddd d MMM}"
+            : "Complete Weekly review";
+        var circle = GutterCheck(window, name);
+        Assert.NotNull(circle);
+
+        Assert.True(circle!.Focus(), "the gutter circle must be focusable at all");
+        Dispatcher.UIThread.RunJobs();
+        Assert.Same(circle, window.FocusManager!.GetFocusedElement());
+
+        // Both halves: a Button clicks on Space's key UP (ClickMode.Release), and the
+        // headless KeyPress helper is press-only.
+        window.KeyPress(Key.Space, RawInputModifiers.None, PhysicalKey.Space, keySymbol: null);
+        window.KeyRelease(Key.Space, RawInputModifiers.None, PhysicalKey.Space, keySymbol: null);
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+        Dispatcher.UIThread.RunJobs();
+
+        // The premise: the press really did tick the row, so what follows is about focus
+        // and not about a key that did nothing.
+        Assert.True(Assert.Single(detail.Tasks).IsDone);
+
+        var focused = window.FocusManager!.GetFocusedElement() as Control;
+        Assert.True(
+            focused is Button { DataContext: ProjectTaskRowViewModel row } && row.TaskId == task.Id,
+            $"focus landed on {focused?.GetType().Name ?? "nothing"} "
+                + $"({(focused is null ? "null" : AutomationProperties.GetName(focused) ?? "unnamed")})");
     }
 
     /// <summary>

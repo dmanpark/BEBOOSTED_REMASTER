@@ -8,6 +8,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using BeBoosted.Application.Projects;
 using BeBoosted.Desktop.ViewModels;
+using BeBoosted.Domain;
 using BeBoosted.Domain.Projects;
 
 namespace BeBoosted.Desktop.Views;
@@ -262,6 +263,40 @@ public partial class ProjectsView : UserControl
         => this.GetVisualDescendants()
             .OfType<ListBoxItem>()
             .FirstOrDefault(item => item.IsEffectivelyVisible && ReferenceEquals(item.DataContext, row))
+            ?.Focus() == true;
+
+    /// <summary>
+    /// Focus follows the tick back to the same row's circle. The circle is a checkbox —
+    /// a second press undoes the first — but completing a task rings the central refresh
+    /// chain, and <see cref="ProjectDetailViewModel.Refresh"/> clears Tasks and rebuilds
+    /// every row, so the container the press came from is destroyed and Avalonia focuses
+    /// nothing in its place. A mouse user's pointer is still over the redrawn circle and
+    /// the round trip works; without this a keyboard user could complete but not undo,
+    /// and reversibility is the design the user picked over the one-way alternative.
+    ///
+    /// This is the Week timeline's shape — remember the row's identity before the
+    /// mutation, restore after the layout that rebuilds it — expressed with the
+    /// <see cref="PostFocus"/> retry this view already uses for a moved resource, rather
+    /// than a second mechanism. Click is raised before the Command runs
+    /// (<c>Button.OnClick</c>), so the identity is captured while the old row still
+    /// exists, and it serves mouse and keyboard alike because both go through the same
+    /// click. TaskId, not the row object: the row instance does not survive the rebuild.
+    /// </summary>
+    private void OnTaskCheckClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Control { DataContext: ProjectTaskRowViewModel row })
+        {
+            var id = row.TaskId;
+            PostFocus(() => TryFocusTaskCheck(id));
+        }
+    }
+
+    private bool TryFocusTaskCheck(TaskId id)
+        => this.GetVisualDescendants()
+            .OfType<Button>()
+            .FirstOrDefault(button => button.IsEffectivelyVisible
+                && button.Name == "TaskCheckButton"
+                && button.DataContext is ProjectTaskRowViewModel row && row.TaskId == id)
             ?.Focus() == true;
 
     private void OnAddLinkClick(object? sender, RoutedEventArgs e)

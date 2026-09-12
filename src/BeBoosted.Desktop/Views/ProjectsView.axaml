@@ -341,8 +341,10 @@
                             Classes.taskDone="{Binding IsCompletedRow}">
                       <DockPanel>
                         <Panel DockPanel.Dock="Left" Width="18" VerticalAlignment="Center">
-                          <Button Classes="projectCheck" Classes.checked="{Binding IsDone}"
+                          <Button Name="TaskCheckButton"
+                                  Classes="projectCheck" Classes.checked="{Binding IsDone}"
                                   IsVisible="{Binding ShowCheck}"
+                                  Click="OnTaskCheckClick"
                                   Command="{Binding ToggleDoneCommand}"
                                   AutomationProperties.Name="{Binding CheckControlName}"
                                   ToolTip.Tip="{Binding CheckControlName}">
