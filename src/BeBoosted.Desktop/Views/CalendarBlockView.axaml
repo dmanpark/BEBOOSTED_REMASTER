@@ -133,8 +133,8 @@
                   BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1.5"
                   IsVisible="{Binding ShowOccurrenceCompletionControl}"
                   Command="{Binding ToggleOccurrenceDoneCommand}"
-                  AutomationProperties.Name="{Binding CompletionControlName}"
-                  ToolTip.Tip="{Binding CompletionControlName}">
+                  AutomationProperties.Name="{Binding OccurrenceCompletionControlName}"
+                  ToolTip.Tip="{Binding OccurrenceCompletionControlName}">
             <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
                   StrokeThickness="1.8" IsVisible="{Binding IsDone}" />
           </Button>

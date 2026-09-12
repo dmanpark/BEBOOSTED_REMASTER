@@ -71,8 +71,8 @@
                           Width="22" Height="22" CornerRadius="11"
                           BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1.5"
                           Command="{Binding CompleteCommand}"
-                          AutomationProperties.Name="{Binding Title, StringFormat='Mark {0} done'}"
-                          ToolTip.Tip="Mark done"
+                          AutomationProperties.Name="{Binding Title, StringFormat='Complete {0}'}"
+                          ToolTip.Tip="Complete"
                           VerticalAlignment="Center" />
                   <!-- Opens the one canonical Task editor — no separate inbox form. -->
                   <Button DockPanel.Dock="Right" Classes="icon"

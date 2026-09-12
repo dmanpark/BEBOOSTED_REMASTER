@@ -141,7 +141,26 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
     /// </summary>
     public bool ShowOccurrenceCompletionControl => IsLocalSession && IsRecurring;
 
-    public string CompletionControlName => IsDone ? $"Reopen {Title}" : $"Mark {Title} done";
+    /// <summary>
+    /// The one-off checkbox's name. "Complete", not "Mark … done", so the control names
+    /// its two directions with one verb shape each — it already says "Reopen" for the
+    /// undo, and the project row's circle says "Complete" for the same act. One verb
+    /// across every surface that offers this control (Today's list and the Inbox drawer
+    /// word it identically).
+    /// </summary>
+    public string CompletionControlName => IsDone ? $"Reopen {Title}" : $"Complete {Title}";
+
+    /// <summary>
+    /// The occurrence circle's name, which is the checkbox's plus the day it acts on.
+    /// The project row's circle states the day for exactly this reason: a repeating
+    /// series renders one block per day it falls on, so a control announced as
+    /// "Complete Stats HW" over one of them states the scope of the whole task rather
+    /// than of the occurrence it actually ticks. Worded identically to
+    /// <see cref="ProjectTaskRowViewModel.CheckControlName"/>, so the two circles that
+    /// act on one occurrence say the same thing.
+    /// </summary>
+    public string OccurrenceCompletionControlName
+        => (IsDone ? "Reopen" : "Complete") + $" {Title} on {Date:ddd d MMM}";
 
     public double StartMinutes => StartTime.ToTimeSpan().TotalMinutes;
 

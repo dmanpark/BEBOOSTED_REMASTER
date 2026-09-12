@@ -250,7 +250,7 @@ public sealed class DailyListUiTests
         window.CaptureRenderedFrame();
 
         // The scheduled row renders an enabled checkbox, not a flyout-only control.
-        var check = DailyCheckFor(window, "Mark Elapsed work done");
+        var check = DailyCheckFor(window, "Complete Elapsed work");
         Assert.NotNull(check);
         Assert.True(check.IsEffectivelyVisible);
         Assert.True(check.IsEnabled);

@@ -311,11 +311,17 @@ public sealed class CalendarBlockCapabilityTests
 
         var repeatingVm = FindBlock(context, repeating.Id);
         Assert.True(repeatingVm.ShowOccurrenceCompletionControl);
-        Assert.Equal("Mark AP Economics done", repeatingVm.CompletionControlName);
+
+        // The circle names the day it acts on, because a series renders one block per
+        // day it falls on and "Complete AP Economics" would be the whole task's scope.
+        Assert.Equal(
+            $"Complete AP Economics on {TestShell.DesignDate:ddd d MMM}",
+            repeatingVm.OccurrenceCompletionControlName);
         Assert.False(repeatingVm.ShowCompletionControl);
 
         var oneOffVm = FindBlock(context, oneOff.Id);
         Assert.False(oneOffVm.ShowOccurrenceCompletionControl);
+        Assert.Equal("Complete Lunch", oneOffVm.CompletionControlName);
         Assert.True(oneOffVm.ShowCompletionControl); // the checkbox
         Assert.True(oneOffVm.ShowOutcomeAction); // and the outcome overflow beside it
 
@@ -338,7 +344,9 @@ public sealed class CalendarBlockCapabilityTests
         Assert.Equal(1, changes);
         var done = FindBlock(context, session.Id);
         Assert.True(done.IsDone);
-        Assert.Equal("Reopen AP Economics", done.CompletionControlName);
+        Assert.Equal(
+            $"Reopen AP Economics on {TestShell.DesignDate:ddd d MMM}",
+            done.OccurrenceCompletionControlName);
         Assert.True(context.Service.IsOccurrenceCompleted(session.Id, TestShell.DesignDate));
 
         done.ToggleOccurrenceDoneCommand.Execute(null);

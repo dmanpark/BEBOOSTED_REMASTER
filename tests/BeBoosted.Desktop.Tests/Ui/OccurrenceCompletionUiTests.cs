@@ -97,7 +97,9 @@ public sealed class OccurrenceCompletionUiTests
         var view = FindBlockView(window, "Stats HW");
         var circle = view.FindControl<Button>("OccurrenceDoneButton")!;
         Assert.True(circle.IsVisible);
-        Assert.Equal("Mark Stats HW done", AutomationProperties.GetName(circle));
+        Assert.Equal(
+            $"Complete Stats HW on {TestShell.DesignDate:ddd d MMM}",
+            AutomationProperties.GetName(circle));
 
         Click(window, circle);
 
@@ -112,7 +114,9 @@ public sealed class OccurrenceCompletionUiTests
         // opacity and the strike-through title.
         Assert.Contains("done", doneView.FindControl<Border>("BlockBorder")!.Classes);
         var doneCircle = doneView.FindControl<Button>("OccurrenceDoneButton")!;
-        Assert.Equal("Reopen Stats HW", AutomationProperties.GetName(doneCircle));
+        Assert.Equal(
+            $"Reopen Stats HW on {TestShell.DesignDate:ddd d MMM}",
+            AutomationProperties.GetName(doneCircle));
 
         Click(window, doneCircle);
         var reopened = FindBlockView(window, "Stats HW");
