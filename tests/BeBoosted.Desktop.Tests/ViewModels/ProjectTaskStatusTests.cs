@@ -27,12 +27,42 @@ public sealed class ProjectTaskStatusTests
         return (projects.Detail!, tasks, blocks);
     }
 
+    /// <summary>
+    /// The same project, but holding on to the shell and the completion store: the
+    /// circle's round trip is only observable through the shell's refresh chain (which
+    /// rebuilds the rows) and through the occurrence completions it writes.
+    /// </summary>
+    private static (ShellViewModel Shell, ProjectDetailViewModel Detail,
+        InMemoryTaskRepository Tasks, InMemoryCalendarBlockRepository Blocks,
+        InMemoryOccurrenceCompletionRepository Completions) OpenProjectWithCompletions()
+    {
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var completions = new InMemoryOccurrenceCompletionRepository();
+        var shell = TestShell.Create(tasks: tasks, blocks: blocks, completions: completions);
+        var projects = shell.Projects;
+        projects.NewProjectName = "Schoolwork";
+        Assert.True(projects.TryCreateProject());
+        return (shell, projects.Detail!, tasks, blocks, completions);
+    }
+
     private static TaskItem AddTask(
         ProjectDetailViewModel detail, InMemoryTaskRepository tasks, string title)
     {
         var task = TaskItem.Create(title, DateTimeOffset.Now, projectId: detail.Project.Id);
         tasks.Add(task);
         return task;
+    }
+
+    /// <summary>The weekly series anchored on today, so no earlier occurrence is overdue.</summary>
+    private static CalendarBlock AddWeeklyFromToday(
+        InMemoryCalendarBlockRepository blocks, TaskItem task, DateOnly anchor)
+    {
+        var block = CalendarBlock.CreateTaskSession(
+            task.Id, anchor, new TimeOnly(16, 0), new TimeOnly(17, 0), DateTimeOffset.Now,
+            RecurrenceRule.Weekly(1, anchor.DayOfWeek));
+        blocks.Add(block);
+        return block;
     }
 
     [Fact]
@@ -144,6 +174,141 @@ public sealed class ProjectTaskStatusTests
 
         var row = Assert.Single(detail.Tasks);
         Assert.False(row.CanComplete);
+    }
+
+    /// <summary>
+    /// The same series, now that a repeating row can carry a circle for the occurrence
+    /// it names: with no occurrence inside the window there is no occurrence to tick, so
+    /// the row must not grow a circle that does nothing.
+    /// </summary>
+    [Fact]
+    public void ARepeatingSeriesOutsideTheWindow_OffersNoCircleAtAll()
+    {
+        var (detail, tasks, blocks) = OpenProject();
+        var task = AddTask(detail, tasks, "Weekly review");
+        var farAnchor = Today.AddDays(30);
+        blocks.Add(CalendarBlock.CreateTaskSession(
+            task.Id, farAnchor, new TimeOnly(9, 0), new TimeOnly(10, 0), DateTimeOffset.Now,
+            RecurrenceRule.Weekly(1, farAnchor.DayOfWeek)));
+
+        detail.Refresh();
+
+        var row = Assert.Single(detail.Tasks);
+        Assert.False(row.CanComplete);
+        Assert.False(row.ShowCheck);
+    }
+
+    /// <summary>
+    /// A completed row used to render an empty gutter, so the only way to undo a
+    /// completion from this screen was to open the editor. The circle survives being
+    /// done, reads as checked, and the click that finished the task reopens it.
+    /// </summary>
+    [Fact]
+    public void ACompletedRow_ShowsACheckedCircle_AndReopensTheTask()
+    {
+        var (shell, detail, tasks, _, _) = OpenProjectWithCompletions();
+        var task = AddTask(detail, tasks, "Essay plan");
+        task.Complete(DateTimeOffset.Now);
+        tasks.Update(task);
+        detail.Refresh();
+
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(ProjectTaskStatus.Done, row.Status);
+        Assert.True(row.ShowCheck, "a completed row must still offer its circle");
+        Assert.True(row.IsDone, "and that circle must read as checked");
+
+        row.ToggleDoneCommand.Execute(null);
+
+        Assert.False(tasks.GetById(task.Id)!.IsCompleted);
+        var reopened = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(ProjectTaskStatus.Unscheduled, reopened.Status);
+        Assert.False(reopened.IsDone);
+    }
+
+    /// <summary>
+    /// A repeating task never completes as a whole, so its row carried no control at
+    /// all and an occurrence could only be ticked off on Today or the Week timeline.
+    /// The circle now completes the occurrence the affix names — the Task and the
+    /// block's own outcome are left alone, exactly as the occurrence path requires.
+    /// </summary>
+    [Fact]
+    public void ARepeatingRow_TicksOffTheOccurrenceItNames()
+    {
+        var (shell, detail, tasks, blocks, completions) = OpenProjectWithCompletions();
+        var task = AddTask(detail, tasks, "Weekly review");
+        var block = AddWeeklyFromToday(blocks, task, Today);
+        detail.Refresh();
+
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.False(row.CanComplete);
+        Assert.True(row.ShowCheck, "the named occurrence is tickable even though the task is not");
+        Assert.Equal(Today, row.SessionDate);
+        Assert.False(row.IsDone);
+
+        row.ToggleDoneCommand.Execute(null);
+
+        Assert.NotNull(completions.Get(block.Id, Today));
+        Assert.False(tasks.GetById(task.Id)!.IsCompleted);
+    }
+
+    /// <summary>
+    /// The point of naming today's occurrence rather than jumping to next week's the
+    /// instant it is ticked: the row keeps naming what it just completed, with the
+    /// circle checked, so the same click undoes it. Advancing immediately is the exact
+    /// defect the Week timeline just had removed.
+    /// </summary>
+    [Fact]
+    public void ATickedRepeatingRow_KeepsNamingTodaysOccurrence_SoItCanBeUnticked()
+    {
+        var (shell, detail, tasks, blocks, completions) = OpenProjectWithCompletions();
+        var task = AddTask(detail, tasks, "Weekly review");
+        var block = AddWeeklyFromToday(blocks, task, Today);
+        detail.Refresh();
+
+        Assert.Single(shell.Projects.Detail!.Tasks).ToggleDoneCommand.Execute(null);
+
+        var ticked = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(Today, ticked.SessionDate);
+        Assert.NotEqual(Today.AddDays(7), ticked.SessionDate);
+        Assert.True(ticked.IsDone);
+
+        ticked.ToggleDoneCommand.Execute(null);
+
+        Assert.Null(completions.Get(block.Id, Today));
+        var unticked = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(Today, unticked.SessionDate);
+        Assert.False(unticked.IsDone);
+    }
+
+    /// <summary>
+    /// The other side of "keeps naming it": holding on to a ticked occurrence is about
+    /// the day it belongs to, not for ever. Stand a day later, with yesterday's
+    /// occurrence done, and the row has moved on to the following week's — unticked,
+    /// and offering its circle again.
+    /// </summary>
+    [Fact]
+    public void TheDayAfterATickedOccurrence_TheRowAdvancesToTheNextOne()
+    {
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var completions = new InMemoryOccurrenceCompletionRepository();
+        var anchor = Today;
+        var shell = TestShell.Create(
+            tasks: tasks, blocks: blocks, completions: completions, today: anchor.AddDays(1));
+        var projects = shell.Projects;
+        projects.NewProjectName = "Schoolwork";
+        Assert.True(projects.TryCreateProject());
+        var detail = projects.Detail!;
+
+        var task = AddTask(detail, tasks, "Weekly review");
+        var block = AddWeeklyFromToday(blocks, task, anchor);
+        completions.Add(OccurrenceCompletion.Create(block, anchor, DateTimeOffset.Now));
+        detail.Refresh();
+
+        var row = Assert.Single(detail.Tasks);
+        Assert.Equal(anchor.AddDays(7), row.SessionDate);
+        Assert.False(row.IsDone);
+        Assert.True(row.ShowCheck);
     }
 
     /// <summary>

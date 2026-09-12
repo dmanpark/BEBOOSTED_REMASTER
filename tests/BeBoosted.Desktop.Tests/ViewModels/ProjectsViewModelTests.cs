@@ -94,7 +94,7 @@ public sealed class ProjectsViewModelTests
         var row = Assert.Single(detail.Tasks);
         Assert.Equal(ProjectTaskStatus.Unscheduled, row.Status);
 
-        row.CompleteCommand.Execute(null);
+        row.ToggleDoneCommand.Execute(null);
 
         // Completion no longer moves the row to a second collection: the task keeps
         // its one row, in place, now reporting Done.

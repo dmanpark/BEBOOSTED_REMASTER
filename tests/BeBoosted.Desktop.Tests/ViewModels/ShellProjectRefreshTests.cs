@@ -303,7 +303,7 @@ public sealed class ShellProjectRefreshTests
         shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
         shell.NavigateCommand.Execute(AppSection.Projects);
         shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW")
-            .CompleteCommand.Execute(null);
+            .ToggleDoneCommand.Execute(null);
         Assert.Equal(BlockOutcome.Done, blocks.GetById(blockId)!.Outcome);
         Assert.Equal(
             ProjectTaskStatus.Done, Assert.Single(shell.Projects.Detail!.Tasks).Status);
@@ -359,7 +359,7 @@ public sealed class ShellProjectRefreshTests
         shell.Calendar.DataChanged += () => changes++;
 
         var row = shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW");
-        row.CompleteCommand.Execute(null);
+        row.ToggleDoneCommand.Execute(null);
 
         var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
         Assert.True(task.IsCompleted);
@@ -441,7 +441,7 @@ public sealed class ShellProjectRefreshTests
             }
         };
 
-        detail.Tasks.Single(t => t.Title == "Essay plan").CompleteCommand.Execute(null);
+        detail.Tasks.Single(t => t.Title == "Essay plan").ToggleDoneCommand.Execute(null);
 
         Assert.Equal(1, detailRefreshes);
         Assert.Equal(1, changes);

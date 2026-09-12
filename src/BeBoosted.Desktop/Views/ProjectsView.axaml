@@ -128,6 +128,28 @@
       <Setter Property="TextDecorations" Value="Strikethrough" />
     </Style>
 
+    <!-- The row's 18px gutter control. Same checkbox the Daily list draws — lime fill
+         and a graphite edge once checked, with the tick Path inside — kept round because
+         that is the shape this screen's gutter has always had. It is a checkbox rather
+         than a one-way button so a completion (of the task, or of the occurrence the
+         affix names) can be undone here instead of only in the editor. -->
+    <Style Selector="Button.projectCheck">
+      <Setter Property="Width" Value="18" />
+      <Setter Property="Height" Value="18" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderStrong}" />
+      <Setter Property="BorderThickness" Value="1.5" />
+    </Style>
+    <Style Selector="Button.projectCheck:pointerover /template/ Border#PART_ButtonBorder">
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    </Style>
+    <Style Selector="Button.projectCheck.checked">
+      <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
+    </Style>
+
     <!-- The tactile folio: the product's one physical motif -->
     <Style Selector="Button.folio">
       <Setter Property="Background" Value="Transparent" />
@@ -319,12 +341,14 @@
                             Classes.taskDone="{Binding IsCompletedRow}">
                       <DockPanel>
                         <Panel DockPanel.Dock="Left" Width="18" VerticalAlignment="Center">
-                          <Button Classes="icon" Width="18" Height="18"
-                                  CornerRadius="9" BorderThickness="1.5"
-                                  BorderBrush="{StaticResource BrushBorderStrong}"
-                                  IsVisible="{Binding CanComplete}"
-                                  Command="{Binding CompleteCommand}"
-                                  AutomationProperties.Name="{Binding CompleteControlName}" />
+                          <Button Classes="projectCheck" Classes.checked="{Binding IsDone}"
+                                  IsVisible="{Binding ShowCheck}"
+                                  Command="{Binding ToggleDoneCommand}"
+                                  AutomationProperties.Name="{Binding CheckControlName}"
+                                  ToolTip.Tip="{Binding CheckControlName}">
+                            <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
+                                  StrokeThickness="1.8" IsVisible="{Binding IsDone}" />
+                          </Button>
                         </Panel>
 
                         <!-- The affix opens the session it names; the row opens the

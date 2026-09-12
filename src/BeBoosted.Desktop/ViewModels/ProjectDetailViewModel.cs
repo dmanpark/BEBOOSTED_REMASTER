@@ -32,12 +32,20 @@ public enum ProjectTaskStatus
 /// travels with it because clicking the affix opens that session's editor, and
 /// keyboard focus has to find its way back to the same row afterwards.
 /// </summary>
+/// <param name="SessionDone">
+/// Whether the named session is a repeating occurrence that is already ticked off.
+/// The row needs it so the gutter circle can render checked and untick rather than
+/// re-complete. Only ever true for a repeating occurrence: a one-off session resolved
+/// Done belongs to a task the whole-task control speaks for, and saying "done" of that
+/// circle while the task is still open would be a lie about the task.
+/// </param>
 public sealed record ProjectTaskStatusInfo(
     ProjectTaskStatus Kind,
     DateOnly? SessionDate = null,
     TimeOnly? SessionStart = null,
     Domain.CalendarBlockId? SessionBlockId = null,
-    DateOnly? CompletedOn = null);
+    DateOnly? CompletedOn = null,
+    bool SessionDone = false);
 
 /// <summary>Frame 05: a deliberately sparse project — tasks, upcoming blocks, and Files.</summary>
 public sealed partial class ProjectDetailViewModel : ViewModelBase
@@ -46,18 +54,21 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     private readonly ProjectService _service;
     private readonly IProjectFileRepository _files;
     private readonly Application.Calendar.CalendarService _calendar;
+    private readonly Application.Abstractions.IClock _clock;
 
     public ProjectDetailViewModel(
         ProjectsViewModel owner,
         Project project,
         ProjectService service,
         IProjectFileRepository files,
-        Application.Calendar.CalendarService calendar)
+        Application.Calendar.CalendarService calendar,
+        Application.Abstractions.IClock clock)
     {
         _owner = owner;
         _service = service;
         _files = files;
         _calendar = calendar;
+        _clock = clock;
         Project = project;
         Refresh();
     }
@@ -197,8 +208,9 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             // let a repeating task be completed as a whole from this list - a task that
             // completes per occurrence, never as a whole, must never offer that control.
             var repeating = _calendar.GetSessionsForTask(task.Id).Any(b => b.Recurrence is not null);
+            var status = StatusForOpenTask(sessions, repeating, _clock.Today);
             rows.Add(new ProjectTaskRowViewModel(
-                task, StatusForOpenTask(sessions, repeating), CompleteTaskRow, !repeating,
+                task, status, OnSetDoneFor(task, status, repeating), !repeating,
                 RequestTaskEdit, RequestSessionEdit));
         }
 
@@ -211,7 +223,10 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
                     CompletedOn: task.CompletedAt is { } at
                         ? DateOnly.FromDateTime(at.LocalDateTime)
                         : null),
-                onCompleteRequested: null, canComplete: false, RequestTaskEdit));
+
+                // A completed row keeps its circle so the completion can be undone
+                // here; whole-task COMPLETION is what it no longer offers.
+                done => SetTaskRowDone(task, done), canComplete: false, RequestTaskEdit));
         }
 
         Tasks.Clear();
@@ -236,6 +251,28 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// What this row's gutter circle stands for, or null when it stands for nothing and
+    /// must therefore not be drawn. A one-off task's circle is the task; a repeating
+    /// task's is the occurrence its affix names, because a repeating task never
+    /// completes as a whole. A repeating series with no occurrence in the window names
+    /// no session, so its row gets no circle rather than one that does nothing.
+    /// </summary>
+    private Action<bool>? OnSetDoneFor(TaskItem task, ProjectTaskStatusInfo status, bool repeating)
+    {
+        if (!repeating)
+        {
+            return done => SetTaskRowDone(task, done);
+        }
+
+        if (status.SessionBlockId is { } blockId && status.SessionDate is { } date)
+        {
+            return done => SetOccurrenceRowDone(blockId, date, done);
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// The one state an open task shows. Overdue outranks scheduled because a session
     /// that elapsed without an outcome is the only one asking the user for something.
     /// </summary>
@@ -254,8 +291,13 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     /// cheapest honest answer, and naming one would mean expanding the series here,
     /// duplicating in the view model what GetScheduledBlocks exists to do.
     /// </param>
+    /// <param name="today">
+    /// The current day, needed only for the repeating refinement below.
+    /// </param>
     private static ProjectTaskStatusInfo StatusForOpenTask(
-        IReadOnlyList<Application.Projects.ProjectScheduledBlock> sessions, bool repeating)
+        IReadOnlyList<Application.Projects.ProjectScheduledBlock> sessions,
+        bool repeating,
+        DateOnly today)
     {
         if (sessions
             .Where(s => s.State == Application.Projects.ProjectBlockState.Overdue)
@@ -267,6 +309,28 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             return new ProjectTaskStatusInfo(
                 ProjectTaskStatus.NeedsOutcome,
                 overdue.Date, overdue.Block.StartTime, overdue.Block.Id);
+        }
+
+        // A repeating row names TODAY's occurrence whenever the series has one, done or
+        // not, in preference to a later one. Not a new top-level priority - overdue
+        // still outranks it - but a refinement within the scheduled case, and the whole
+        // of what makes the circle reversible: ticking today off must leave the row
+        // naming today with the circle checked, so a second click undoes it. Advancing
+        // to next week the instant it is ticked is the defect the Week timeline had
+        // removed, and reintroducing it here would put it back one screen over.
+        if (repeating)
+        {
+            var todays = sessions
+                .Where(s => s.Date == today)
+                .OrderBy(s => s.Block.StartTime)
+                .FirstOrDefault();
+            if (todays is not null)
+            {
+                return new ProjectTaskStatusInfo(
+                    ProjectTaskStatus.Scheduled,
+                    todays.Date, todays.Block.StartTime, todays.Block.Id,
+                    SessionDone: todays.State == Application.Projects.ProjectBlockState.Done);
+            }
         }
 
         var next = sessions
@@ -287,14 +351,27 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Whole-task completion from a project row: the authoritative service path
-    /// reconciles the Task with its one-off sessions, then one announcement through
-    /// the central chain refreshes every dependent — including this detail — exactly
-    /// once. No-ops and failures announce nothing.
+    /// Whole-task completion, and its undo, from a project row: the authoritative
+    /// service path reconciles the Task with its one-off sessions either way, then one
+    /// announcement through the central chain refreshes every dependent — including
+    /// this detail — exactly once. No-ops and failures announce nothing.
     /// </summary>
-    internal void CompleteTaskRow(TaskItem task)
+    internal void SetTaskRowDone(TaskItem task, bool done)
     {
-        if (_calendar.CompleteTask(task.Id))
+        if (done ? _calendar.CompleteTask(task.Id) : _calendar.ReopenTask(task.Id))
+        {
+            _owner.NotifyTasksMutated();
+        }
+    }
+
+    /// <summary>
+    /// The occurrence half: a repeating task completes per occurrence, so its row ticks
+    /// off the one its affix names. The same service call the Today list and the Week
+    /// timeline already make — only the way it is reached is new.
+    /// </summary>
+    internal void SetOccurrenceRowDone(Domain.CalendarBlockId blockId, DateOnly date, bool done)
+    {
+        if (_calendar.SetOccurrenceCompletion(blockId, date, done))
         {
             _owner.NotifyTasksMutated();
         }
@@ -336,10 +413,16 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     public void OpenFile(Domain.ProjectFileId id) => _owner.OpenFile(id);
 }
 
+/// <param name="onSetDone">
+/// Flips whatever this row's circle stands for, to the state passed in — the whole task
+/// for a one-off row, the named occurrence for a repeating one. One callback because the
+/// circle is a checkbox, not a one-way button: the same control must undo what it did.
+/// Null means the row has nothing to tick, and the circle is not drawn at all.
+/// </param>
 public sealed partial class ProjectTaskRowViewModel(
     TaskItem task,
     ProjectTaskStatusInfo status,
-    Action<TaskItem>? onCompleteRequested = null,
+    Action<bool>? onSetDone = null,
     bool canComplete = true,
     Action<TaskItem>? onEditRequested = null,
     Action<Domain.CalendarBlockId, DateOnly>? onSessionRequested = null)
@@ -352,6 +435,18 @@ public sealed partial class ProjectTaskRowViewModel(
 
     /// <summary>Whole-task completion; repeating tasks complete per occurrence instead.</summary>
     public bool CanComplete => canComplete;
+
+    /// <summary>
+    /// Whether the row's gutter circle is on screen at all. Deliberately not
+    /// <see cref="CanComplete"/>: a completed row offers the circle so the completion
+    /// can be undone, and a repeating row offers it for the occurrence its affix names.
+    /// Tied to the callback rather than to a separate flag, so a circle can never be
+    /// drawn over nothing.
+    /// </summary>
+    public bool ShowCheck => onSetDone is not null;
+
+    /// <summary>Whether the circle reads as checked — what a second click would undo.</summary>
+    public bool IsDone => status.Kind == ProjectTaskStatus.Done || status.SessionDone;
 
     public ProjectTaskStatus Status => status.Kind;
 
@@ -375,7 +470,11 @@ public sealed partial class ProjectTaskRowViewModel(
 
     public string SessionControlName => $"Edit session for {task.Title}";
 
-    public string CompleteControlName => $"Complete {task.Title}";
+    /// <summary>
+    /// The gutter circle's accessible name. It says which way the click goes, because
+    /// the same control now both finishes and undoes.
+    /// </summary>
+    public string CheckControlName => IsDone ? $"Reopen {task.Title}" : $"Complete {task.Title}";
 
     /// <summary>
     /// Display only. Tests assert <see cref="Status"/> instead, so rewording this
@@ -401,9 +500,12 @@ public sealed partial class ProjectTaskRowViewModel(
             ? $"{when} · {TaskRowViewModel.FormatDuration(estimate)}"
             : when;
 
-    /// <summary>Completes through the owner's one authoritative service path.</summary>
+    /// <summary>
+    /// Asks for the opposite of what the circle currently shows, through the owner's one
+    /// authoritative service path. Completing and undoing are the same click.
+    /// </summary>
     [RelayCommand]
-    private void Complete() => onCompleteRequested?.Invoke(task);
+    private void ToggleDone() => onSetDone?.Invoke(!IsDone);
 
     public string EditControlName => $"Edit task {task.Title}";
 

@@ -171,6 +171,91 @@ public sealed class ProjectDetailSingleListTests
     }
 
     /// <summary>
+    /// A project with one task, rendered, so a test can reach into the gutter.
+    /// </summary>
+    private static (MainWindow Window, ProjectDetailViewModel Detail) ShowProject(
+        InMemoryTaskRepository tasks,
+        InMemoryCalendarBlockRepository blocks,
+        InMemoryOccurrenceCompletionRepository completions)
+    {
+        var shell = TestShell.Create(tasks: tasks, blocks: blocks, completions: completions);
+        var window = new MainWindow { DataContext = shell, Width = 1440, Height = 960 };
+        window.Show();
+        shell.NavigateCommand.Execute(AppSection.Projects);
+
+        var projects = shell.Projects;
+        projects.NewProjectName = "Schoolwork";
+        Assert.True(projects.TryCreateProject());
+        return (window, projects.Detail!);
+    }
+
+    /// <summary>The row's 18px gutter control, found the way a screen reader finds it.</summary>
+    private static Button? GutterCheck(MainWindow window, string accessibleName)
+        => window.GetVisualDescendants()
+            .OfType<Button>()
+            .SingleOrDefault(b => b.IsEffectivelyVisible
+                && AutomationProperties.GetName(b) == accessibleName);
+
+    /// <summary>
+    /// A view-model flag proves nothing about the gutter: this renders a completed row,
+    /// finds the circle by its accessible name, and checks it carries the `checked`
+    /// class and shows the tick Path inside it — the same treatment the Daily list uses.
+    /// </summary>
+    [AvaloniaFact]
+    public void ACompletedRow_RendersItsCircleChecked()
+    {
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var completions = new InMemoryOccurrenceCompletionRepository();
+        var (window, detail) = ShowProject(tasks, blocks, completions);
+
+        var task = TaskItem.Create("Essay plan", DateTimeOffset.Now, projectId: detail.Project.Id);
+        task.Complete(DateTimeOffset.Now);
+        tasks.Add(task);
+        detail.Refresh();
+        window.CaptureRenderedFrame();
+
+        var circle = GutterCheck(window, "Reopen Essay plan");
+
+        Assert.NotNull(circle);
+        Assert.True(circle!.IsEnabled);
+        Assert.Contains("checked", circle.Classes);
+        var tick = circle.GetVisualDescendants().OfType<Avalonia.Controls.Shapes.Path>().Single();
+        Assert.True(tick.IsEffectivelyVisible, "a done circle must render its tick");
+    }
+
+    /// <summary>
+    /// A repeating task's row used to render an empty gutter, because the task cannot
+    /// be completed as a whole. The circle now stands for the occurrence the affix
+    /// names, so it must actually be on screen and clickable.
+    /// </summary>
+    [AvaloniaFact]
+    public void ARepeatingRow_RendersACircleForTheOccurrenceItNames()
+    {
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var completions = new InMemoryOccurrenceCompletionRepository();
+        var (window, detail) = ShowProject(tasks, blocks, completions);
+
+        var task = TaskItem.Create("Weekly review", DateTimeOffset.Now, projectId: detail.Project.Id);
+        tasks.Add(task);
+        blocks.Add(CalendarBlock.CreateTaskSession(
+            task.Id, Today, new TimeOnly(16, 0), new TimeOnly(17, 0), DateTimeOffset.Now,
+            BeBoosted.Domain.Scheduling.RecurrenceRule.Weekly(1, Today.DayOfWeek)));
+        detail.Refresh();
+        window.CaptureRenderedFrame();
+
+        var row = Assert.Single(detail.Tasks);
+        Assert.False(row.CanComplete, "a repeating task never completes as a whole");
+
+        var circle = GutterCheck(window, "Complete Weekly review");
+
+        Assert.NotNull(circle);
+        Assert.True(circle!.IsEnabled);
+        Assert.DoesNotContain("checked", circle.Classes);
+    }
+
+    /// <summary>
     /// Adding a task while standing in a project should not make the user re-pick the
     /// project they are already looking at.
     /// </summary>

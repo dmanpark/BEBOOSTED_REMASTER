@@ -760,7 +760,7 @@ public static class TestShell
             new InboxViewModel(taskService, calendarService, inboxQuery, projectRepo, aiService, clock),
             new ProjectsViewModel(
                 projectService, projectRepo, fileRepo, resourceRepo,
-                calendarService, reveal ?? new FakeFileReveal(), aiService),
+                calendarService, reveal ?? new FakeFileReveal(), aiService, clock),
             new SettingsViewModel(
                 new FakePaths(), aiPermissions, new CaptureModelSettings(settingsStore),
                 new ReversibleTestProtector()),
