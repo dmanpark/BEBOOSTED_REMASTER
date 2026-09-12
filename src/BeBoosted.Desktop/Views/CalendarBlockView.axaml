@@ -65,10 +65,8 @@
             <Button.Flyout>
               <Flyout Placement="BottomEdgeAlignedLeft" ShowMode="Standard">
                 <StackPanel Width="228" Spacing="6" Margin="2">
-                  <Button Classes="primary" HorizontalAlignment="Stretch"
-                          Content="Done"
-                          Command="{Binding RecordDoneCommand}"
-                          Click="OnFlyoutActionClick" />
+                  <!-- No "Done" here: the checkbox one click away already is Done,
+                       and Today's overflow has never carried it either. -->
                   <Border BorderBrush="{StaticResource BrushRuleMedium}" BorderThickness="1"
                           CornerRadius="{StaticResource RadiusControl}" Padding="8,7">
                     <StackPanel Spacing="6">

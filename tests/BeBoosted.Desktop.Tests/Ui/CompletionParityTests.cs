@@ -44,10 +44,12 @@ public sealed class CompletionParityTests
         return (window, shell, session);
     }
 
-    private static CalendarBlockViewModel SessionViewModel(MainWindow window, CalendarBlock session)
+    private static CalendarBlockView SessionView(MainWindow window, CalendarBlock session)
         => window.GetVisualDescendants().OfType<CalendarBlockView>()
-            .Select(v => (CalendarBlockViewModel)v.DataContext!)
-            .First(vm => vm.Id == session.Id);
+            .First(v => ((CalendarBlockViewModel)v.DataContext!).Id == session.Id);
+
+    private static CalendarBlockViewModel SessionViewModel(MainWindow window, CalendarBlock session)
+        => (CalendarBlockViewModel)SessionView(window, session).DataContext!;
 
     /// <summary>The defect, stated directly: the control used to remove itself.</summary>
     [AvaloniaFact]
@@ -99,6 +101,73 @@ public sealed class CompletionParityTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.False(SessionViewModel(window, session).IsDone);
+    }
+
+    /// <summary>
+    /// The other half of parity: Today collapses both controls once a session is
+    /// settled by something other than Done - completing that work again goes through
+    /// the task's own row, not a checkbox on a session that already didn't happen.
+    /// Week now reaches the same end state.
+    /// </summary>
+    [AvaloniaFact]
+    public void ANonDoneOutcome_CollapsesBothControls_TheWayTodayDoes()
+    {
+        var (window, shell, session) = ShowWeekWithSession();
+
+        SessionViewModel(window, session).RecordDidntHappenCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+
+        var block = SessionViewModel(window, session);
+        Assert.False(block.ShowCompletionControl, "a settled session keeps no checkbox");
+        Assert.False(block.ShowOutcomeAction, "nor the overflow it was settled from");
+
+        // Now stand where Today stands and look at the very same session. Its rows are
+        // only built for the Today view, and a settled session moves to that day's
+        // completed history rather than staying scheduled.
+        shell.Calendar.ViewKind = CalendarViewKind.Today;
+        shell.Calendar.Reload();
+        Dispatcher.UIThread.RunJobs();
+
+        var daily = shell.Calendar.Daily;
+        var row = daily.ScheduledRows
+            .Concat(daily.CompletedRows)
+            .Concat(daily.UnscheduledRows)
+            .Single(r => r.BlockId == session.Id);
+        Assert.False(row.ShowSessionCheck);
+        Assert.False(row.ShowSessionOutcomeAction);
+    }
+
+    /// <summary>A proposal has no outcome and must not start reporting one.</summary>
+    [AvaloniaFact]
+    public void AProposalIsNeverTreatedAsSettled()
+    {
+        var (window, _, _) = ShowWeekWithSession();
+
+        Assert.All(
+            window.GetVisualDescendants().OfType<CalendarBlockView>()
+                .Select(v => (CalendarBlockViewModel)v.DataContext!)
+                .Where(vm => vm.IsProposal),
+            vm => Assert.False(vm.HasRecordedOutcome));
+    }
+
+    /// <summary>
+    /// Done belongs to the checkbox now. Offering it again one click away inside the
+    /// overflow is the duplication this task exists to remove - Today's overflow has
+    /// never carried it.
+    /// </summary>
+    [AvaloniaFact]
+    public void TheOverflow_DoesNotOfferDoneBesideTheCheckbox()
+    {
+        var (window, _, session) = ShowWeekWithSession();
+        var overflow = SessionView(window, session).FindControl<Button>("OutcomeButton")!;
+
+        var entries = ((StackPanel)((Flyout)overflow.Flyout!).Content!)
+            .Children.OfType<Button>().Select(b => b.Content as string).ToList();
+
+        Assert.DoesNotContain("Done", entries);
+        Assert.Contains("Didn't happen", entries);
+        Assert.Contains("Remove from calendar", entries);
     }
 
     [AvaloniaFact]

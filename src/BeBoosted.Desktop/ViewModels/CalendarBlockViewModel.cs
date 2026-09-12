@@ -110,19 +110,29 @@ public sealed partial class CalendarBlockViewModel : ViewModelBase
     public bool IsLocked => IsExternal;
 
     /// <summary>
+    /// A settled one-off session — Done, "Needs more time", or "Didn't happen". A
+    /// proposal is not a block yet and never reports an outcome. Mirrors
+    /// DailyRowViewModel.HasRecordedOutcome.
+    /// </summary>
+    public bool HasRecordedOutcome => _block is { Outcome: not BlockOutcome.None };
+
+    /// <summary>
     /// The checkbox. It deliberately survives completion: the previous gate excluded
     /// IsDone, so using the control removed it and a done one-off session could not be
-    /// reopened from this surface at all. Today's equivalent has always kept its
-    /// checkbox visible when done; this is that rule.
+    /// reopened from this surface at all. A session settled by another outcome keeps no
+    /// checkbox — completing that work again goes through the task's own row. Both
+    /// halves are DailyRowViewModel.ShowSessionCheck's rule.
     /// </summary>
-    public bool ShowCompletionControl => IsLocalSession && !IsRecurring;
+    public bool ShowCompletionControl
+        => IsLocalSession && !IsRecurring && (IsDone || !HasRecordedOutcome);
 
     /// <summary>
     /// The quiet side action holding "Needs more time", "Didn't happen" and "Remove
     /// from calendar" — the outcomes that are not a simple finish. Mirrors
     /// DailyRowViewModel.ShowSessionOutcomeAction.
     /// </summary>
-    public bool ShowOutcomeAction => IsLocalSession && !IsRecurring && !IsDone;
+    public bool ShowOutcomeAction
+        => IsLocalSession && !IsRecurring && !IsDone && !HasRecordedOutcome;
 
     /// <summary>
     /// The single-click done circle for repeating sessions (completes one occurrence)
