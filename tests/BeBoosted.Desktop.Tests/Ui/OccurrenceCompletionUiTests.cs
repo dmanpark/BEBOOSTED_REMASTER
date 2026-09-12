@@ -203,9 +203,20 @@ public sealed class OccurrenceCompletionUiTests
         var oneOff = FindBlockView(window, "Practice DECA role-play");
         Assert.False(oneOff.FindControl<Button>("OccurrenceDoneButton")!.IsVisible);
         // One-off sessions get the equivalent pair instead: a checkbox, plus the
-        // overflow holding the outcomes that are not a simple finish.
+        // overflow holding the outcomes that are not a simple finish. The checkbox is
+        // there at any width — this session shares its hour with Stats HW, which
+        // squeezes it to 89px, and the checkbox needs 33.
         Assert.True(oneOff.FindControl<Button>("CompleteButton")!.IsVisible);
-        Assert.True(oneOff.FindControl<Button>("OutcomeButton")!.IsVisible);
+
+        // The overflow is read off a session with its hour to itself, because 89px is
+        // below the width at which a block offers one at all: the outcomes would sit
+        // beside a title trimmed to an ellipsis. "Draft personal statement" is the same
+        // kind of block — a one-off local session — with room to show the pair.
+        var roomyOneOff = FindBlockView(window, "Draft personal statement");
+        Assert.True(roomyOneOff.Bounds.Width >= 123, "the roomy fixture is no longer roomy");
+        Assert.False(roomyOneOff.FindControl<Button>("OccurrenceDoneButton")!.IsVisible);
+        Assert.True(roomyOneOff.FindControl<Button>("CompleteButton")!.IsVisible);
+        Assert.True(roomyOneOff.FindControl<Button>("OutcomeButton")!.IsVisible);
         window.Close();
     }
 

@@ -109,26 +109,39 @@ public sealed class CompletionParityTests
     }
 
     /// <summary>
-    /// A block needs 75px to hold the checkbox and the overflow at once — see
-    /// CalendarBlockView.BothControlsFitWidth, which sums that off the AXAML, and the
-    /// AXAML's own styles for exactly what hiding the overflow costs. Below 75 it hides
-    /// and the checkbox stays, finishing being the common case; above it the overflow is
-    /// back, so this is a width response and not a deletion.
+    /// The overflow needs 123px of block: 75 for itself and the checkbox — see
+    /// CalendarBlockView.BothControlsFitWidth, which sums that off the AXAML — plus 48
+    /// for a title worth reading beside them, which is CalendarBlockView's
+    /// MinimumSharedTitleWidth. Below that the overflow hides and the checkbox stays,
+    /// finishing being the common case; above it the overflow is back, so this is a width
+    /// response and not a deletion. See the AXAML's styles for what hiding it costs.
     ///
-    /// The rows deliberately cross both the threshold AND two window sizes. The defect
-    /// this replaced put the overflow at a position fixed by the day column's width
-    /// rather than the block's, which is a condition of the overlap count and not of the
-    /// window: at 1100x720 two overlapping give 65px blocks and at 1440x960 they give
-    /// 89px, and the escape was the same at both. A theory pinned at one window size
-    /// would agree with any predicate that happens to be right there.
+    /// Two things make the rows what they are.
+    ///
+    /// The defect these replaced put the overflow at a position fixed by the day
+    /// column's width rather than the block's — a condition of the overlap count, not of
+    /// the window — so it escaped at every window size, and a theory pinned at one size
+    /// would have agreed with any predicate that happened to be right there.
+    ///
+    /// And 1440x960 with two overlapping is the case that made the threshold 123 rather
+    /// than 75. An 89px block clears 75, so the previous constant kept both controls
+    /// there beside a 9px title: an ellipsis and nothing else, which is precisely the
+    /// option the user was shown and turned down. It is the row that should go red first
+    /// if anyone retunes the number.
+    ///
+    /// 1920x1080 with two overlapping is deliberately absent: it lands on exactly 123px,
+    /// so pinning it would be a row that passes by 0px, and this file has just finished
+    /// removing one of those. The report carries the measurement instead.
     /// </summary>
     [AvaloniaTheory]
     [InlineData(1100, 720, 1, true)]
     [InlineData(1100, 720, 2, false)]
     [InlineData(1100, 720, 3, false)]
     [InlineData(1440, 960, 1, true)]
-    [InlineData(1440, 960, 2, true)]
+    [InlineData(1440, 960, 2, false)]
     [InlineData(1440, 960, 3, false)]
+    [InlineData(1920, 1080, 1, true)]
+    [InlineData(1920, 1080, 3, false)]
     public void TheControlsOfABlock_StayInsideIt(
         double windowWidth, double windowHeight, int overlapping, bool expectOverflow)
     {
@@ -138,14 +151,15 @@ public sealed class CompletionParityTests
         {
             var view = SessionView(window, session);
 
-            // The premise, pinned per row: the squeezed rows really are narrower than the
-            // checkbox and the overflow together and the roomy rows really are wider.
-            // Without this a layout change that stopped them overlapping would leave
-            // nothing at risk and every assertion below would pass witnessing nothing.
+            // The premise, pinned per row: the rows that expect no overflow really are
+            // narrower than the checkbox, the overflow and a readable title together, and
+            // the rows that expect one really are wider. Without this a layout change that
+            // stopped them overlapping would leave nothing at risk and every assertion
+            // below would pass witnessing nothing.
             Assert.True(
-                expectOverflow ? view.Bounds.Width >= 75 : view.Bounds.Width < 75,
+                expectOverflow ? view.Bounds.Width >= 123 : view.Bounds.Width < 123,
                 $"{overlapping} overlapping sessions at {windowWidth}x{windowHeight} give a "
-                + $"{view.Bounds.Width}-wide block, which is the wrong side of 75 for this row "
+                + $"{view.Bounds.Width}-wide block, which is the wrong side of 123 for this row "
                 + "to be witnessing what it claims");
 
             // Every control the block offers is laid out inside it. This used to clear
@@ -188,14 +202,14 @@ public sealed class CompletionParityTests
         window.Close();
     }
 
-    // There is deliberately no test here that a block clips its own subtree. One was
-    // written, and it could not be made to fail: with the layout contained there is
-    // nothing outside a block for a clip to catch, so it stayed green even with both of
-    // the redundant clip layers removed (Border.calendarBlock's ClipToBounds, and the one
-    // CalendarBlockView gets free from Avalonia's UserControl default). Those layers are
-    // still there and still worth having as a backstop, but a test that cannot fail is
-    // worse than none — and its inability to fail is itself the point: containment no
-    // longer depends on clipping the way it used to.
+    // There is deliberately no test here that a block clips its own subtree, and please
+    // do not add one back without first watching it fail. One was written and deleted:
+    // with the layout contained there is nothing outside a block for a clip to catch, so
+    // it stayed green even with BOTH redundant clip layers removed — Border.calendarBlock's
+    // ClipToBounds, and the one CalendarBlockView gets free from Avalonia's UserControl
+    // default. Those layers are still in the code and still worth having as a backstop,
+    // but a test that cannot fail is worse than none, and its inability to fail is itself
+    // the result worth recording: containment no longer rests on clipping the way it did.
 
     /// <summary>
     /// The overflow has to be clickable, not merely visible. It sits in the grid's third

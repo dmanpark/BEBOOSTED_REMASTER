@@ -21,9 +21,11 @@
       <Setter Property="BoxShadow" Value="0 0 0 3 #8CC8F24A" />
     </Style>
     <!-- Both controls need 75px of block to sit inside one — see BothControlsFitWidth,
-         which sums these very numbers. Enough sessions sharing an hour squeeze a block
-         under that at any window size, so below it the overflow hides and the checkbox
-         stays: finishing is the common case.
+         which sums these very numbers — and the overflow asks for 48px of title beside
+         them on top of that, so it appears at 123px and not before. Both controls beside
+         a title trimmed to an ellipsis is the arrangement this design was chosen over.
+         Enough sessions sharing an hour squeeze a block under 123 at any window size, so
+         below it the overflow hides and the checkbox stays: finishing is the common case.
 
          What that costs, stated exactly rather than waved at. Remove from calendar is
          unaffected — a block click opens the session editor, which carries it. Needs
