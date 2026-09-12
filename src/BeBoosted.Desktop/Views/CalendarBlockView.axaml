@@ -8,13 +8,9 @@
              AutomationProperties.Name="{Binding AccessibleName}">
 
   <UserControl.Styles>
-    <!-- Checked treatment for the occurrence done circle -->
-    <Style Selector="Button#OccurrenceDoneButton.checked">
-      <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
-    </Style>
-    <!-- The same checked treatment for the one-off session checkbox -->
-    <Style Selector="Button#CompleteButton.checked">
+    <!-- Checked treatment for both done circles: the one-off session checkbox and
+         the repeating-occurrence circle read identically once ticked. -->
+    <Style Selector="Button#OccurrenceDoneButton.checked, Button#CompleteButton.checked">
       <Setter Property="Background" Value="{DynamicResource BrushHighlighterLime}" />
       <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
     </Style>
