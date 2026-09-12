@@ -24,6 +24,15 @@ public partial class CalendarBlockView : UserControl
     /// the project-accent edge (3), the inner grid's 8+8 margin (16), the checkbox's
     /// 20 wide plus its 8 right margin (28) and the overflow's 20 plus its 6 left margin
     /// (26) — 75px, with nothing left over for the title.
+    ///
+    /// The accent edge is counted unconditionally although it renders only on a local
+    /// task session (<c>IsVisible="{Binding IsSession}"</c>), so for a proposal or an
+    /// external event this over-estimates by 3px. Left that way deliberately: the number
+    /// is a threshold below which controls are hidden, so over-estimating hides them very
+    /// slightly early rather than laying one outside the block it belongs to, and one
+    /// constant summed straight off the AXAML stays auditable where a per-kind sum would
+    /// not. It is also moot in practice — the two controls this measures are a task
+    /// session's own, and neither a proposal nor an external event draws either of them.
     /// </summary>
     internal const double BothControlsFitWidth = 2 + 3 + 16 + 28 + 26;
 

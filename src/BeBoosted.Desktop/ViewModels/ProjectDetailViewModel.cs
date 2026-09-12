@@ -220,7 +220,7 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             var repeating = taskBlocks.Any(b => b.Recurrence is not null);
             var status = StatusForOpenTask(sessions, taskBlocks, repeating);
             rows.Add(new ProjectTaskRowViewModel(
-                task, status, OnSetDoneFor(taskBlocks, task, status, repeating), !repeating,
+                task, status, OnSetDoneFor(taskBlocks, task, status, repeating),
                 RequestTaskEdit, RequestSessionEdit, CheckOccurrenceFor(taskBlocks, status)?.Date));
         }
 
@@ -236,7 +236,7 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
 
                 // A completed row keeps its circle so the completion can be undone
                 // here; whole-task COMPLETION is what it no longer offers.
-                done => SetTaskRowDone(task, done), canComplete: false, RequestTaskEdit));
+                done => SetTaskRowDone(task, done), RequestTaskEdit));
         }
 
         Tasks.Clear();
@@ -285,6 +285,15 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     /// open-endedly here. An ELAPSED occurrence is deliberately not held: its day has
     /// passed, and pinning a past date to the row would leave the upcoming session
     /// unreachable from the affix for the rest of the series' period.
+    /// </para>
+    /// <para>
+    /// Known limitation, recorded rather than fixed: today's occurrence is taken as the
+    /// EARLIEST one today, unconditionally. A task with two occurrences today — or one
+    /// today and a one-off tomorrow — therefore pins the row to the earlier one even
+    /// after it is ticked, and the later session is unreachable from the affix until
+    /// tomorrow. Narrow, self-correcting the next day, and the alternative (advancing off
+    /// a ticked occurrence) is exactly the one-way design the user was shown and turned
+    /// down, so the reversibility this exists for would be the thing paying for it.
     /// </para>
     /// </remarks>
     private HeldOccurrence? HeldOccurrenceOf(
@@ -344,6 +353,7 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     /// is exactly the outcome being asked for.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The named session has to be looked up and checked, not assumed: the overdue and
     /// upcoming branches read GetScheduledBlocks' rows, and that projection includes the
     /// task's ONE-OFF sessions. A weekly task that also has a one-off dated sooner names
@@ -352,8 +362,16 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     /// neither this view model nor anything else in the Desktop project catches. Same
     /// rule as everywhere else here: no circle rather than one that cannot be clicked
     /// safely.
+    /// </para>
+    /// <para>
+    /// Internal rather than private so a test can hold this against
+    /// <c>CalendarBlock.EnsureOccurrenceCompletable</c> case for case. The two state one
+    /// rule in two layers, which is deliberate — the Desktop layer must never wire a
+    /// circle to a call that throws — but nothing else locks them together, and a fourth
+    /// condition added to the domain guard would otherwise leave a crashing circle behind
+    /// in silence.
     /// </remarks>
-    private static (Domain.CalendarBlockId BlockId, DateOnly Date)? CheckOccurrenceFor(
+    internal static (Domain.CalendarBlockId BlockId, DateOnly Date)? CheckOccurrenceFor(
         IReadOnlyList<Domain.Calendar.CalendarBlock> taskBlocks, ProjectTaskStatusInfo status)
     {
         if (status.SessionBlockId is not { } blockId || status.SessionDate is not { } date)
@@ -541,7 +559,6 @@ public sealed partial class ProjectTaskRowViewModel(
     TaskItem task,
     ProjectTaskStatusInfo status,
     Action<bool>? onSetDone = null,
-    bool canComplete = true,
     Action<TaskItem>? onEditRequested = null,
     Action<Domain.CalendarBlockId, DateOnly>? onSessionRequested = null,
     DateOnly? checkOccurrenceDate = null)
@@ -552,15 +569,14 @@ public sealed partial class ProjectTaskRowViewModel(
     /// <summary>Stable row identity for keyboard-focus restoration.</summary>
     public Domain.TaskId TaskId => task.Id;
 
-    /// <summary>Whole-task completion; repeating tasks complete per occurrence instead.</summary>
-    public bool CanComplete => canComplete;
-
     /// <summary>
-    /// Whether the row's gutter circle is on screen at all. Deliberately not
-    /// <see cref="CanComplete"/>: a completed row offers the circle so the completion
-    /// can be undone, and a repeating row offers it for the occurrence its affix names.
-    /// Tied to the callback rather than to a separate flag, so a circle can never be
-    /// drawn over nothing.
+    /// Whether the row's gutter circle is on screen at all. Tied to the callback rather
+    /// than to a separate flag, so a circle can never be drawn over nothing — and so
+    /// that what the circle STANDS for is the one thing that decides whether it exists:
+    /// a completed row offers it so the completion can be undone, a repeating row offers
+    /// it for the occurrence its affix names, and a repeating row naming no tickable
+    /// occurrence offers nothing. A parallel "can this task be completed as a whole"
+    /// flag used to sit beside this; it answered a question no control asks any more.
     /// </summary>
     public bool ShowCheck => onSetDone is not null;
 
@@ -611,7 +627,13 @@ public sealed partial class ProjectTaskRowViewModel(
                 // Scheduled, but the series' next occurrence sits outside the window
                 // GetScheduledBlocks expands, so there is no date to name.
                 ? "scheduled"
-                : $"{status.SessionDate:ddd} {status.SessionStart:h:mm tt}"),
+                // A ticked occurrence says so in words, not only in a lime circle. The
+                // row is not IsCompletedRow - the TASK is still open, correctly - so
+                // none of the completed row's recession applies here, and on Week the
+                // same occurrence already reads struck-through and recessed. The tick
+                // is the Done branch's own, a couple of lines below.
+                : $"{(status.SessionDone ? "✓ " : string.Empty)}"
+                    + $"{status.SessionDate:ddd} {status.SessionStart:h:mm tt}"),
         ProjectTaskStatus.Done => status.CompletedOn is { } on
             ? $"✓ done {on:ddd}"
             : "✓ done",

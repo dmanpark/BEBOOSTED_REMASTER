@@ -78,8 +78,21 @@ public sealed class TimelinePanel : Panel
     /// full-width block would have put it, and on any overlapping block that position was
     /// outside the block. Since a block's arranged width is a function of how many
     /// sessions share its hour, and not of the window, the escape happened at every
-    /// window size. Measure and arrange now derive their rectangles from the same place.
+    /// window size. Measure and arrange now derive their rectangles from the same place,
+    /// so they agree under any finite width.
     /// </summary>
+    /// <remarks>
+    /// "Finite" is the one caveat, and it is the last place the two can still diverge: an
+    /// infinite available width has no arranged counterpart, so measure substitutes 400
+    /// and arrange uses whatever finite width it is given. The substitute is unreachable
+    /// in this host — the panel sits inside TimelineSurfaceView's Scroller, whose
+    /// HorizontalScrollBarVisibility is Disabled (Avalonia's default, read back from a
+    /// rendered Week: seven panels, every one at a finite share of the viewport width),
+    /// so it always constrains width. Reaching it would take a new host that measures the
+    /// panel unconstrained horizontally (a horizontal ScrollViewer, or an auto-width
+    /// container), and such a host would need this number to become that host's real
+    /// width rather than a guess.
+    /// </remarks>
     protected override Size MeasureOverride(Size availableSize)
     {
         var width = double.IsInfinity(availableSize.Width) ? 400 : availableSize.Width;

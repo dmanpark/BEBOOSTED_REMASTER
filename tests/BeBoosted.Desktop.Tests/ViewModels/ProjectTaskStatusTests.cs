@@ -1,5 +1,6 @@
 using BeBoosted.Desktop.Tests.Support;
 using BeBoosted.Desktop.ViewModels;
+using BeBoosted.Domain;
 using BeBoosted.Domain.Calendar;
 using BeBoosted.Domain.Scheduling;
 using BeBoosted.Domain.Tasks;
@@ -157,30 +158,15 @@ public sealed class ProjectTaskStatusTests
     /// <summary>
     /// GetScheduledBlocks only expands a repeating series across a +/-14-day window, so a
     /// series with no occurrence in that window must not be mistaken for a non-repeating
-    /// task - it still completes per occurrence, never as a whole, so the project row's
-    /// whole-task completion control must stay unavailable.
+    /// task - it still completes per occurrence, never as a whole. With no occurrence
+    /// inside the window there is nothing to tick either, so the row must carry no circle
+    /// at all rather than one standing for the whole task or for nothing.
     /// </summary>
-    [Fact]
-    public void ARepeatingSeriesOutsideTheWindow_StillForbidsWholeTaskCompletion()
-    {
-        var (detail, tasks, blocks) = OpenProject();
-        var task = AddTask(detail, tasks, "Weekly review");
-        var farAnchor = Today.AddDays(30);
-        blocks.Add(CalendarBlock.CreateTaskSession(
-            task.Id, farAnchor, new TimeOnly(9, 0), new TimeOnly(10, 0), DateTimeOffset.Now,
-            RecurrenceRule.Weekly(1, farAnchor.DayOfWeek)));
-
-        detail.Refresh();
-
-        var row = Assert.Single(detail.Tasks);
-        Assert.False(row.CanComplete);
-    }
-
-    /// <summary>
-    /// The same series, now that a repeating row can carry a circle for the occurrence
-    /// it names: with no occurrence inside the window there is no occurrence to tick, so
-    /// the row must not grow a circle that does nothing.
-    /// </summary>
+    /// <remarks>
+    /// This is the whole of what the unwindowed repeating check buys the gutter, and
+    /// ShowCheck is the only thing that decides whether a circle is drawn: a second flag
+    /// used to record "cannot complete as a whole" beside it, read by tests alone.
+    /// </remarks>
     [Fact]
     public void ARepeatingSeriesOutsideTheWindow_OffersNoCircleAtAll()
     {
@@ -194,7 +180,6 @@ public sealed class ProjectTaskStatusTests
         detail.Refresh();
 
         var row = Assert.Single(detail.Tasks);
-        Assert.False(row.CanComplete);
         Assert.False(row.ShowCheck);
     }
 
@@ -240,13 +225,15 @@ public sealed class ProjectTaskStatusTests
         detail.Refresh();
 
         var row = Assert.Single(shell.Projects.Detail!.Tasks);
-        Assert.False(row.CanComplete);
         Assert.True(row.ShowCheck, "the named occurrence is tickable even though the task is not");
         Assert.Equal(Today, row.SessionDate);
         Assert.False(row.IsDone);
 
         row.ToggleDoneCommand.Execute(null);
 
+        // Which callback the circle carries, stated as an outcome: the occurrence is
+        // ticked and the Task is untouched, so the circle is the occurrence's and never
+        // the whole task's.
         Assert.NotNull(completions.Get(block.Id, Today));
         Assert.False(tasks.GetById(task.Id)!.IsCompleted);
     }
@@ -445,12 +432,14 @@ public sealed class ProjectTaskStatusTests
 
         var row = Assert.Single(shell.Projects.Detail!.Tasks);
         Assert.Equal(Today.AddDays(1), row.SessionDate);
-        Assert.False(row.CanComplete, "a repeating task never completes as a whole");
 
         // Executed, not merely constructed: this is the click that crashed.
         row.ToggleDoneCommand.Execute(null);
 
-        Assert.False(row.ShowCheck, "a circle whose click would throw must not be drawn");
+        Assert.False(
+            row.ShowCheck,
+            "a repeating task never completes as a whole, and a circle whose click "
+                + "would throw must not be drawn either");
     }
 
     /// <summary>
@@ -646,5 +635,123 @@ public sealed class ProjectTaskStatusTests
 
         Assert.Equal("2 open tasks", detail.TaskCountText);
         Assert.StartsWith(detail.TaskCountText, card.MetaText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A ticked occurrence says it is done in words as well as in a lime circle. The row
+    /// is deliberately NOT <c>IsCompletedRow</c> — the task is still open — so none of
+    /// the completed row's strike-through or recession reaches it, and before this the
+    /// affix read "Tue 4:00 PM" whether or not the occurrence had been ticked. The tick
+    /// is the Done branch's own, so the two states of the row are marked the same way.
+    /// </summary>
+    [Fact]
+    public void ATickedOccurrence_SaysSoInTheAffix_NotOnlyInTheCircle()
+    {
+        var (shell, detail, tasks, blocks, _) = OpenProjectWithCompletions();
+        var task = AddTask(detail, tasks, "Weekly review");
+        AddWeeklyFromToday(blocks, task, Today);
+        detail.Refresh();
+
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.False(row.IsDone);
+        Assert.DoesNotContain("✓", row.StatusText, StringComparison.Ordinal);
+
+        row.ToggleDoneCommand.Execute(null);
+
+        var ticked = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.True(ticked.IsDone);
+        Assert.False(ticked.IsCompletedRow, "the TASK is still open — only the occurrence is done");
+        Assert.StartsWith("✓ ", ticked.StatusText, StringComparison.Ordinal);
+
+        // Still the occurrence's own day and time, not replaced by the word "done":
+        // the affix is also the control that opens that session.
+        Assert.Contains($"{Today:ddd}", ticked.StatusText, StringComparison.Ordinal);
+        Assert.True(ticked.HasSessionAffix);
+    }
+
+    /// <summary>
+    /// <see cref="ProjectDetailViewModel.CheckOccurrenceFor"/> restates
+    /// <c>CalendarBlock.EnsureOccurrenceCompletable</c>'s conditions in the Desktop
+    /// layer so a circle is never wired to a call that throws. That is the right design
+    /// — the throw has no catch anywhere in the Desktop project — but it is one rule
+    /// written in two places with nothing holding them together, and a fourth condition
+    /// added to the domain guard would leave a crashing circle behind.
+    ///
+    /// So this asserts the equivalence itself, block shape by block shape: a circle is
+    /// offered exactly when the guard accepts the call. It does not merge the
+    /// duplication; it makes a divergence fail here instead of crashing the app.
+    /// </summary>
+    [Fact]
+    public void TheCirclesRule_MatchesTheDomainGuard_CaseForCase()
+    {
+        var taskId = TaskId.New();
+        var weekly = RecurrenceRule.Weekly(1, Today.DayOfWeek);
+        var notAnOccurrence = Today.AddDays(1);
+        Assert.NotEqual(Today.DayOfWeek, notAnOccurrence.DayOfWeek);
+
+        CalendarBlock External() => CalendarBlock.Rehydrate(
+            CalendarBlockId.New(), taskId, "Imported class", Today,
+            new TimeOnly(9, 0), new TimeOnly(10, 0), BlockKind.ExternalEvent, weekly,
+            "google", "evt-1", 0, BlockOutcome.None, null, DateTimeOffset.Now, DateTimeOffset.Now);
+
+        // EnsureLocalSession is an OR of two conditions, and an external EVENT satisfies
+        // both at once — so each is also varied on its own, or dropping either from the
+        // Desktop copy would leave every case here still agreeing.
+        CalendarBlock ExternalSession() => CalendarBlock.Rehydrate(
+            CalendarBlockId.New(), taskId, "Synced session", Today,
+            new TimeOnly(9, 0), new TimeOnly(10, 0), BlockKind.TaskSession, weekly,
+            "google", "evt-2", 0, BlockOutcome.None, null, DateTimeOffset.Now, DateTimeOffset.Now);
+
+        CalendarBlock LocalNonSession() => CalendarBlock.Rehydrate(
+            CalendarBlockId.New(), taskId, "Local non-session", Today,
+            new TimeOnly(9, 0), new TimeOnly(10, 0), BlockKind.ExternalEvent, weekly,
+            CalendarBlock.LocalProvider, null, 0, BlockOutcome.None, null,
+            DateTimeOffset.Now, DateTimeOffset.Now);
+
+        CalendarBlock OneOff() => CalendarBlock.CreateTaskSession(
+            taskId, Today, new TimeOnly(9, 0), new TimeOnly(10, 0), DateTimeOffset.Now);
+
+        CalendarBlock Repeating() => CalendarBlock.CreateTaskSession(
+            taskId, Today, new TimeOnly(9, 0), new TimeOnly(10, 0), DateTimeOffset.Now, weekly);
+
+        (CalendarBlock Block, DateOnly Date, string What)[] cases =
+        [
+            (External(), Today, "an external event"),
+            (ExternalSession(), Today, "a task session from an external provider"),
+            (LocalNonSession(), Today, "a local block that is not a task session"),
+            (OneOff(), Today, "a one-off session"),
+            (Repeating(), notAnOccurrence, "a date the series does not fall on"),
+
+            // A right weekday on the wrong side of the anchor: OccursOn rejects it, so
+            // both layers reject it, and they must go on agreeing about that.
+            (Repeating(), Today.AddDays(-7), "a weekday of the series before it started"),
+
+            // The positive controls. Without them every assertion below would be
+            // satisfied by a CheckOccurrenceFor that returned null unconditionally.
+            (Repeating(), Today, "a repeating local session on its anchor day"),
+            (Repeating(), Today.AddDays(7), "a later occurrence of the same series"),
+        ];
+
+        foreach (var (block, date, what) in cases)
+        {
+            var guardAccepts = true;
+            try
+            {
+                block.EnsureOccurrenceCompletable(date);
+            }
+            catch (DomainException)
+            {
+                guardAccepts = false;
+            }
+
+            var status = new ProjectTaskStatusInfo(
+                ProjectTaskStatus.Scheduled, date, block.StartTime, block.Id);
+            var offered = ProjectDetailViewModel.CheckOccurrenceFor([block], status) is not null;
+
+            Assert.True(
+                guardAccepts == offered,
+                $"{what}: the domain guard {(guardAccepts ? "accepts" : "rejects")} the call "
+                    + $"but the row {(offered ? "offers" : "withholds")} the circle");
+        }
     }
 }

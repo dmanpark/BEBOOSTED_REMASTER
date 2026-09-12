@@ -340,7 +340,10 @@ public sealed class ShellProjectRefreshTests
         var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
 
         var row = Assert.Single(shell.Projects.Detail!.Tasks);
-        Assert.False(row.CanComplete);
+
+        // The circle this row carries is the named occurrence's, not the whole task's:
+        // ticking it below leaves the Task open, which is the assertion that says so.
+        Assert.True(row.ShowCheck);
         Assert.Equal(Tomorrow, row.SessionDate);
 
         CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
