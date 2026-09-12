@@ -1,9 +1,7 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using Avalonia.Media;
 using BeBoosted.Application.Projects;
 using BeBoosted.Domain;
-using BeBoosted.Domain.Calendar;
 using BeBoosted.Domain.Projects;
 using BeBoosted.Domain.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -256,67 +254,6 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Occurrence-completion toggle from a project row (repeating sessions): persists
-    /// through the same service path as the calendar control, then announces through
-    /// the one central chain — which refreshes this detail. No-ops stay silent.
-    /// </summary>
-    internal void SetOccurrenceCompletion(
-        Domain.CalendarBlockId blockId, DateOnly occurrenceDate, bool completed)
-    {
-        if (_calendar.SetOccurrenceCompletion(blockId, occurrenceDate, completed))
-        {
-            _owner.NotifyTasksMutated();
-        }
-    }
-
-    /// <summary>
-    /// One one-off session's completion, recorded against the block. The Task stays
-    /// open — only the Task's own control completes it. Undo is the exception: a row
-    /// of a task completed as a whole also renders Done, so reopening it there means
-    /// reopening the Task (see <see cref="CompletedParentTaskOf"/>).
-    /// </summary>
-    internal void SetSessionCompletion(Domain.CalendarBlockId blockId, bool completed)
-    {
-        try
-        {
-            if (completed)
-            {
-                _calendar.RecordOutcome(blockId, BlockOutcome.Done);
-            }
-            else if (CompletedParentTaskOf(blockId) is { } completedTaskId)
-            {
-                if (!_calendar.ReopenTask(completedTaskId))
-                {
-                    return;
-                }
-            }
-            else if (!_calendar.ClearSessionOutcome(blockId))
-            {
-                return;
-            }
-        }
-        catch (DomainException)
-        {
-            return; // a stale row: the service mutated nothing
-        }
-
-        _owner.NotifyTasksMutated();
-    }
-
-    /// <summary>
-    /// This session's task id when that task is completed as a whole, else null.
-    /// A row of such a task renders Done whatever its own outcome, so clearing the
-    /// session alone would change nothing visible and would strand an unresolved
-    /// session on a completed task; the aggregate inverse — reopening the Task,
-    /// which clears its Done sessions with it — is what undo means there.
-    /// </summary>
-    private TaskId? CompletedParentTaskOf(Domain.CalendarBlockId blockId)
-        => _calendar.GetBlock(blockId)?.TaskId is { } taskId
-            && _calendar.GetTask(taskId)?.IsCompleted == true
-                ? taskId
-                : null;
-
-    /// <summary>
     /// Whole-task completion from a project row: the authoritative service path
     /// reconciles the Task with its one-off sessions, then one announcement through
     /// the central chain refreshes every dependent — including this detail — exactly
@@ -383,10 +320,6 @@ public sealed partial class ProjectTaskRowViewModel(
     /// <summary>Whole-task completion; repeating tasks complete per occurrence instead.</summary>
     public bool CanComplete => canComplete;
 
-    public bool IsCompleted => task.IsCompleted;
-
-    public bool IsAiOrigin => task.Origin == TaskOrigin.Ai;
-
     public ProjectTaskStatus Status => status.Kind;
 
     public DateOnly? SessionDate => status.SessionDate;
@@ -435,37 +368,9 @@ public sealed partial class ProjectTaskRowViewModel(
             : when;
     }
 
-    public string MetaText
-    {
-        get
-        {
-            if (task.IsCompleted)
-            {
-                return task.CompletedAt is { } at
-                    ? $"done {at.LocalDateTime:ddd}".ToLowerInvariant()
-                    : "done";
-            }
-
-            var parts = new List<string>(2);
-            if (task.Deadline is { } deadline)
-            {
-                parts.Add(deadline.ToString("ddd", CultureInfo.CurrentCulture));
-            }
-
-            if (task.EstimatedDuration is { } duration)
-            {
-                parts.Add(TaskRowViewModel.FormatDuration(duration));
-            }
-
-            return string.Join(" · ", parts);
-        }
-    }
-
     /// <summary>Completes through the owner's one authoritative service path.</summary>
     [RelayCommand]
     private void Complete() => onCompleteRequested?.Invoke(task);
-
-    public bool CanEdit => onEditRequested is not null;
 
     public string EditControlName => $"Edit task {task.Title}";
 
@@ -487,80 +392,6 @@ public sealed partial class ProjectTaskRowViewModel(
             onSessionRequested?.Invoke(blockId, date);
         }
     }
-}
-
-/// <summary>
-/// One scheduled-work row: a session of one of the project's tasks. Repeating
-/// sessions carry a per-occurrence completion toggle that shares the calendar's
-/// persistence path; one-off sessions resolve through their Task instead.
-/// </summary>
-public sealed partial class ScheduledBlockRowViewModel : ViewModelBase
-{
-    private readonly ProjectDetailViewModel _owner;
-    private readonly Application.Projects.ProjectScheduledBlock _row;
-    private readonly string _accentColor;
-
-    internal ScheduledBlockRowViewModel(
-        ProjectDetailViewModel owner, Application.Projects.ProjectScheduledBlock row, string accentColor)
-    {
-        _owner = owner;
-        _row = row;
-        _accentColor = accentColor;
-    }
-
-    public string Title => _row.Title;
-
-    /// <summary>Stable row identity for keyboard-focus restoration.</summary>
-    public Domain.CalendarBlockId BlockId => _row.Block.Id;
-
-    public DateOnly Date => _row.Date;
-
-    public TimeOnly Start => _row.Block.StartTime;
-
-    public TimeSpan Duration => _row.Block.Duration;
-
-    public string WhenText => string.Create(
-        CultureInfo.CurrentCulture, $"{Date:ddd} {Start:h\\:mm tt}");
-
-    public string DurationText => TaskRowViewModel.FormatDuration(Duration);
-
-    /// <summary>Lazy: brushes are composition resources and must be created on the UI thread.</summary>
-    public IBrush AccentBrush => ProjectsViewModel.BrushFor(_accentColor);
-
-    public bool IsDone => _row.State == Application.Projects.ProjectBlockState.Done;
-
-    /// <summary>End time passed without completion — quietly flagged, never hidden.</summary>
-    public bool IsOverdue => _row.State == Application.Projects.ProjectBlockState.Overdue;
-
-    /// <summary>Every local session completes here; external events never do.</summary>
-    public bool HasCompletionControl => !_row.Block.IsExternal;
-
-    /// <summary>A repeating session completes per occurrence; a one-off by outcome.</summary>
-    public bool IsRepeating => _row.Block.Recurrence is not null;
-
-    public string CompletionControlName => IsDone ? $"Reopen {Title}" : $"Mark {Title} done";
-
-    [RelayCommand]
-    private void ToggleCompletion()
-    {
-        if (IsRepeating)
-        {
-            _owner.SetOccurrenceCompletion(_row.Block.Id, Date, !IsDone);
-        }
-        else
-        {
-            _owner.SetSessionCompletion(_row.Block.Id, !IsDone);
-        }
-    }
-
-    /// <summary>External events sync in read-only; only task sessions open the editor.</summary>
-    public bool CanEdit => !_row.Block.IsExternal;
-
-    public string EditControlName => $"Edit session {Title}";
-
-    /// <summary>Opens the canonical Task editor scoped to this row's occurrence date.</summary>
-    [RelayCommand]
-    private void Edit() => _owner.RequestSessionEdit(_row.Block.Id, Date);
 }
 
 public sealed partial class FolioCardViewModel(

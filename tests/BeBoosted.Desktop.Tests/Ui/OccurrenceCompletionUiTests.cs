@@ -123,13 +123,13 @@ public sealed class OccurrenceCompletionUiTests
 
     /// <summary>
     /// The project page no longer renders a row — or a circle — per occurrence: a
-    /// repeating task appears once, and its affix names the next occurrence. The
-    /// completion itself is still shared, so what this now pins is that the detail's
-    /// occurrence path and the calendar move together, and that the rendered affix
-    /// advances to the following occurrence and comes back on reopen.
+    /// repeating task appears once, and its affix names the next occurrence. So the
+    /// completion is driven from the only control that still offers it — the calendar
+    /// circle — and what this pins is that the project's single row follows it: the
+    /// rendered affix advances to the following occurrence and comes back on reopen.
     /// </summary>
     [AvaloniaFact]
-    public void ProjectDetailOccurrenceCompletion_AdvancesTheRow_AndCalendarFollows()
+    public void CompletingAnOccurrenceOnTheCalendar_AdvancesTheProjectRowsAffix()
     {
         var fixture = CreateShellWithRepeatingStatsHw();
         var window = fixture.Window;
@@ -142,35 +142,42 @@ public sealed class OccurrenceCompletionUiTests
         Assert.Equal(TestShell.DesignDate, row.SessionDate);
         AssertAffixRendered(window, row.StatusText);
 
-        detail.SetOccurrenceCompletion(
-            fixture.StatsSessionId, TestShell.DesignDate, completed: true);
-        window.CaptureRenderedFrame();
+        ClickTheOccurrenceCircle(fixture);
 
         // Only the clicked day's occurrence completed, and the one row moved on to
         // the next one rather than splitting into a completed row of its own.
         Assert.NotNull(fixture.Completions.Get(fixture.StatsSessionId, TestShell.DesignDate));
+        Assert.True(((CalendarBlockViewModel)FindBlockView(window, "Stats HW").DataContext!).IsDone);
+
+        fixture.Shell.NavigateCommand.Execute(AppSection.Projects);
+        window.CaptureRenderedFrame();
         var advanced = Assert.Single(fixture.Shell.Projects.Detail!.Tasks);
         Assert.Equal(TestShell.DesignDate.AddDays(7), advanced.SessionDate);
         AssertAffixRendered(window, advanced.StatusText);
 
-        // The calendar surface reflects it immediately.
-        fixture.Shell.NavigateCommand.Execute(AppSection.Calendar);
-        window.CaptureRenderedFrame();
-        ScrollCalendarTo(window, 780);
-        var view = FindBlockView(window, "Stats HW");
-        Assert.True(((CalendarBlockViewModel)view.DataContext!).IsDone);
+        // Reopening through the same control updates both again.
+        ClickTheOccurrenceCircle(fixture);
+        Assert.Null(fixture.Completions.Get(fixture.StatsSessionId, TestShell.DesignDate));
 
-        // Reopening through the same path updates both again.
         fixture.Shell.NavigateCommand.Execute(AppSection.Projects);
         window.CaptureRenderedFrame();
-        fixture.Shell.Projects.Detail!.SetOccurrenceCompletion(
-            fixture.StatsSessionId, TestShell.DesignDate, completed: false);
-        window.CaptureRenderedFrame();
-        Assert.Null(fixture.Completions.Get(fixture.StatsSessionId, TestShell.DesignDate));
         var reopened = Assert.Single(fixture.Shell.Projects.Detail!.Tasks);
         Assert.Equal(TestShell.DesignDate, reopened.SessionDate);
         AssertAffixRendered(window, reopened.StatusText);
         window.Close();
+    }
+
+    /// <summary>
+    /// Stands on the Week timeline and clicks the rendered occurrence circle for
+    /// today's "Stats HW" — the one control that still completes an occurrence.
+    /// </summary>
+    private static void ClickTheOccurrenceCircle(Fixture fixture)
+    {
+        fixture.Shell.NavigateCommand.Execute(AppSection.Calendar);
+        fixture.Window.CaptureRenderedFrame();
+        ScrollCalendarTo(fixture.Window, 780);
+        var view = FindBlockView(fixture.Window, "Stats HW");
+        Click(fixture.Window, view.FindControl<Button>("OccurrenceDoneButton")!);
     }
 
     /// <summary>The affix is the project row's only rendered word about its session.</summary>

@@ -214,19 +214,6 @@ public sealed partial class CalendarViewModel : ViewModelBase
     public void OpenTaskEditorForTask(TaskId taskId) => OpenWholeTaskEditor(taskId);
 
     /// <summary>
-    /// A scheduled-session row in a list is still task-scoped: resolves the
-    /// block's owning task and opens the whole-task editor. External and
-    /// orphaned blocks quietly no-op.
-    /// </summary>
-    internal void OpenTaskEditorForBlockOwner(CalendarBlockId id)
-    {
-        if (_calendar.GetBlock(id) is { Kind: BlockKind.TaskSession, IsExternal: false, TaskId: { } taskId })
-        {
-            OpenWholeTaskEditor(taskId);
-        }
-    }
-
-    /// <summary>
     /// The occurrence a task-level edit means: today's when the series occurs today,
     /// otherwise the most recent elapsed occurrence, otherwise the anchor (a series
     /// that only starts in the future). A one-off session is its own occurrence —

@@ -200,41 +200,15 @@ public sealed class ShellProjectRefreshTests
         Assert.Equal(1, detailRefreshes);
     }
 
-    [Fact]
-    public void CompletingAnOccurrenceFromCalendar_RefreshesTheOpenProjectDetail_Once()
-    {
-        var (shell, blocks, tasks) = CreateShell();
-        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks, repeating: true);
-        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
-
-        var changes = 0;
-        shell.Calendar.DataChanged += () => changes++;
-        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
-
-        Assert.Equal(1, changes);
-        Assert.True(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
-        // A done occurrence is no longer a row of its own: the task's one row follows
-        // the completion by naming the next occurrence instead.
-        Assert.Equal(
-            Tomorrow.AddDays(7),
-            Assert.Single(shell.Projects.Detail!.Tasks).SessionDate);
-
-        // Reopening from the calendar updates both surfaces again.
-        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
-        Assert.Equal(2, changes);
-        Assert.False(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
-        Assert.Equal(Tomorrow, Assert.Single(shell.Projects.Detail.Tasks).SessionDate);
-    }
-
     /// <summary>
-    /// Occurrence completion through the project detail announces through the same
-    /// central chain as every other mutation: the calendar reloads, the Inbox and
-    /// card counts refresh, and the open detail refreshes exactly once — never
-    /// eagerly plus again through the shared event. The detail no longer renders a
-    /// row per occurrence, so the path is driven directly rather than from a row.
+    /// Occurrence completion announces through the one central chain: the calendar
+    /// reloads, the Inbox resets, and the open detail refreshes exactly once — never
+    /// eagerly plus again through the shared event — while a no-op announces nothing
+    /// anywhere. The project detail renders one row per task, not per occurrence, so
+    /// the circle on the timeline is the only control that starts this.
     /// </summary>
     [Fact]
-    public void CompletingAnOccurrenceFromProjectDetail_AnnouncesThroughTheOneChain()
+    public void CompletingAnOccurrenceFromCalendar_RefreshesTheOpenProjectDetail_Once()
     {
         var (shell, blocks, tasks) = CreateShell();
         var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks, repeating: true);
@@ -258,35 +232,37 @@ public sealed class ShellProjectRefreshTests
         };
 
         Assert.Equal(Tomorrow, Assert.Single(detail.Tasks).SessionDate);
-        detail.SetOccurrenceCompletion(blockId, Tomorrow, completed: true);
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
 
         Assert.Equal(1, changes);
         Assert.Equal(1, detailRefreshes);
         Assert.Equal(1, inboxResets);
         Assert.True(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
+        // A done occurrence is no longer a row of its own: the task's one row follows
+        // the completion by naming the next occurrence instead.
         Assert.Equal(Tomorrow.AddDays(7), Assert.Single(detail.Tasks).SessionDate);
 
-        // Reopening through the project detail flows through the same chain again.
-        detail.SetOccurrenceCompletion(blockId, Tomorrow, completed: false);
+        // Reopening from the calendar flows through the same chain again.
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
         Assert.Equal(2, changes);
         Assert.Equal(2, detailRefreshes);
         Assert.False(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
         Assert.Equal(Tomorrow, Assert.Single(detail.Tasks).SessionDate);
 
-        // A no-op request emits no success notification anywhere.
-        detail.SetOccurrenceCompletion(blockId, Tomorrow, completed: false);
+        // A no-op request emits no success notification anywhere. The toggle cannot
+        // ask for the state it is already in, so the path beneath it is asked directly.
+        shell.Calendar.SetOccurrenceDone(blockId, Tomorrow, done: false);
         Assert.Equal(2, changes);
         Assert.Equal(2, detailRefreshes);
     }
 
     /// <summary>
-    /// The project detail completes a one-off session against its block. Routing it
-    /// through the occurrence path would throw — a one-off has no occurrences. Two
-    /// sessions of one task are one row now, so the proof that only the named session
-    /// resolved is that the row moves on to the sibling and the sibling is untouched.
+    /// Finishing one session of a task with two must resolve that session alone — the
+    /// Task stays open and the sibling stays pending. Two sessions of one task are one
+    /// row now, so the proof is that the row moves on to the sibling, untouched.
     /// </summary>
     [Fact]
-    public void CompletingAOneOffSessionFromTheProjectDetail_ResolvesThatSessionOnly()
+    public void CompletingAOneOffSessionOnTheCalendar_ResolvesThatSessionOnly()
     {
         var (shell, blocks, tasks) = CreateShell();
         var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
@@ -295,12 +271,14 @@ public sealed class ShellProjectRefreshTests
         var sibling = CalendarBlock.CreateTaskSession(
             task.Id, Tomorrow, new TimeOnly(19, 0), new TimeOnly(20, 0), clock.Now);
         blocks.Add(sibling);
-        shell.Projects.Detail!.Refresh();
+        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
+        shell.Calendar.NotifyTasksMutated();
         shell.NavigateCommand.Execute(AppSection.Projects);
         var row = Assert.Single(shell.Projects.Detail!.Tasks);
         Assert.Equal(blockId, row.SessionBlockId); // the earlier of the two sessions
 
-        shell.Projects.Detail.SetSessionCompletion(blockId, completed: true);
+        // The session checkbox on the Week timeline — the one control that finishes it.
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleSessionDoneCommand.Execute(null);
 
         Assert.Equal(BlockOutcome.Done, blocks.GetById(blockId)!.Outcome);
         Assert.Equal(BlockOutcome.None, blocks.GetById(sibling.Id)!.Outcome);
@@ -311,16 +289,18 @@ public sealed class ShellProjectRefreshTests
 
     /// <summary>
     /// A one-off session is resolved Done because its parent Task was completed as a
-    /// whole. Undoing that session must reopen the TASK: clearing this session's
-    /// outcome alone would leave the task done (a dead click) and strand an
-    /// unresolved session on a completed task.
+    /// whole — from the project row. Unchecking that session must reopen the TASK:
+    /// clearing this session's outcome alone would leave the task done (a dead click)
+    /// and strand an unresolved session on a completed task. The project row follows
+    /// it back to Scheduled.
     /// </summary>
     [Fact]
-    public void UndoingAOneOffSessionOfACompletedTask_ReopensTheTask()
+    public void UncheckingAOneOffSessionOfACompletedTask_ReopensTheTask()
     {
         var (shell, blocks, tasks) = CreateShell();
         var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
         var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
+        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
         shell.NavigateCommand.Execute(AppSection.Projects);
         shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW")
             .CompleteCommand.Execute(null);
@@ -328,7 +308,7 @@ public sealed class ShellProjectRefreshTests
         Assert.Equal(
             ProjectTaskStatus.Done, Assert.Single(shell.Projects.Detail!.Tasks).Status);
 
-        shell.Projects.Detail!.SetSessionCompletion(blockId, completed: false);
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleSessionDoneCommand.Execute(null);
 
         Assert.False(tasks.GetById(task.Id)!.IsCompleted);
         Assert.Equal(BlockOutcome.None, blocks.GetById(blockId)!.Outcome);
@@ -338,15 +318,16 @@ public sealed class ShellProjectRefreshTests
     }
 
     /// <summary>
-    /// A repeating task completes per occurrence and never as a whole: its row offers
-    /// no whole-task control, and the occurrence path leaves both the Task and the
-    /// block's own outcome alone while still moving the row to the next occurrence.
+    /// A repeating task completes per occurrence and never as a whole: its project row
+    /// offers no whole-task control, and completing an occurrence leaves both the Task
+    /// and the block's own outcome alone while still moving the row to the next one.
     /// </summary>
     [Fact]
-    public void CompletingARepeatingSessionFromTheProjectDetail_StillCompletesPerOccurrence()
+    public void CompletingARepeatingOccurrence_LeavesTheTaskAndBlockOutcomeAlone()
     {
         var (shell, blocks, tasks) = CreateShell();
         var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks, repeating: true);
+        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
         shell.NavigateCommand.Execute(AppSection.Projects);
         var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
 
@@ -354,14 +335,14 @@ public sealed class ShellProjectRefreshTests
         Assert.False(row.CanComplete);
         Assert.Equal(Tomorrow, row.SessionDate);
 
-        shell.Projects.Detail!.SetOccurrenceCompletion(blockId, Tomorrow, completed: true);
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
 
         Assert.False(tasks.GetById(task.Id)!.IsCompleted);
         Assert.Equal(BlockOutcome.None, blocks.GetById(blockId)!.Outcome);
         Assert.Equal(
             Tomorrow.AddDays(7), Assert.Single(shell.Projects.Detail!.Tasks).SessionDate);
 
-        shell.Projects.Detail!.SetOccurrenceCompletion(blockId, Tomorrow, completed: false);
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
         Assert.Equal(Tomorrow, Assert.Single(shell.Projects.Detail!.Tasks).SessionDate);
     }
 
