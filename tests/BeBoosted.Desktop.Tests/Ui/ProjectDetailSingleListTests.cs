@@ -2,6 +2,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using BeBoosted.Desktop.Tests.Support;
@@ -88,10 +89,12 @@ public sealed class ProjectDetailSingleListTests
     /// <summary>
     /// A compiled binding to <see cref="ProjectTaskRowViewModel.IsCompletedRow"/> proves
     /// the member exists; it does not prove the row's own Border is the element it is
-    /// bound to. This renders a Done row and finds that Border in the visual tree.
+    /// bound to, nor that the class reaches the style that reads it. This renders a Done
+    /// row, finds that Border in the visual tree, and checks the title it carries is
+    /// struck through — 55% opacity and the word alone were doing all the work.
     /// </summary>
     [AvaloniaFact]
-    public void ACompletedRow_RendersWithTheDoneClass()
+    public void ACompletedRow_RendersStruckThrough_WithTheDoneClass()
     {
         var tasks = new InMemoryTaskRepository();
         var blocks = new InMemoryCalendarBlockRepository();
@@ -119,11 +122,13 @@ public sealed class ProjectDetailSingleListTests
 
         // The nearest Border ancestor belongs to a Button's own template (the row's
         // title and edit affordance are both Buttons); the row's own Border, carrying
-        // Classes.done, sits further up the visual tree.
+        // Classes.taskDone, sits further up the visual tree.
         var row = title.GetVisualAncestors().OfType<Border>()
-            .FirstOrDefault(b => b.Classes.Contains("done"));
+            .FirstOrDefault(b => b.Classes.Contains("taskDone"));
 
         Assert.NotNull(row);
+        Assert.Equal(TextDecorations.Strikethrough, title.TextDecorations);
+        Assert.StartsWith("✓", Assert.Single(detail.Tasks).StatusText, StringComparison.Ordinal);
     }
 
     /// <summary>

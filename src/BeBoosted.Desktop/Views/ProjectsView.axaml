@@ -115,9 +115,17 @@
     </Style>
 
     <!-- A finished task stays where it is and recedes, rather than moving to a
-         section of its own — the project's history stays legible in one list. -->
-    <Style Selector="Border.done">
+         section of its own — the project's history stays legible in one list. The
+         class is named for the row rather than the state: this view also renders the
+         project cards and the File shelf, and a bare `Border.done` would claim any
+         Border anywhere in it that ever picks up a `done` class. -->
+    <Style Selector="Border.taskDone">
       <Setter Property="Opacity" Value="0.55" />
+    </Style>
+    <!-- Recession alone left the word "done" carrying the whole state; the title is
+         struck through the way the old completed row's was. -->
+    <Style Selector="Border.taskDone TextBlock.taskTitle">
+      <Setter Property="TextDecorations" Value="Strikethrough" />
     </Style>
 
     <!-- The tactile folio: the product's one physical motif -->
@@ -308,7 +316,7 @@
                   <DataTemplate x:DataType="vm:ProjectTaskRowViewModel">
                     <Border BorderBrush="{StaticResource BrushRuleFaint}" BorderThickness="0,0,0,1"
                             Padding="4,11"
-                            Classes.done="{Binding IsCompletedRow}">
+                            Classes.taskDone="{Binding IsCompletedRow}">
                       <DockPanel>
                         <Panel DockPanel.Dock="Left" Width="18" VerticalAlignment="Center">
                           <Button Classes="icon" Width="18" Height="18"
@@ -335,7 +343,8 @@
                         <Button Classes="link" HorizontalAlignment="Left"
                                 Command="{Binding EditCommand}"
                                 AutomationProperties.Name="{Binding EditControlName}">
-                          <TextBlock Text="{Binding Title}" VerticalAlignment="Center"
+                          <TextBlock Classes="taskTitle" Text="{Binding Title}"
+                                     VerticalAlignment="Center"
                                      TextTrimming="CharacterEllipsis" />
                         </Button>
                       </DockPanel>

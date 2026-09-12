@@ -79,7 +79,19 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
 
     public bool HasTasks => Tasks.Count > 0;
 
-    public string TaskCountText => Tasks.Count == 1 ? "1 task" : $"{Tasks.Count} tasks";
+    private int _openTaskCount;
+
+    /// <summary>
+    /// Open tasks, worded exactly as the project card words it — deliberately NOT the
+    /// number of rows. Tasks holds the open ones plus at most three recently completed
+    /// (GetProjectTasks' recentCount), so counting rows made a project with 4 open and
+    /// 20 done read "7 tasks": true of neither the screen nor the project. Counting
+    /// every task would need a service method this pass may not add, and "how much is
+    /// left" is the question worth answering while standing in a project anyway. Saying
+    /// it the card's way makes the two agree instead of differing one click apart.
+    /// </summary>
+    public string TaskCountText
+        => $"{_openTaskCount} open task{(_openTaskCount == 1 ? string.Empty : "s")}";
 
     public bool HasFiles => Files.Count > 0;
 
@@ -168,6 +180,7 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     public void Refresh()
     {
         var (open, recent) = _service.GetProjectTasks(Project.Id);
+        _openTaskCount = open.Count;
         var sessionsByTask = _service.GetScheduledBlocks(Project.Id)
             .Where(row => row.Block.TaskId is not null)
             .GroupBy(row => row.Block.TaskId!.Value)
@@ -185,7 +198,7 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             // completes per occurrence, never as a whole, must never offer that control.
             var repeating = _calendar.GetSessionsForTask(task.Id).Any(b => b.Recurrence is not null);
             rows.Add(new ProjectTaskRowViewModel(
-                task, StatusForOpenTask(sessions), CompleteTaskRow, !repeating,
+                task, StatusForOpenTask(sessions, repeating), CompleteTaskRow, !repeating,
                 RequestTaskEdit, RequestSessionEdit));
         }
 
@@ -226,8 +239,23 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     /// The one state an open task shows. Overdue outranks scheduled because a session
     /// that elapsed without an outcome is the only one asking the user for something.
     /// </summary>
+    /// <param name="sessions">
+    /// The windowed sessions from GetScheduledBlocks — the only source that can name a
+    /// concrete date and time.
+    /// </param>
+    /// <param name="repeating">
+    /// Whether the task has a repeating series at all, computed unwindowed by the
+    /// caller. GetScheduledBlocks expands a series across +/-14 days only, so a weekly
+    /// task whose next occurrence falls outside that window arrives here with an empty
+    /// list — and falling through to Unscheduled would state the opposite of the truth
+    /// about the user's own data. One-off sessions are never windowed out, so this is
+    /// the whole of the gap. A recurrence has no end date, so a task that has one
+    /// always has a next occurrence: saying "scheduled" without naming a time is the
+    /// cheapest honest answer, and naming one would mean expanding the series here,
+    /// duplicating in the view model what GetScheduledBlocks exists to do.
+    /// </param>
     private static ProjectTaskStatusInfo StatusForOpenTask(
-        IReadOnlyList<Application.Projects.ProjectScheduledBlock> sessions)
+        IReadOnlyList<Application.Projects.ProjectScheduledBlock> sessions, bool repeating)
     {
         if (sessions
             .Where(s => s.State == Application.Projects.ProjectBlockState.Overdue)
@@ -247,10 +275,15 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             .ThenBy(s => s.Block.StartTime)
             .FirstOrDefault();
 
-        return next is null
-            ? new ProjectTaskStatusInfo(ProjectTaskStatus.Unscheduled)
-            : new ProjectTaskStatusInfo(
+        if (next is not null)
+        {
+            return new ProjectTaskStatusInfo(
                 ProjectTaskStatus.Scheduled, next.Date, next.Block.StartTime, next.Block.Id);
+        }
+
+        return repeating
+            ? new ProjectTaskStatusInfo(ProjectTaskStatus.Scheduled)
+            : new ProjectTaskStatusInfo(ProjectTaskStatus.Unscheduled);
     }
 
     /// <summary>
@@ -351,22 +384,22 @@ public sealed partial class ProjectTaskRowViewModel(
     public string StatusText => status.Kind switch
     {
         ProjectTaskStatus.NeedsOutcome => "needs outcome",
-        ProjectTaskStatus.Scheduled => FormatSession(),
+        ProjectTaskStatus.Scheduled => WithEstimate(
+            status.SessionDate is null
+                // Scheduled, but the series' next occurrence sits outside the window
+                // GetScheduledBlocks expands, so there is no date to name.
+                ? "scheduled"
+                : $"{status.SessionDate:ddd} {status.SessionStart:h:mm tt}"),
         ProjectTaskStatus.Done => status.CompletedOn is { } on
-            ? $"done {on:ddd}"
-            : "done",
-        _ => task.EstimatedDuration is { } estimate
-            ? $"unscheduled · {TaskRowViewModel.FormatDuration(estimate)}"
-            : "unscheduled",
+            ? $"✓ done {on:ddd}"
+            : "✓ done",
+        _ => WithEstimate("unscheduled"),
     };
 
-    private string FormatSession()
-    {
-        var when = $"{status.SessionDate:ddd} {status.SessionStart:h:mm tt}";
-        return task.EstimatedDuration is { } estimate
+    private string WithEstimate(string when)
+        => task.EstimatedDuration is { } estimate
             ? $"{when} · {TaskRowViewModel.FormatDuration(estimate)}"
             : when;
-    }
 
     /// <summary>Completes through the owner's one authoritative service path.</summary>
     [RelayCommand]
