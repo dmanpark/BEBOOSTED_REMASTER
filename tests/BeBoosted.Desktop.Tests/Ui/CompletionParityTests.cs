@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using BeBoosted.Application.Settings;
@@ -113,6 +114,16 @@ public sealed class CompletionParityTests
             var overflow = view.GetVisualDescendants().OfType<Button>()
                 .Single(b => b.Name == "OutcomeButton");
 
+            // The premise, pinned: these blocks really are squeezed narrower than the
+            // checkbox and the overflow together, which is what pushes the overflow past
+            // the right edge in the first place. Without this the docstring above could
+            // quietly become fiction — a layout change that stopped them overlapping
+            // would leave nothing beyond the edge and the assertion would still pass.
+            Assert.True(
+                view.Bounds.Width < 100,
+                $"the fixture no longer squeezes the block: it is {view.Bounds.Width} wide, "
+                + "so the overflow is not escaping and this test is witnessing nothing");
+
             // Just past this block's right edge, level with the overflow. Whatever the
             // user hits there belongs to the neighbour, never to this block's controls.
             var origin = view.TranslatePoint(new Point(0, 0), window)!.Value;
@@ -121,8 +132,12 @@ public sealed class CompletionParityTests
                 origin.Y + overflow.Bounds.Center.Y);
 
             var hit = ((Visual)window).GetVisualsAt(beyond).FirstOrDefault();
+
+            // Hitting nothing at all would satisfy the occlusion assertion below without
+            // proving anything: the point has to land on the neighbouring block.
+            Assert.True(hit is not null, "nothing was hit 4 px past the block's right edge");
             Assert.False(
-                hit is not null && (ReferenceEquals(hit, overflow) || hit.GetVisualAncestors().Contains(overflow)),
+                ReferenceEquals(hit, overflow) || hit!.GetVisualAncestors().Contains(overflow),
                 $"a click {4} px past a {view.Bounds.Width}-wide block reached that block's own "
                 + "overflow, so it is stealing the neighbouring block's clicks");
         }
@@ -311,6 +326,64 @@ public sealed class CompletionParityTests
         Assert.Contains("Didn't happen", entries);
         Assert.Contains("Remove from calendar", entries);
     }
+
+    /// <summary>
+    /// Keyboard parity, which the checkbox arriving quietly broke: the key handler was
+    /// re-pointed at the overflow, whose flyout leads with the "Needs more time" field,
+    /// so Enter-Enter on a focused session recorded needs-more-time and Done needed a
+    /// Tab into the block. Enter on a session that has a checkbox now does what the
+    /// checkbox does.
+    /// </summary>
+    [AvaloniaTheory]
+    [InlineData(Key.Enter)]
+    [InlineData(Key.Space)]
+    public void PressingEnterOnAFocusedSession_FinishesIt(Key key)
+    {
+        var (window, _, session) = ShowWeekWithSession();
+        var view = SessionView(window, session);
+        Assert.True(SessionViewModel(window, session).ShowCompletionControl);
+
+        view.Focus();
+        Dispatcher.UIThread.RunJobs();
+        window.KeyPress(key, RawInputModifiers.None, PhysicalKeyOf(key), keySymbol: null);
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+
+        // The outcome itself, not merely "something happened": before the fix this key
+        // opened a flyout whose first field is Needs more time.
+        var afterwards = SessionViewModel(window, session);
+        Assert.Equal(BlockOutcome.Done, afterwards.Block.Outcome);
+        Assert.True(afterwards.IsDone);
+    }
+
+    /// <summary>
+    /// The exception the handler has always carried: a session that is already done
+    /// falls through to the editor. A stray Enter on a finished block must not quietly
+    /// undo it - reopening stays a deliberate click on the checkbox, or a Tab into the
+    /// block. The session here is done because its parent task was completed, which is
+    /// the case that leaves the checkbox on screen with nothing else beside it.
+    /// </summary>
+    [AvaloniaFact]
+    public void PressingEnterOnAnAlreadyDoneSession_OpensTheEditor_RatherThanUndoing()
+    {
+        var (window, shell, session) = ShowWeekWithSession();
+        SessionViewModel(window, session).ToggleSessionDoneCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+        var view = SessionView(window, session);
+        Assert.True(SessionViewModel(window, session).IsDone);
+
+        view.Focus();
+        Dispatcher.UIThread.RunJobs();
+        window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, keySymbol: null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(SessionViewModel(window, session).IsDone, "Enter must not undo a finish");
+        Assert.NotNull(shell.Calendar.ActiveTaskEditor);
+    }
+
+    private static PhysicalKey PhysicalKeyOf(Key key)
+        => key == Key.Enter ? PhysicalKey.Enter : PhysicalKey.Space;
 
     /// <summary>
     /// The chip only renders on an elapsed session with no outcome yet, so the session

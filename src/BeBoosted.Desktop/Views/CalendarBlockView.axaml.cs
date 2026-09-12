@@ -13,7 +13,7 @@ namespace BeBoosted.Desktop.Views;
 /// <summary>
 /// Block interactions: pointer drag to move (snap 15 min, Alt for 5), bottom-grip resize,
 /// and keyboard movement (↑/↓ move, Alt for fine, Shift+↑/↓ resize, ←/→ change day,
-/// Enter/Space outcome menu or editor, Delete by kind). A click below the drag threshold
+/// Enter/Space done, outcome menu or editor, Delete by kind). A click below the drag threshold
 /// opens the Task editor for local sessions. External synced events stay locked.
 /// </summary>
 public partial class CalendarBlockView : UserControl
@@ -269,10 +269,29 @@ public partial class CalendarBlockView : UserControl
                 e.Handled = true;
                 return;
             case Key.Enter or Key.Space:
-                // The outcome flyout moved off the checkbox onto its own control, so
-                // the keyboard opens it there. A done session has no flyout left and
-                // falls through to the editor.
-                if (OutcomeButton.IsVisible && OutcomeButton.Flyout is { } outcomeFlyout)
+                // Done belongs to the checkbox, so the keyboard presses the checkbox:
+                // pointing Enter at the outcome flyout instead led with "Needs more
+                // time", and Enter-Enter on a session recorded that rather than
+                // finishing it. Keyboard and mouse now do the same thing.
+                //
+                // An already-done session is the exception the comment below has always
+                // described: its checkbox would UNDO, which is not what a stray Enter on
+                // a finished block should mean, so it keeps falling through to the
+                // editor - reopening stays a deliberate click or a Tab into the block.
+                if (Vm.ShowCompletionControl && !Vm.IsDone)
+                {
+                    surface?.RememberFocus(Vm.Id);
+                    Vm.ToggleSessionDoneCommand.Execute(null);
+                    e.Handled = true;
+                }
+
+                // The overflow, for a session that has no checkbox to press. As the
+                // predicates stand ShowOutcomeAction implies ShowCompletionControl, so
+                // an open session always takes the branch above and this one is only
+                // reached if those two ever come apart. The overflow stays reachable by
+                // Tab either way, which is how Today reaches its own. A done session
+                // has no flyout left and falls through to the editor.
+                else if (OutcomeButton.IsVisible && OutcomeButton.Flyout is { } outcomeFlyout)
                 {
                     outcomeFlyout.ShowAt(OutcomeButton);
                     e.Handled = true;
