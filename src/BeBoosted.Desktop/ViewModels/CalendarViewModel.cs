@@ -1120,17 +1120,29 @@ public sealed partial class CalendarViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Undo for a finished session. When the session is only done because its parent
-    /// task was completed as a whole, the inverse is reopening the task — clearing
-    /// just this session would leave the task complete and the session unresolved.
-    /// The same aggregate-inverse rule DailyListViewModel.ReopenRow applies.
+    /// Undo for a finished session, reached from a calendar block — which knows the
+    /// session's task only through the block it wraps.
     /// </summary>
     public void ReopenSession(CalendarBlockId id)
+        => ReopenSession(id, _calendar.GetBlock(id)?.TaskId);
+
+    /// <summary>
+    /// The one copy of the aggregate-inverse rule, shared by both surfaces that can
+    /// reopen a session. When the session is only done because its parent task was
+    /// completed as a whole, the inverse is reopening the task: clearing just this
+    /// session would leave the task complete, re-render the session done off the task,
+    /// and strand an unresolved session on a completed task. Otherwise the undo is
+    /// per-session — its siblings and its task are untouched.
+    /// </summary>
+    /// <param name="taskId">
+    /// The session's task. A built Today row already carries it; a block derives it
+    /// from the block itself. Both resolve to the same <c>Block.TaskId</c>.
+    /// </param>
+    internal void ReopenSession(CalendarBlockId id, TaskId? taskId)
     {
-        if (_calendar.GetBlock(id)?.TaskId is { } taskId
-            && _tasks.GetById(taskId)?.IsCompleted == true)
+        if (taskId is { } completedTaskId && _tasks.GetById(completedTaskId)?.IsCompleted == true)
         {
-            if (_calendar.ReopenTask(taskId))
+            if (_calendar.ReopenTask(completedTaskId))
             {
                 NotifyTasksMutated();
             }

@@ -23,6 +23,20 @@ public sealed class CompletionParityTests
 {
     private static readonly DateOnly Date = TestShell.DesignDate;
 
+    /// <summary>Shows the Week timeline over whatever the caller has already seeded.</summary>
+    private static (MainWindow Window, ShellViewModel Shell) ShowWeek(
+        InMemoryTaskRepository tasks, InMemoryCalendarBlockRepository blocks)
+    {
+        var shell = TestShell.Create(tasks: tasks, blocks: blocks);
+        var window = new MainWindow { DataContext = shell, Width = 1440, Height = 960 };
+        window.Show();
+        shell.Calendar.ViewKind = CalendarViewKind.Week;
+        shell.Calendar.Reload();
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+        return (window, shell);
+    }
+
     private static (MainWindow Window, ShellViewModel Shell, CalendarBlock Session) ShowWeekWithSession()
     {
         var tasks = new InMemoryTaskRepository();
@@ -42,6 +56,15 @@ public sealed class CompletionParityTests
         Dispatcher.UIThread.RunJobs();
         window.CaptureRenderedFrame();
         return (window, shell, session);
+    }
+
+    /// <summary>Switches the shell to Today and lets its rows rebuild.</summary>
+    private static DailyListViewModel ShowToday(ShellViewModel shell)
+    {
+        shell.Calendar.ViewKind = CalendarViewKind.Today;
+        shell.Calendar.Reload();
+        Dispatcher.UIThread.RunJobs();
+        return shell.Calendar.Daily;
     }
 
     private static CalendarBlockView SessionView(MainWindow window, CalendarBlock session)
@@ -100,7 +123,52 @@ public sealed class CompletionParityTests
         block.RecordDidntHappenCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.False(SessionViewModel(window, session).IsDone);
+        // The outcome itself, not just "still not done" - that was already true before
+        // the command ran, so on its own it witnesses nothing.
+        var afterwards = SessionViewModel(window, session);
+        Assert.Equal(BlockOutcome.DidntHappen, afterwards.Block.Outcome);
+        Assert.False(afterwards.IsDone);
+    }
+
+    /// <summary>
+    /// The branch the undo work exists for: a session renders done because its parent
+    /// task was completed as a whole, and the completed-task sweep then suppresses the
+    /// task's own row - so the block's checkbox is the only way back. Clearing just the
+    /// session would leave the task complete and strand an unresolved session on it.
+    /// </summary>
+    [AvaloniaFact]
+    public void UncheckingASessionMadeDoneByItsTask_ReopensTheTask()
+    {
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var task = TaskItem.Create("Practice DECA role-play", DateTimeOffset.Now);
+        tasks.Add(task);
+        var session = CalendarBlock.CreateTaskSession(
+            task.Id, Date, new TimeOnly(15, 30), new TimeOnly(17, 0), DateTimeOffset.Now);
+        blocks.Add(session);
+        var (window, shell) = ShowWeek(tasks, blocks);
+
+        // Completing the task as a whole - what the editor and the Inbox do - is what
+        // makes this session render done without an outcome of its own.
+        TestShell.CreateCalendarService(blocks, tasks, new FakeClock(Date)).CompleteTask(task.Id);
+        shell.Calendar.Reload();
+        Dispatcher.UIThread.RunJobs();
+
+        var block = SessionViewModel(window, session);
+        Assert.True(tasks.GetById(task.Id)!.IsCompleted);
+        Assert.True(block.IsDone);
+        Assert.True(block.ShowCompletionControl, "the checkbox is the only way back");
+
+        block.ToggleSessionDoneCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        // Clearing this session's outcome alone would have left the task complete, so
+        // the block would re-render done off the task - an unresolved session stranded
+        // on a completed task. The aggregate inverse reopens the task instead.
+        Assert.False(tasks.GetById(task.Id)!.IsCompleted);
+        var reopened = SessionViewModel(window, session);
+        Assert.False(reopened.IsDone);
+        Assert.Equal(BlockOutcome.None, reopened.Block.Outcome);
     }
 
     /// <summary>
@@ -125,11 +193,7 @@ public sealed class CompletionParityTests
         // Now stand where Today stands and look at the very same session. Its rows are
         // only built for the Today view, and a settled session moves to that day's
         // completed history rather than staying scheduled.
-        shell.Calendar.ViewKind = CalendarViewKind.Today;
-        shell.Calendar.Reload();
-        Dispatcher.UIThread.RunJobs();
-
-        var daily = shell.Calendar.Daily;
+        var daily = ShowToday(shell);
         var row = daily.ScheduledRows
             .Concat(daily.CompletedRows)
             .Concat(daily.UnscheduledRows)
@@ -138,17 +202,34 @@ public sealed class CompletionParityTests
         Assert.False(row.ShowSessionOutcomeAction);
     }
 
-    /// <summary>A proposal has no outcome and must not start reporting one.</summary>
+    /// <summary>
+    /// A proposal wraps no block at all, so it has no outcome and must not start
+    /// reporting one now that two controls gate on HasRecordedOutcome.
+    /// </summary>
     [AvaloniaFact]
     public void AProposalIsNeverTreatedAsSettled()
     {
-        var (window, _, _) = ShowWeekWithSession();
+        var tasks = new InMemoryTaskRepository();
+        // An open, unscheduled task with an estimate is what the planner drafts from.
+        tasks.Add(TaskItem.Create(
+            "Draft essay outline", DateTimeOffset.Now, estimatedDuration: TimeSpan.FromMinutes(60)));
+        var (window, shell) = ShowWeek(tasks, new InMemoryCalendarBlockRepository());
 
-        Assert.All(
-            window.GetVisualDescendants().OfType<CalendarBlockView>()
-                .Select(v => (CalendarBlockViewModel)v.DataContext!)
-                .Where(vm => vm.IsProposal),
-            vm => Assert.False(vm.HasRecordedOutcome));
+        shell.PlanCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+
+        var proposals = window.GetVisualDescendants().OfType<CalendarBlockView>()
+            .Select(v => (CalendarBlockViewModel)v.DataContext!)
+            .Where(vm => vm.IsProposal)
+            .ToList();
+
+        // Without a drafted proposal on the timeline the assertions below would run
+        // over an empty sequence and witness nothing.
+        Assert.NotEmpty(proposals);
+        Assert.All(proposals, vm => Assert.False(vm.HasRecordedOutcome));
+        Assert.All(proposals, vm => Assert.False(vm.ShowCompletionControl));
+        Assert.All(proposals, vm => Assert.False(vm.ShowOutcomeAction));
     }
 
     /// <summary>
@@ -170,11 +251,27 @@ public sealed class CompletionParityTests
         Assert.Contains("Remove from calendar", entries);
     }
 
+    /// <summary>
+    /// The chip only renders on an elapsed session with no outcome yet, so the session
+    /// here is a morning one - the clock reads 14:10 on this date. Asserting only that
+    /// the old copy is gone would stay green if the chip were deleted outright.
+    /// </summary>
     [AvaloniaFact]
     public void TheChipCopy_MatchesTodays()
     {
-        var (window, _, _) = ShowWeekWithSession();
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var task = TaskItem.Create("Practice DECA role-play", DateTimeOffset.Now);
+        tasks.Add(task);
+        var elapsed = CalendarBlock.CreateTaskSession(
+            task.Id, Date, new TimeOnly(9, 0), new TimeOnly(10, 0), DateTimeOffset.Now);
+        blocks.Add(elapsed);
+        var (window, _) = ShowWeek(tasks, blocks);
 
+        Assert.True(SessionViewModel(window, elapsed).NeedsOutcome);
+        Assert.Contains(
+            SessionView(window, elapsed).GetVisualDescendants().OfType<TextBlock>(),
+            t => t.Text == "Needs outcome");
         Assert.DoesNotContain(
             window.GetVisualDescendants().OfType<TextBlock>(),
             t => t.Text == "outcome?");
