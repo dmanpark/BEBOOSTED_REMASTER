@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -65,6 +66,66 @@ public sealed class CompletionParityTests
         shell.Calendar.Reload();
         Dispatcher.UIThread.RunJobs();
         return shell.Calendar.Daily;
+    }
+
+    /// <summary>
+    /// Two overlapping sessions at the app's smallest supported window (1100x720)
+    /// squeeze a block to about 65px, narrower than the checkbox and the overflow
+    /// together - so the overflow is laid out past the block's right edge, measured at
+    /// x=100 inside a 65px block. It does not steal the neighbour's clicks, because the
+    /// adjacent block paints over it, and that occlusion is what this pins: nothing is
+    /// clipped here, so if z-order ever changed, an escaped control would start taking
+    /// clicks meant for the block beside it.
+    ///
+    /// The escape itself is NOT fixed. Making the overflow reachable on a squeezed
+    /// block is narrow-column work, which this pass was explicitly scoped out of and
+    /// which the P2 backlog owns. Until then the outcomes stay reachable from Today and
+    /// from the session editor. If you come here to change the block's layout, that is
+    /// the thing to fix, and this test should become a containment assertion.
+    /// </summary>
+    [AvaloniaFact]
+    public void TheOverflowOfASqueezedBlock_DoesNotTakeItsNeighboursClicks()
+    {
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var sessions = new List<CalendarBlock>();
+        foreach (var title in new[] { "Practice DECA role-play", "Prepare regional qualifier binder" })
+        {
+            var task = TaskItem.Create(title, DateTimeOffset.Now);
+            tasks.Add(task);
+            var session = CalendarBlock.CreateTaskSession(
+                task.Id, Date, new TimeOnly(19, 0), new TimeOnly(20, 0), DateTimeOffset.Now);
+            blocks.Add(session);
+            sessions.Add(session);
+        }
+
+        var shell = TestShell.Create(tasks: tasks, blocks: blocks);
+        var window = new MainWindow { DataContext = shell, Width = 1100, Height = 720 };
+        window.Show();
+        shell.Calendar.ViewKind = CalendarViewKind.Week;
+        shell.Calendar.Reload();
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+
+        foreach (var session in sessions)
+        {
+            var view = SessionView(window, session);
+            var overflow = view.GetVisualDescendants().OfType<Button>()
+                .Single(b => b.Name == "OutcomeButton");
+
+            // Just past this block's right edge, level with the overflow. Whatever the
+            // user hits there belongs to the neighbour, never to this block's controls.
+            var origin = view.TranslatePoint(new Point(0, 0), window)!.Value;
+            var beyond = new Point(
+                origin.X + view.Bounds.Width + 4,
+                origin.Y + overflow.Bounds.Center.Y);
+
+            var hit = ((Visual)window).GetVisualsAt(beyond).FirstOrDefault();
+            Assert.False(
+                hit is not null && (ReferenceEquals(hit, overflow) || hit.GetVisualAncestors().Contains(overflow)),
+                $"a click {4} px past a {view.Bounds.Width}-wide block reached that block's own "
+                + "overflow, so it is stealing the neighbouring block's clicks");
+        }
     }
 
     private static CalendarBlockView SessionView(MainWindow window, CalendarBlock session)
