@@ -175,10 +175,18 @@ public sealed class ProjectDetailSingleListTests
         var (window, detail) = ShowProjectWithScheduledTask();
         var shell = (ShellViewModel)window.DataContext!;
 
+        // A second project, named so it sorts ahead of "Schoolwork": the options list is
+        // ordered by name, so the project we are standing in is no longer the first real
+        // entry. Picking the right one now has to mean matching the id, not taking [1].
+        shell.Projects.NewProjectName = "Admin";
+        Assert.True(shell.Projects.TryCreateProject());
+        shell.Projects.OpenProject(detail.Project.Id);
+
         detail.NewTaskCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
         var editor = Assert.IsType<WholeTaskEditorViewModel>(shell.Calendar.ActiveTaskEditor);
         Assert.Equal(detail.Project.Id, editor.SelectedProject?.Id);
+        Assert.Equal("Schoolwork", editor.SelectedProject?.Name);
     }
 }
