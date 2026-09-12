@@ -102,14 +102,17 @@ public sealed class EditorScopeSelectionTests
         // Projects: a task row.
         shell.NavigateCommand.Execute(AppSection.Projects);
         shell.Projects.OpenProject(fixture.ProjectId);
-        shell.Projects.Detail!.OpenTasks.First(t => t.Title == "PIQ2")
+        shell.Projects.Detail!.Tasks.First(t => t.Title == "PIQ2")
             .EditCommand.Execute(null);
         AssertWholeTaskEditor(shell, fixture.Piq2.Id);
         shell.Calendar.EscapeTaskEditor();
 
-        // Projects: a scheduled-session row resolves to its owning task.
-        shell.Projects.Detail!.ScheduledBlocks.First(r => r.Title == "Stats HW")
-            .EditCommand.Execute(null);
+        // Projects: a row whose affix names a session is still whole-task scope from
+        // its title. Sessions are no longer rows of their own here, so the affix — not
+        // a separate row — is what carries session scope.
+        var scheduled = shell.Projects.Detail!.Tasks.First(t => t.Title == "Stats HW");
+        Assert.True(scheduled.HasSessionAffix, "the scheduled task's row must name its session");
+        scheduled.EditCommand.Execute(null);
         AssertWholeTaskEditor(shell, fixture.StatsHw.Id);
     }
 

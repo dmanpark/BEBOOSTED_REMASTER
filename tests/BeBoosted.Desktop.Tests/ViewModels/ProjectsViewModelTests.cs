@@ -91,11 +91,15 @@ public sealed class ProjectsViewModelTests
 
         shell.Projects.OpenProject(project.Id);
         var detail = shell.Projects.Detail!;
-        Assert.Single(detail.OpenTasks);
+        var row = Assert.Single(detail.Tasks);
+        Assert.Equal(ProjectTaskStatus.Unscheduled, row.Status);
 
-        detail.OpenTasks[0].CompleteCommand.Execute(null);
-        Assert.Empty(detail.OpenTasks);
-        Assert.Single(detail.RecentlyCompleted);
+        row.CompleteCommand.Execute(null);
+
+        // Completion no longer moves the row to a second collection: the task keeps
+        // its one row, in place, now reporting Done.
+        var completed = Assert.Single(detail.Tasks);
+        Assert.Equal(ProjectTaskStatus.Done, completed.Status);
     }
 
     [Fact]

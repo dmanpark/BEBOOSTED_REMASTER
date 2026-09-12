@@ -187,7 +187,8 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             // completes per occurrence, never as a whole, must never offer that control.
             var repeating = _calendar.GetSessionsForTask(task.Id).Any(b => b.Recurrence is not null);
             rows.Add(new ProjectTaskRowViewModel(
-                task, StatusForOpenTask(sessions), CompleteTaskRow, !repeating, RequestTaskEdit));
+                task, StatusForOpenTask(sessions), CompleteTaskRow, !repeating,
+                RequestTaskEdit, RequestRowSessionEdit));
         }
 
         foreach (var task in recent)
@@ -335,6 +336,19 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     internal void RequestSessionEdit(Domain.CalendarBlockId blockId, DateOnly occurrenceDate)
         => _owner.RequestSessionEdit(blockId, occurrenceDate);
 
+    /// <summary>
+    /// A task row's status affix routes to the session editor, the way the row itself
+    /// routes to the whole-task editor. The date is nullable only because a row with
+    /// no affix has none; a row that raises this always carries both.
+    /// </summary>
+    private void RequestRowSessionEdit(Domain.CalendarBlockId blockId, DateOnly? occurrenceDate)
+    {
+        if (occurrenceDate is { } date)
+        {
+            RequestSessionEdit(blockId, date);
+        }
+    }
+
     /// <summary>Opens the composer scoped to this project.</summary>
     [RelayCommand]
     private void AskBeBoosted() => _owner.AskRequested?.Invoke();
@@ -363,7 +377,8 @@ public sealed partial class ProjectTaskRowViewModel(
     ProjectTaskStatusInfo status,
     Action<TaskItem>? onCompleteRequested = null,
     bool canComplete = true,
-    Action<TaskItem>? onEditRequested = null)
+    Action<TaskItem>? onEditRequested = null,
+    Action<Domain.CalendarBlockId, DateOnly?>? onSessionRequested = null)
     : ViewModelBase
 {
     public string Title => task.Title;
@@ -390,6 +405,13 @@ public sealed partial class ProjectTaskRowViewModel(
     public DateOnly? CompletedOn => status.CompletedOn;
 
     public bool HasSessionAffix => status.SessionBlockId is not null;
+
+    /// <summary>Completed rows stay in place and recede rather than moving away.</summary>
+    public bool IsCompletedRow => status.Kind == ProjectTaskStatus.Done;
+
+    public string SessionControlName => $"Edit session for {task.Title}";
+
+    public string CompleteControlName => $"Complete {task.Title}";
 
     /// <summary>
     /// Display only. Tests assert <see cref="Status"/> instead, so rewording this
@@ -452,6 +474,19 @@ public sealed partial class ProjectTaskRowViewModel(
     /// <summary>Opens the one canonical Task editor for this task.</summary>
     [RelayCommand]
     private void Edit() => onEditRequested?.Invoke(task);
+
+    /// <summary>
+    /// The affix opens the one session it names — the session scope, where the row
+    /// itself is whole-task scope. A row with no affix has nothing to open.
+    /// </summary>
+    [RelayCommand]
+    private void OpenSession()
+    {
+        if (status.SessionBlockId is { } blockId)
+        {
+            onSessionRequested?.Invoke(blockId, status.SessionDate);
+        }
+    }
 }
 
 /// <summary>

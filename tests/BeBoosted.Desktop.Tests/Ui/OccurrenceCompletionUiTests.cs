@@ -19,8 +19,9 @@ namespace BeBoosted.Desktop.Tests.Ui;
 /// <summary>
 /// Real click paths for per-occurrence completion of repeating tasks: the calendar
 /// circle marks only the clicked day's occurrence done without opening the editor, the
-/// Project page circle shares the same path, accessible names flip between mark/reopen,
-/// and one-off sessions and locked externals get no occurrence circle.
+/// Project detail shares the same completion (through its own path — it renders one
+/// row per task, not per occurrence), accessible names flip between mark/reopen, and
+/// one-off sessions and locked externals get no occurrence circle.
 /// </summary>
 public sealed class OccurrenceCompletionUiTests
 {
@@ -120,8 +121,15 @@ public sealed class OccurrenceCompletionUiTests
         window.Close();
     }
 
+    /// <summary>
+    /// The project page no longer renders a row — or a circle — per occurrence: a
+    /// repeating task appears once, and its affix names the next occurrence. The
+    /// completion itself is still shared, so what this now pins is that the detail's
+    /// occurrence path and the calendar move together, and that the rendered affix
+    /// advances to the following occurrence and comes back on reopen.
+    /// </summary>
     [AvaloniaFact]
-    public void ProjectPageCircleClick_TogglesTheSameCompletion_AndCalendarFollows()
+    public void ProjectDetailOccurrenceCompletion_AdvancesTheRow_AndCalendarFollows()
     {
         var fixture = CreateShellWithRepeatingStatsHw();
         var window = fixture.Window;
@@ -129,15 +137,21 @@ public sealed class OccurrenceCompletionUiTests
         fixture.Shell.Projects.OpenProject(fixture.ProjectId);
         window.CaptureRenderedFrame();
 
-        var circle = window.GetVisualDescendants()
-            .OfType<Button>()
-            .First(b => b.IsEffectivelyVisible
-                && AutomationProperties.GetName(b) == "Mark Stats HW done");
-        Click(window, circle);
-
         var detail = fixture.Shell.Projects.Detail!;
-        var rows = detail.ScheduledBlocks.Concat(detail.CompletedScheduledBlocks).ToList();
-        Assert.Contains(rows, r => r.IsDone && r.Date == TestShell.DesignDate);
+        var row = Assert.Single(detail.Tasks);
+        Assert.Equal(TestShell.DesignDate, row.SessionDate);
+        AssertAffixRendered(window, row.StatusText);
+
+        detail.SetOccurrenceCompletion(
+            fixture.StatsSessionId, TestShell.DesignDate, completed: true);
+        window.CaptureRenderedFrame();
+
+        // Only the clicked day's occurrence completed, and the one row moved on to
+        // the next one rather than splitting into a completed row of its own.
+        Assert.NotNull(fixture.Completions.Get(fixture.StatsSessionId, TestShell.DesignDate));
+        var advanced = Assert.Single(fixture.Shell.Projects.Detail!.Tasks);
+        Assert.Equal(TestShell.DesignDate.AddDays(7), advanced.SessionDate);
+        AssertAffixRendered(window, advanced.StatusText);
 
         // The calendar surface reflects it immediately.
         fixture.Shell.NavigateCommand.Execute(AppSection.Calendar);
@@ -146,19 +160,24 @@ public sealed class OccurrenceCompletionUiTests
         var view = FindBlockView(window, "Stats HW");
         Assert.True(((CalendarBlockViewModel)view.DataContext!).IsDone);
 
-        // Reopen from the Project page updates both again.
+        // Reopening through the same path updates both again.
         fixture.Shell.NavigateCommand.Execute(AppSection.Projects);
         window.CaptureRenderedFrame();
-        var reopen = window.GetVisualDescendants()
-            .OfType<Button>()
-            .First(b => b.IsEffectivelyVisible
-                && AutomationProperties.GetName(b) == "Reopen Stats HW");
-        Click(window, reopen);
-        Assert.Contains(
-            fixture.Shell.Projects.Detail!.ScheduledBlocks,
-            r => !r.IsDone && r.Date == TestShell.DesignDate);
+        fixture.Shell.Projects.Detail!.SetOccurrenceCompletion(
+            fixture.StatsSessionId, TestShell.DesignDate, completed: false);
+        window.CaptureRenderedFrame();
+        Assert.Null(fixture.Completions.Get(fixture.StatsSessionId, TestShell.DesignDate));
+        var reopened = Assert.Single(fixture.Shell.Projects.Detail!.Tasks);
+        Assert.Equal(TestShell.DesignDate, reopened.SessionDate);
+        AssertAffixRendered(window, reopened.StatusText);
         window.Close();
     }
+
+    /// <summary>The affix is the project row's only rendered word about its session.</summary>
+    private static void AssertAffixRendered(MainWindow window, string affix)
+        => Assert.Contains(
+            window.GetVisualDescendants().OfType<TextBlock>(),
+            t => t.IsEffectivelyVisible && t.Text == affix);
 
     [AvaloniaFact]
     public void ExternalEventsAndOneOffSessions_GetNoOccurrenceCircle()
