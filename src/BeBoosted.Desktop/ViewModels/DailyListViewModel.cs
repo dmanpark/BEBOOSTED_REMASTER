@@ -454,20 +454,10 @@ public sealed partial class DailyListViewModel : ViewModelBase
             // complete, re-render the row identically, and strand an unresolved
             // session on a completed task; so undo here means the aggregate
             // inverse — reopen the Task, which clears its Done sessions with it.
-            if (row.TaskId is { } completedTaskId
-                && _tasks.GetById(completedTaskId)?.IsCompleted == true)
-            {
-                if (_calendar.ReopenTask(completedTaskId))
-                {
-                    _owner.NotifyTasksMutated();
-                }
-            }
-            else
-            {
-                // Per-session: this session's outcome only. Its siblings and its
-                // Task are untouched.
-                _owner.ClearSessionOutcome(sessionId);
-            }
+            // The Week timeline's checkbox reopens a session too, so the rule lives
+            // once on the owner and both surfaces call it. The row already knows its
+            // task, so it passes the id rather than making the owner look it up.
+            _owner.ReopenSession(sessionId, row.TaskId);
         }
         else if (row.Kind == DailyRowKind.Task
             && row.TaskId is { } taskId

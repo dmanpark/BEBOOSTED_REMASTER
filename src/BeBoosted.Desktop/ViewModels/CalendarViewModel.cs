@@ -183,6 +183,17 @@ public sealed partial class CalendarViewModel : ViewModelBase
         => OpenNewWholeTaskEditor(date, start: null, end: null, scheduled: false);
 
     /// <summary>
+    /// New task from a project's own header: the same unscheduled editor the shell's
+    /// New task button opens, with this project already chosen instead of "No project".
+    /// </summary>
+    internal void OpenNewTaskEditorInProject(ProjectId projectId)
+    {
+        var editor = OpenNewWholeTaskEditor(VisibleDate, start: null, end: null, scheduled: false);
+        editor.SelectedProject = editor.ProjectOptions.FirstOrDefault(o => o.Id == projectId)
+            ?? editor.SelectedProject;
+    }
+
+    /// <summary>
     /// Opens the session editor from a calendar block, scoped to the clicked
     /// occurrence (local sessions only).
     /// </summary>
@@ -201,19 +212,6 @@ public sealed partial class CalendarViewModel : ViewModelBase
     /// every session listed, none silently picked (the F-03 rule).
     /// </summary>
     public void OpenTaskEditorForTask(TaskId taskId) => OpenWholeTaskEditor(taskId);
-
-    /// <summary>
-    /// A scheduled-session row in a list is still task-scoped: resolves the
-    /// block's owning task and opens the whole-task editor. External and
-    /// orphaned blocks quietly no-op.
-    /// </summary>
-    internal void OpenTaskEditorForBlockOwner(CalendarBlockId id)
-    {
-        if (_calendar.GetBlock(id) is { Kind: BlockKind.TaskSession, IsExternal: false, TaskId: { } taskId })
-        {
-            OpenWholeTaskEditor(taskId);
-        }
-    }
 
     /// <summary>
     /// The occurrence a task-level edit means: today's when the series occurs today,
@@ -1117,6 +1115,40 @@ public sealed partial class CalendarViewModel : ViewModelBase
 
         Reload();
         DataChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Undo for a finished session, reached from a calendar block — which knows the
+    /// session's task only through the block it wraps.
+    /// </summary>
+    public void ReopenSession(CalendarBlockId id)
+        => ReopenSession(id, _calendar.GetBlock(id)?.TaskId);
+
+    /// <summary>
+    /// The one copy of the aggregate-inverse rule, shared by both surfaces that can
+    /// reopen a session. When the session is only done because its parent task was
+    /// completed as a whole, the inverse is reopening the task: clearing just this
+    /// session would leave the task complete, re-render the session done off the task,
+    /// and strand an unresolved session on a completed task. Otherwise the undo is
+    /// per-session — its siblings and its task are untouched.
+    /// </summary>
+    /// <param name="taskId">
+    /// The session's task. A built Today row already carries it; a block derives it
+    /// from the block itself. Both resolve to the same <c>Block.TaskId</c>.
+    /// </param>
+    internal void ReopenSession(CalendarBlockId id, TaskId? taskId)
+    {
+        if (taskId is { } completedTaskId && _tasks.GetById(completedTaskId)?.IsCompleted == true)
+        {
+            if (_calendar.ReopenTask(completedTaskId))
+            {
+                NotifyTasksMutated();
+            }
+
+            return;
+        }
+
+        ClearSessionOutcome(id);
     }
 
     /// <summary>Takes back one session's outcome; a no-op announces nothing.</summary>

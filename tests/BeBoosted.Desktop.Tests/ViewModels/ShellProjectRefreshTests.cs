@@ -57,8 +57,8 @@ public sealed class ShellProjectRefreshTests
         editor.SaveCommand.Execute(null);
         Assert.Null(shell.Calendar.ActiveTaskEditor);
 
-        var row = Assert.Single(shell.Projects.Detail!.ScheduledBlocks);
-        Assert.Equal(new TimeOnly(16, 0), row.Start);
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(new TimeOnly(16, 0), row.SessionStart);
         var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
         return blocks.GetForTask(task.Id).Single().Id;
     }
@@ -161,8 +161,8 @@ public sealed class ShellProjectRefreshTests
         Assert.Equal(1, changes);
 
         shell.NavigateCommand.Execute(AppSection.Projects);
-        var updated = Assert.Single(shell.Projects.Detail!.ScheduledBlocks);
-        Assert.Equal(new TimeOnly(18, 0), updated.Start);
+        var updated = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(new TimeOnly(18, 0), updated.SessionStart);
     }
 
     [Fact]
@@ -170,53 +170,45 @@ public sealed class ShellProjectRefreshTests
     {
         var (shell, blocks, tasks) = CreateShell();
         var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
+        var detail = shell.Projects.Detail!;
 
-        var changes = 0;
+        var (changes, detailRefreshes) = (0, 0);
         shell.Calendar.DataChanged += () => changes++;
+        detail.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ProjectDetailViewModel.HasTasks))
+            {
+                detailRefreshes++;
+            }
+        };
+
         shell.Calendar.ResizeBlockTo(blockId, new TimeOnly(19, 0));
         Assert.Equal(1, changes);
+        Assert.Equal(1, detailRefreshes);
 
         shell.NavigateCommand.Execute(AppSection.Projects);
-        var updated = Assert.Single(shell.Projects.Detail!.ScheduledBlocks);
-        Assert.Equal(TimeSpan.FromHours(3), updated.Duration);
+        // A resize does not move the session, so the row's affix reads the same; what
+        // the refresh has to reach is the resized block itself, still the one the
+        // project's single row names.
+        var updated = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(blockId, updated.SessionBlockId);
+        Assert.Equal(TimeSpan.FromHours(3), blocks.GetById(blockId)!.Duration);
 
         // A rejected resize (end before start) must not announce a successful change.
         shell.Calendar.ResizeBlockTo(blockId, new TimeOnly(15, 0));
         Assert.Equal(1, changes);
-    }
-
-    [Fact]
-    public void CompletingAnOccurrenceFromCalendar_RefreshesTheOpenProjectDetail_Once()
-    {
-        var (shell, blocks, tasks) = CreateShell();
-        var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks, repeating: true);
-        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
-
-        var changes = 0;
-        shell.Calendar.DataChanged += () => changes++;
-        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
-
-        Assert.Equal(1, changes);
-        Assert.True(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
-        var done = Assert.Single(shell.Projects.Detail!.CompletedScheduledBlocks);
-        Assert.True(done.IsDone);
-        Assert.Equal(Tomorrow, done.Date);
-
-        // Reopening from the calendar updates both surfaces again.
-        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
-        Assert.Equal(2, changes);
-        Assert.False(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
-        Assert.Empty(shell.Projects.Detail.CompletedScheduledBlocks);
+        Assert.Equal(1, detailRefreshes);
     }
 
     /// <summary>
-    /// Occurrence completion from the project page announces through the same
-    /// central chain as every other mutation: the calendar reloads, the Inbox and
-    /// card counts refresh, and the open detail refreshes exactly once — never
-    /// eagerly plus again through the shared event.
+    /// Occurrence completion announces through the one central chain: the calendar
+    /// reloads, the Inbox resets, and the open detail refreshes exactly once — never
+    /// eagerly plus again through the shared event — while a no-op announces nothing
+    /// anywhere. The project detail renders one row per task, not per occurrence, so
+    /// the circle on the timeline is the only control that starts this.
     /// </summary>
     [Fact]
-    public void CompletingAnOccurrenceFromProjectDetail_AnnouncesThroughTheOneChain()
+    public void CompletingAnOccurrenceFromCalendar_RefreshesTheOpenProjectDetail_Once()
     {
         var (shell, blocks, tasks) = CreateShell();
         var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks, repeating: true);
@@ -226,7 +218,7 @@ public sealed class ShellProjectRefreshTests
         shell.Calendar.DataChanged += () => changes++;
         detail.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(ProjectDetailViewModel.HasOpenTasks))
+            if (e.PropertyName == nameof(ProjectDetailViewModel.HasTasks))
             {
                 detailRefreshes++;
             }
@@ -239,33 +231,38 @@ public sealed class ShellProjectRefreshTests
             }
         };
 
-        var row = detail.ScheduledBlocks.Single(r => r.Date == Tomorrow);
-        row.ToggleCompletionCommand.Execute(null);
+        Assert.Equal(Tomorrow, Assert.Single(detail.Tasks).SessionDate);
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
 
         Assert.Equal(1, changes);
         Assert.Equal(1, detailRefreshes);
         Assert.Equal(1, inboxResets);
         Assert.True(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
-        var done = Assert.Single(detail.CompletedScheduledBlocks);
+        // A done occurrence is no longer a row of its own: the task's one row follows
+        // the completion by naming the next occurrence instead.
+        Assert.Equal(Tomorrow.AddDays(7), Assert.Single(detail.Tasks).SessionDate);
 
-        // Reopening from the project page flows through the same chain again.
-        done.ToggleCompletionCommand.Execute(null);
+        // Reopening from the calendar flows through the same chain again.
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
         Assert.Equal(2, changes);
         Assert.Equal(2, detailRefreshes);
         Assert.False(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
+        Assert.Equal(Tomorrow, Assert.Single(detail.Tasks).SessionDate);
 
-        // A no-op request emits no success notification anywhere.
-        detail.SetOccurrenceCompletion(blockId, Tomorrow, completed: false);
+        // A no-op request emits no success notification anywhere. The toggle cannot
+        // ask for the state it is already in, so the path beneath it is asked directly.
+        shell.Calendar.SetOccurrenceDone(blockId, Tomorrow, done: false);
         Assert.Equal(2, changes);
         Assert.Equal(2, detailRefreshes);
     }
 
     /// <summary>
-    /// The project page completes a one-off session against its block. Routing it
-    /// through the occurrence path would throw — a one-off has no occurrences.
+    /// Finishing one session of a task with two must resolve that session alone — the
+    /// Task stays open and the sibling stays pending. Two sessions of one task are one
+    /// row now, so the proof is that the row moves on to the sibling, untouched.
     /// </summary>
     [Fact]
-    public void CompletingAOneOffSessionFromTheProjectPage_ResolvesThatSessionOnly()
+    public void CompletingAOneOffSessionOnTheCalendar_ResolvesThatSessionOnly()
     {
         var (shell, blocks, tasks) = CreateShell();
         var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
@@ -274,70 +271,79 @@ public sealed class ShellProjectRefreshTests
         var sibling = CalendarBlock.CreateTaskSession(
             task.Id, Tomorrow, new TimeOnly(19, 0), new TimeOnly(20, 0), clock.Now);
         blocks.Add(sibling);
-        shell.Projects.Detail!.Refresh();
+        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
+        shell.Calendar.NotifyTasksMutated();
         shell.NavigateCommand.Execute(AppSection.Projects);
-        Assert.Equal(2, shell.Projects.Detail!.ScheduledBlocks.Count);
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(blockId, row.SessionBlockId); // the earlier of the two sessions
 
-        shell.Projects.Detail.ScheduledBlocks.Single(r => r.BlockId == blockId)
-            .ToggleCompletionCommand.Execute(null);
+        // The session checkbox on the Week timeline — the one control that finishes it.
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleSessionDoneCommand.Execute(null);
 
-        var done = Assert.Single(shell.Projects.Detail!.CompletedScheduledBlocks);
-        Assert.Equal(blockId, done.BlockId);
+        Assert.Equal(BlockOutcome.Done, blocks.GetById(blockId)!.Outcome);
         Assert.Equal(BlockOutcome.None, blocks.GetById(sibling.Id)!.Outcome);
         Assert.False(tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(
+            sibling.Id, Assert.Single(shell.Projects.Detail!.Tasks).SessionBlockId);
     }
 
     /// <summary>
-    /// A one-off row also renders Done because its parent Task was completed as a
-    /// whole. Undoing there must reopen the TASK: clearing this session's outcome
-    /// alone would leave the row checked (a dead click) and strand an unresolved
-    /// session on a completed task.
+    /// A one-off session is resolved Done because its parent Task was completed as a
+    /// whole — from the project row. Unchecking that session must reopen the TASK:
+    /// clearing this session's outcome alone would leave the task done (a dead click)
+    /// and strand an unresolved session on a completed task. The project row follows
+    /// it back to Scheduled.
     /// </summary>
     [Fact]
-    public void UndoingAOneOffSessionOfACompletedTask_FromTheProjectPage_ReopensTheTask()
+    public void UncheckingAOneOffSessionOfACompletedTask_ReopensTheTask()
     {
         var (shell, blocks, tasks) = CreateShell();
         var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks);
         var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
+        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
         shell.NavigateCommand.Execute(AppSection.Projects);
-        shell.Projects.Detail!.OpenTasks.Single(t => t.Title == "Stats HW")
+        shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW")
             .CompleteCommand.Execute(null);
-        var done = Assert.Single(shell.Projects.Detail!.CompletedScheduledBlocks);
-        Assert.Equal(blockId, done.BlockId);
-        Assert.True(done.IsDone);
+        Assert.Equal(BlockOutcome.Done, blocks.GetById(blockId)!.Outcome);
+        Assert.Equal(
+            ProjectTaskStatus.Done, Assert.Single(shell.Projects.Detail!.Tasks).Status);
 
-        done.ToggleCompletionCommand.Execute(null);
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleSessionDoneCommand.Execute(null);
 
         Assert.False(tasks.GetById(task.Id)!.IsCompleted);
         Assert.Equal(BlockOutcome.None, blocks.GetById(blockId)!.Outcome);
-        Assert.Empty(shell.Projects.Detail!.CompletedScheduledBlocks);
-        var reopened = Assert.Single(shell.Projects.Detail!.ScheduledBlocks);
-        Assert.Equal(blockId, reopened.BlockId);
-        Assert.False(reopened.IsDone);
+        var reopened = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(ProjectTaskStatus.Scheduled, reopened.Status);
+        Assert.Equal(blockId, reopened.SessionBlockId);
     }
 
     /// <summary>
-    /// The branch on the toggle exists to protect this: a repeating row must keep
-    /// completing per occurrence through the same path as before, and must never
-    /// throw now that one-off rows also carry a completion control.
+    /// A repeating task completes per occurrence and never as a whole: its project row
+    /// offers no whole-task control, and completing an occurrence leaves both the Task
+    /// and the block's own outcome alone while still moving the row to the next one.
     /// </summary>
     [Fact]
-    public void CompletingARepeatingSessionFromTheProjectPage_StillCompletesPerOccurrence()
+    public void CompletingARepeatingOccurrence_LeavesTheTaskAndBlockOutcomeAlone()
     {
         var (shell, blocks, tasks) = CreateShell();
         var blockId = CreateProjectWithScheduledTask(shell, blocks, tasks, repeating: true);
+        shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
         shell.NavigateCommand.Execute(AppSection.Projects);
+        var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
 
-        var row = shell.Projects.Detail!.ScheduledBlocks.Single(r => r.BlockId == blockId);
-        Assert.True(row.IsRepeating);
-        row.ToggleCompletionCommand.Execute(null);
+        var row = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.False(row.CanComplete);
+        Assert.Equal(Tomorrow, row.SessionDate);
 
-        var done = Assert.Single(shell.Projects.Detail!.CompletedScheduledBlocks);
-        Assert.Equal(blockId, done.BlockId);
-        Assert.True(done.IsRepeating);
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
 
-        done.ToggleCompletionCommand.Execute(null);
-        Assert.Empty(shell.Projects.Detail!.CompletedScheduledBlocks);
+        Assert.False(tasks.GetById(task.Id)!.IsCompleted);
+        Assert.Equal(BlockOutcome.None, blocks.GetById(blockId)!.Outcome);
+        Assert.Equal(
+            Tomorrow.AddDays(7), Assert.Single(shell.Projects.Detail!.Tasks).SessionDate);
+
+        CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
+        Assert.Equal(Tomorrow, Assert.Single(shell.Projects.Detail!.Tasks).SessionDate);
     }
 
     /// <summary>
@@ -352,7 +358,7 @@ public sealed class ShellProjectRefreshTests
         var changes = 0;
         shell.Calendar.DataChanged += () => changes++;
 
-        var row = shell.Projects.Detail!.OpenTasks.Single(t => t.Title == "Stats HW");
+        var row = shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW");
         row.CompleteCommand.Execute(null);
 
         var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
@@ -415,7 +421,7 @@ public sealed class ShellProjectRefreshTests
         shell.Calendar.DataChanged += () => changes++;
         detail.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(ProjectDetailViewModel.HasOpenTasks))
+            if (e.PropertyName == nameof(ProjectDetailViewModel.HasTasks))
             {
                 detailRefreshes++;
             }
@@ -435,13 +441,14 @@ public sealed class ShellProjectRefreshTests
             }
         };
 
-        detail.OpenTasks.Single(t => t.Title == "Essay plan").CompleteCommand.Execute(null);
+        detail.Tasks.Single(t => t.Title == "Essay plan").CompleteCommand.Execute(null);
 
         Assert.Equal(1, detailRefreshes);
         Assert.Equal(1, changes);
         Assert.Equal(1, inboxResets);
         Assert.Equal(1, cardResets);
-        Assert.Contains(detail.RecentlyCompleted, t => t.Title == "Essay plan");
+        Assert.Equal(
+            ProjectTaskStatus.Done, detail.Tasks.Single(t => t.Title == "Essay plan").Status);
     }
 
     [Fact]
@@ -478,20 +485,20 @@ public sealed class ShellProjectRefreshTests
             "Practice", clock.Now, estimatedDuration: TimeSpan.FromMinutes(60), projectId: projectId);
         tasks.Add(task);
         shell.Calendar.ScheduleTask(task.Id, Tomorrow, new TimeOnly(9, 0));
-        Assert.Equal(new TimeOnly(9, 0), Assert.Single(shell.Projects.Detail!.ScheduledBlocks).Start);
+        Assert.Equal(new TimeOnly(9, 0), Assert.Single(shell.Projects.Detail!.Tasks).SessionStart);
 
         var blockId = blocks.GetAll().Single(b => b.TaskId == task.Id).Id;
         shell.Calendar.MoveBlock(blockId, Tomorrow, new TimeOnly(11, 0));
 
         shell.NavigateCommand.Execute(AppSection.Projects);
-        var updated = Assert.Single(shell.Projects.Detail!.ScheduledBlocks);
-        Assert.Equal(new TimeOnly(11, 0), updated.Start);
+        var updated = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(new TimeOnly(11, 0), updated.SessionStart);
     }
 
     /// <summary>
     /// TDD phase 14, the reported failure: edit a task (PIQ2), assign it to a project
     /// (CAPPs), save — the already-open project must list it immediately, its scheduled
-    /// session must appear in the Scheduled section, and card counts must update.
+    /// session must arrive with it as the row's affix, and card counts must update.
     /// </summary>
     [Fact]
     public void AssigningAProjectThroughTheTaskEditor_RefreshesTheOpenProject()
@@ -513,15 +520,17 @@ public sealed class ShellProjectRefreshTests
         editor.SaveCommand.Execute(null);
 
         Assert.Equal(shell.Projects.Detail!.Project.Id, tasks.GetById(piq2.Id)!.ProjectId);
-        Assert.Contains(shell.Projects.Detail.OpenTasks, t => t.Title == "PIQ2");
-        Assert.Contains(shell.Projects.Detail.ScheduledBlocks, r => r.Title == "PIQ2");
+        var row = Assert.Single(shell.Projects.Detail.Tasks);
+        Assert.Equal("PIQ2", row.Title);
+        Assert.Equal(ProjectTaskStatus.Scheduled, row.Status);
+        Assert.Equal(Tomorrow, row.SessionDate);
 
         // "No project" removes it again — still through the same chain.
         shell.Calendar.OpenTaskEditorForTask(piq2.Id);
         var reopened = (WholeTaskEditorViewModel)shell.Calendar.ActiveTaskEditor!;
         reopened.SelectedProject = reopened.ProjectOptions.Single(o => o.Name == "No project");
         reopened.SaveCommand.Execute(null);
-        Assert.DoesNotContain(shell.Projects.Detail.OpenTasks, t => t.Title == "PIQ2");
+        Assert.DoesNotContain(shell.Projects.Detail.Tasks, t => t.Title == "PIQ2");
 
         // The project index card counts refresh through the same notification chain.
         shell.Calendar.OpenTaskEditorForTask(piq2.Id);

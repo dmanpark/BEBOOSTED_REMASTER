@@ -40,6 +40,8 @@
   <!-- 30% -->
   <Color x:Key="ColorGraphite40">#6620231F</Color>
   <Color x:Key="ColorGraphite55">#8C20231F</Color>
+  <Color x:Key="ColorIconStroke">#BF20231F</Color>
+  <!-- 75% graphite — row action icons, legible at rest -->
   <Color x:Key="ColorHoverWash">#1220231F</Color>
   <!-- 7% graphite hover fill -->
   <Color x:Key="ColorLimeHalo">#8CC8F24A</Color>
@@ -65,6 +67,7 @@
   <SolidColorBrush x:Key="BrushBorderEmphasis" Color="{StaticResource ColorBorderEmphasis}" />
   <SolidColorBrush x:Key="BrushGraphite40" Color="{StaticResource ColorGraphite40}" />
   <SolidColorBrush x:Key="BrushGraphite55" Color="{StaticResource ColorGraphite55}" />
+  <SolidColorBrush x:Key="BrushIconStroke" Color="{StaticResource ColorIconStroke}" />
   <SolidColorBrush x:Key="BrushHoverWash" Color="{StaticResource ColorHoverWash}" />
 
   <!-- Geometry: modest radii, never pills for containers -->

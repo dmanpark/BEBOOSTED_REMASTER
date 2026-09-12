@@ -94,6 +94,15 @@
 
       <ContentControl Grid.Row="0" Content="{Binding CurrentSection}" />
 
+      <!-- Recedes the surface behind the open drawer so the duplicate list stops
+           competing with it. Deliberately light and non-blocking: the drawer is
+           dismissible and does not trap focus, so this must not read as a modal. -->
+      <Border Grid.Row="0" Name="InboxScrim"
+              IsVisible="{Binding IsInboxOpen}"
+              Background="{StaticResource BrushGraphite}"
+              Opacity="0.12"
+              IsHitTestVisible="False" />
+
       <!-- Inbox drawer: floats over the current surface, never reflows the calendar. -->
       <Border Grid.Row="0"
               Name="InboxDrawer"
@@ -133,6 +142,7 @@
                       Command="{Binding StartPrioritySortCommand}"
                       ToolTip.Tip="Compare tasks two at a time to rank this period" />
               <TextBlock Classes="meta" Text="drag onto the calendar"
+                         IsVisible="{Binding ShowDragHint}"
                          VerticalAlignment="Center" />
             </StackPanel>
           </Border>

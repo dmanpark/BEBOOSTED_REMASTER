@@ -737,7 +737,8 @@ public sealed class TaskEditorScopeUiTests
         var scene = fixture.Scene;
         var focusManager = TopLevel.GetTopLevel(scene.Window)!.FocusManager!;
 
-        var secondRow = scene.Shell.Projects.Detail!.OpenTasks[1];
+        var secondRow = scene.Shell.Projects.Detail!.Tasks
+            .Single(t => t.TaskId == fixture.Second.Id);
         var pencil = scene.Window.GetVisualDescendants().OfType<Button>()
             .First(b => b.IsEffectivelyVisible
                 && ReferenceEquals(b.DataContext, secondRow)
@@ -754,20 +755,26 @@ public sealed class TaskEditorScopeUiTests
         var focused = focusManager.GetFocusedElement() as Control;
         Assert.True(focused is not null, "focus vanished after the Projects task-row save");
         var replacement = Assert.IsType<ProjectTaskRowViewModel>(focused.DataContext);
-        Assert.Same(scene.Shell.Projects.Detail!.OpenTasks[1], replacement);
+        Assert.Same(
+            scene.Shell.Projects.Detail!.Tasks.Single(t => t.TaskId == fixture.Second.Id),
+            replacement);
         Assert.StartsWith("Edit task", AutomationProperties.GetName(focused)!);
     }
 
-    /// <summary>Same guarantee for a Projects scheduled-session row.</summary>
+    /// <summary>
+    /// Same guarantee for the status affix — the session-scoped invoker on a Projects
+    /// row. Sessions are no longer rows of their own, so the affix of the row naming
+    /// the 11:00 session is what focus has to come back to.
+    /// </summary>
     [AvaloniaFact]
-    public void SaveRestore_FromAProjectScheduledRow_FocusesTheExactRow()
+    public void SaveRestore_FromAProjectSessionAffix_FocusesTheExactRow()
     {
         var fixture = ShowProjectWithDuplicateTitles(scheduled: true);
         var scene = fixture.Scene;
         var focusManager = TopLevel.GetTopLevel(scene.Window)!.FocusManager!;
 
-        var secondRow = scene.Shell.Projects.Detail!.ScheduledBlocks
-            .First(r => r.Start == new TimeOnly(11, 0));
+        var secondRow = scene.Shell.Projects.Detail!.Tasks
+            .Single(t => t.SessionStart == new TimeOnly(11, 0));
         var pencil = scene.Window.GetVisualDescendants().OfType<Button>()
             .First(b => b.IsEffectivelyVisible
                 && ReferenceEquals(b.DataContext, secondRow)
@@ -776,16 +783,17 @@ public sealed class TaskEditorScopeUiTests
         Dispatcher.UIThread.RunJobs();
         pencil.Command!.Execute(pencil.CommandParameter);
         Render(scene);
-        ((WholeTaskEditorViewModel)scene.Shell.Calendar.ActiveTaskEditor!)
+        ((SessionEditorViewModel)scene.Shell.Calendar.ActiveTaskEditor!)
             .SaveCommand.Execute(null);
         Render(scene);
         Render(scene);
 
         var focused = focusManager.GetFocusedElement() as Control;
-        Assert.True(focused is not null, "focus vanished after the Projects scheduled-row save");
-        var replacement = Assert.IsType<ScheduledBlockRowViewModel>(focused.DataContext);
-        Assert.Equal(new TimeOnly(11, 0), replacement.Start);
-        Assert.Equal(Date, replacement.Date);
+        Assert.True(focused is not null, "focus vanished after the Projects affix save");
+        var replacement = Assert.IsType<ProjectTaskRowViewModel>(focused.DataContext);
+        Assert.Equal(fixture.Second.Id, replacement.TaskId);
+        Assert.Equal(new TimeOnly(11, 0), replacement.SessionStart);
+        Assert.Equal(Date, replacement.SessionDate);
     }
 
     /// <summary>

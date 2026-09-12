@@ -126,8 +126,6 @@ public partial class MainWindow : Window
             CalendarBlockViewModel block => $"block:{block.Id}:{block.Date:yyyy-MM-dd}",
             TaskRowViewModel task => $"inbox-task:{task.Task.Id}",
             ProjectTaskRowViewModel projectTask => $"project-task:{projectTask.TaskId}",
-            ScheduledBlockRowViewModel projectBlock =>
-                $"project-block:{projectBlock.BlockId}:{projectBlock.Date:yyyy-MM-dd}",
             _ => null,
         };
         if (domain is null)

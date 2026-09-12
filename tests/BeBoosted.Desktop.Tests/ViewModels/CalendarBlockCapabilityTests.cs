@@ -85,9 +85,10 @@ public sealed class CalendarBlockCapabilityTests
     }
 
     /// <summary>
-    /// Done is local to the session now: a one-off's outcome flyout offers every
-    /// outcome, including Done, even when its Task has a repeating sibling
-    /// elsewhere. A mixed schedule is no longer a reason to withhold it.
+    /// Done is local to the session now: a one-off offers every outcome even when its
+    /// Task has a repeating sibling elsewhere. A mixed schedule is no longer a reason
+    /// to withhold it. Done is reached by the checkbox; the rest by the overflow.
+    /// RecordDoneCommand stays pinned — the review-notice list still drives it.
     /// </summary>
     [Fact]
     public void MixedScheduleOneOff_OffersEveryOutcome_IncludingDone()
@@ -96,10 +97,16 @@ public sealed class CalendarBlockCapabilityTests
         var (oneOff, _) = AddMixedScheduleTask(context);
 
         var vm = FindBlock(context, oneOff.Id);
-        Assert.True(vm.ShowCompletionControl); // the flyout itself stays available
+        Assert.True(vm.ShowCompletionControl); // the checkbox
+        Assert.True(vm.ShowOutcomeAction); // the overflow holding the rest
+        Assert.True(vm.ToggleSessionDoneCommand.CanExecute(null));
         Assert.True(vm.RecordDoneCommand.CanExecute(null));
         Assert.True(vm.RecordNeedsMoreTimeCommand.CanExecute(null));
         Assert.True(vm.RecordDidntHappenCommand.CanExecute(null));
+
+        // The checkbox is the path Done actually travels from a block now.
+        vm.ToggleSessionDoneCommand.Execute(null);
+        Assert.Equal(BlockOutcome.Done, context.Blocks.GetById(oneOff.Id)!.Outcome);
 
         var solo = AddScheduledTask(
             context, "Solo work", TestShell.DesignDate, new TimeOnly(12, 0), new TimeOnly(13, 0));
@@ -309,7 +316,8 @@ public sealed class CalendarBlockCapabilityTests
 
         var oneOffVm = FindBlock(context, oneOff.Id);
         Assert.False(oneOffVm.ShowOccurrenceCompletionControl);
-        Assert.True(oneOffVm.ShowCompletionControl); // the multi-outcome flyout
+        Assert.True(oneOffVm.ShowCompletionControl); // the checkbox
+        Assert.True(oneOffVm.ShowOutcomeAction); // and the outcome overflow beside it
 
         Assert.False(FindBlock(context, external.Id).ShowOccurrenceCompletionControl);
         Assert.False(FindBlock(context, external.Id).ShowCompletionControl);

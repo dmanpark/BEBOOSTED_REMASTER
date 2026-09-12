@@ -1,15 +1,43 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using Avalonia.Media;
 using BeBoosted.Application.Projects;
 using BeBoosted.Domain;
-using BeBoosted.Domain.Calendar;
 using BeBoosted.Domain.Projects;
 using BeBoosted.Domain.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
 namespace BeBoosted.Desktop.ViewModels;
+
+/// <summary>
+/// A project task's one visible state. The numeric values ARE the priority and the
+/// sort order - a task qualifying for more than one takes the lowest number - so
+/// reordering these members silently reorders the screen. They are written down for
+/// that reason.
+/// </summary>
+public enum ProjectTaskStatus
+{
+    /// <summary>A session's end time passed without an outcome. Needs a decision.</summary>
+    NeedsOutcome = 0,
+
+    Scheduled = 1,
+
+    Unscheduled = 2,
+
+    Done = 3,
+}
+
+/// <summary>
+/// A row's status plus whatever the affix needs to render it. The session identity
+/// travels with it because clicking the affix opens that session's editor, and
+/// keyboard focus has to find its way back to the same row afterwards.
+/// </summary>
+public sealed record ProjectTaskStatusInfo(
+    ProjectTaskStatus Kind,
+    DateOnly? SessionDate = null,
+    TimeOnly? SessionStart = null,
+    Domain.CalendarBlockId? SessionBlockId = null,
+    DateOnly? CompletedOn = null);
 
 /// <summary>Frame 05: a deliberately sparse project — tasks, upcoming blocks, and Files.</summary>
 public sealed partial class ProjectDetailViewModel : ViewModelBase
@@ -40,25 +68,30 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
 
     public IBrush AccentBrush => ProjectsViewModel.BrushFor(Project.AccentColor);
 
-    public ObservableCollection<ProjectTaskRowViewModel> OpenTasks { get; } = [];
-
-    public ObservableCollection<ProjectTaskRowViewModel> RecentlyCompleted { get; } = [];
-
-    /// <summary>Active scheduled work: upcoming and overdue rows, soonest first.</summary>
-    public ObservableCollection<ScheduledBlockRowViewModel> ScheduledBlocks { get; } = [];
-
-    /// <summary>Recently completed sessions, shown quietly below the active rows.</summary>
-    public ObservableCollection<ScheduledBlockRowViewModel> CompletedScheduledBlocks { get; } = [];
+    /// <summary>
+    /// Every task in this project, exactly once. A task's sessions are folded into its
+    /// row as a status rather than appearing as rows of their own - which is what used
+    /// to let one task render three times on this screen.
+    /// </summary>
+    public ObservableCollection<ProjectTaskRowViewModel> Tasks { get; } = [];
 
     public ObservableCollection<FolioCardViewModel> Files { get; } = [];
 
-    public bool HasOpenTasks => OpenTasks.Count > 0;
+    public bool HasTasks => Tasks.Count > 0;
 
-    public bool HasRecentlyCompleted => RecentlyCompleted.Count > 0;
+    private int _openTaskCount;
 
-    public bool HasScheduledWork => ScheduledBlocks.Count > 0 || CompletedScheduledBlocks.Count > 0;
-
-    public bool HasCompletedScheduledBlocks => CompletedScheduledBlocks.Count > 0;
+    /// <summary>
+    /// Open tasks, worded exactly as the project card words it — deliberately NOT the
+    /// number of rows. Tasks holds the open ones plus at most three recently completed
+    /// (GetProjectTasks' recentCount), so counting rows made a project with 4 open and
+    /// 20 done read "7 tasks": true of neither the screen nor the project. Counting
+    /// every task would need a service method this pass may not add, and "how much is
+    /// left" is the question worth answering while standing in a project anyway. Saying
+    /// it the card's way makes the two agree instead of differing one click apart.
+    /// </summary>
+    public string TaskCountText
+        => $"{_openTaskCount} open task{(_openTaskCount == 1 ? string.Empty : "s")}";
 
     public bool HasFiles => Files.Count > 0;
 
@@ -147,37 +180,48 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     public void Refresh()
     {
         var (open, recent) = _service.GetProjectTasks(Project.Id);
-        OpenTasks.Clear();
+        _openTaskCount = open.Count;
+        var sessionsByTask = _service.GetScheduledBlocks(Project.Id)
+            .Where(row => row.Block.TaskId is not null)
+            .GroupBy(row => row.Block.TaskId!.Value)
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        var rows = new List<ProjectTaskRowViewModel>();
         foreach (var task in open)
         {
-            // A repeating task completes per occurrence (in Scheduled below), never
-            // as a whole from this list.
-            var repeating = _calendar.GetSessionsForTask(task.Id)
-                .Any(session => session.Recurrence is not null);
-            OpenTasks.Add(new ProjectTaskRowViewModel(
-                task, CompleteTaskRow, !repeating, RequestTaskEdit));
+            var sessions = sessionsByTask.GetValueOrDefault(task.Id) ?? [];
+
+            // Unwindowed on purpose: GetScheduledBlocks only expands a repeating series
+            // across a +/-14-day window, so a series with no occurrence in that window
+            // (starting three weeks out, say) would otherwise read as non-repeating and
+            // let a repeating task be completed as a whole from this list - a task that
+            // completes per occurrence, never as a whole, must never offer that control.
+            var repeating = _calendar.GetSessionsForTask(task.Id).Any(b => b.Recurrence is not null);
+            rows.Add(new ProjectTaskRowViewModel(
+                task, StatusForOpenTask(sessions, repeating), CompleteTaskRow, !repeating,
+                RequestTaskEdit, RequestSessionEdit));
         }
 
-        RecentlyCompleted.Clear();
         foreach (var task in recent)
         {
-            RecentlyCompleted.Add(new ProjectTaskRowViewModel(
-                task, onCompleteRequested: null, canComplete: false, RequestTaskEdit));
+            rows.Add(new ProjectTaskRowViewModel(
+                task,
+                new ProjectTaskStatusInfo(
+                    ProjectTaskStatus.Done,
+                    CompletedOn: task.CompletedAt is { } at
+                        ? DateOnly.FromDateTime(at.LocalDateTime)
+                        : null),
+                onCompleteRequested: null, canComplete: false, RequestTaskEdit));
         }
 
-        ScheduledBlocks.Clear();
-        CompletedScheduledBlocks.Clear();
-        foreach (var row in _service.GetScheduledBlocks(Project.Id))
+        Tasks.Clear();
+        foreach (var row in rows
+            .OrderBy(r => (int)r.Status)
+            .ThenBy(r => r.SessionDate ?? DateOnly.MaxValue)
+            .ThenBy(r => r.SessionStart ?? TimeOnly.MaxValue)
+            .ThenBy(r => r.Title, StringComparer.CurrentCultureIgnoreCase))
         {
-            var rowViewModel = new ScheduledBlockRowViewModel(this, row, Project.AccentColor);
-            if (row.State == ProjectBlockState.Done)
-            {
-                CompletedScheduledBlocks.Add(rowViewModel);
-            }
-            else
-            {
-                ScheduledBlocks.Add(rowViewModel);
-            }
+            Tasks.Add(row);
         }
 
         Files.Clear();
@@ -186,73 +230,61 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
             Files.Add(new FolioCardViewModel(this, file, _service.CountResources(file.Id), Project.AccentColor));
         }
 
-        OnPropertyChanged(nameof(HasOpenTasks));
-        OnPropertyChanged(nameof(HasRecentlyCompleted));
-        OnPropertyChanged(nameof(HasScheduledWork));
-        OnPropertyChanged(nameof(HasCompletedScheduledBlocks));
+        OnPropertyChanged(nameof(HasTasks));
+        OnPropertyChanged(nameof(TaskCountText));
         OnPropertyChanged(nameof(HasFiles));
     }
 
     /// <summary>
-    /// Occurrence-completion toggle from a project row (repeating sessions): persists
-    /// through the same service path as the calendar control, then announces through
-    /// the one central chain — which refreshes this detail. No-ops stay silent.
+    /// The one state an open task shows. Overdue outranks scheduled because a session
+    /// that elapsed without an outcome is the only one asking the user for something.
     /// </summary>
-    internal void SetOccurrenceCompletion(
-        Domain.CalendarBlockId blockId, DateOnly occurrenceDate, bool completed)
+    /// <param name="sessions">
+    /// The windowed sessions from GetScheduledBlocks — the only source that can name a
+    /// concrete date and time.
+    /// </param>
+    /// <param name="repeating">
+    /// Whether the task has a repeating series at all, computed unwindowed by the
+    /// caller. GetScheduledBlocks expands a series across +/-14 days only, so a weekly
+    /// task whose next occurrence falls outside that window arrives here with an empty
+    /// list — and falling through to Unscheduled would state the opposite of the truth
+    /// about the user's own data. One-off sessions are never windowed out, so this is
+    /// the whole of the gap. A recurrence has no end date, so a task that has one
+    /// always has a next occurrence: saying "scheduled" without naming a time is the
+    /// cheapest honest answer, and naming one would mean expanding the series here,
+    /// duplicating in the view model what GetScheduledBlocks exists to do.
+    /// </param>
+    private static ProjectTaskStatusInfo StatusForOpenTask(
+        IReadOnlyList<Application.Projects.ProjectScheduledBlock> sessions, bool repeating)
     {
-        if (_calendar.SetOccurrenceCompletion(blockId, occurrenceDate, completed))
+        if (sessions
+            .Where(s => s.State == Application.Projects.ProjectBlockState.Overdue)
+            .OrderBy(s => s.Date)
+            .ThenBy(s => s.Block.StartTime)
+            .FirstOrDefault()
+            is { } overdue)
         {
-            _owner.NotifyTasksMutated();
+            return new ProjectTaskStatusInfo(
+                ProjectTaskStatus.NeedsOutcome,
+                overdue.Date, overdue.Block.StartTime, overdue.Block.Id);
         }
+
+        var next = sessions
+            .Where(s => s.State == Application.Projects.ProjectBlockState.Upcoming)
+            .OrderBy(s => s.Date)
+            .ThenBy(s => s.Block.StartTime)
+            .FirstOrDefault();
+
+        if (next is not null)
+        {
+            return new ProjectTaskStatusInfo(
+                ProjectTaskStatus.Scheduled, next.Date, next.Block.StartTime, next.Block.Id);
+        }
+
+        return repeating
+            ? new ProjectTaskStatusInfo(ProjectTaskStatus.Scheduled)
+            : new ProjectTaskStatusInfo(ProjectTaskStatus.Unscheduled);
     }
-
-    /// <summary>
-    /// One one-off session's completion, recorded against the block. The Task stays
-    /// open — only the Task's own control completes it. Undo is the exception: a row
-    /// of a task completed as a whole also renders Done, so reopening it there means
-    /// reopening the Task (see <see cref="CompletedParentTaskOf"/>).
-    /// </summary>
-    internal void SetSessionCompletion(Domain.CalendarBlockId blockId, bool completed)
-    {
-        try
-        {
-            if (completed)
-            {
-                _calendar.RecordOutcome(blockId, BlockOutcome.Done);
-            }
-            else if (CompletedParentTaskOf(blockId) is { } completedTaskId)
-            {
-                if (!_calendar.ReopenTask(completedTaskId))
-                {
-                    return;
-                }
-            }
-            else if (!_calendar.ClearSessionOutcome(blockId))
-            {
-                return;
-            }
-        }
-        catch (DomainException)
-        {
-            return; // a stale row: the service mutated nothing
-        }
-
-        _owner.NotifyTasksMutated();
-    }
-
-    /// <summary>
-    /// This session's task id when that task is completed as a whole, else null.
-    /// A row of such a task renders Done whatever its own outcome, so clearing the
-    /// session alone would change nothing visible and would strand an unresolved
-    /// session on a completed task; the aggregate inverse — reopening the Task,
-    /// which clears its Done sessions with it — is what undo means there.
-    /// </summary>
-    private TaskId? CompletedParentTaskOf(Domain.CalendarBlockId blockId)
-        => _calendar.GetBlock(blockId)?.TaskId is { } taskId
-            && _calendar.GetTask(taskId)?.IsCompleted == true
-                ? taskId
-                : null;
 
     /// <summary>
     /// Whole-task completion from a project row: the authoritative service path
@@ -278,6 +310,13 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
     [RelayCommand]
     private void AskBeBoosted() => _owner.AskRequested?.Invoke();
 
+    /// <summary>
+    /// Opens the whole-task editor with this project already chosen. Standing in a
+    /// project is itself the statement of where the task belongs.
+    /// </summary>
+    [RelayCommand]
+    private void NewTask() => _owner.RequestNewTaskInProject(Project.Id);
+
     /// <summary>Returns true when the File was created (the view closes its flyout).</summary>
     public bool TryCreateFile()
     {
@@ -299,9 +338,11 @@ public sealed partial class ProjectDetailViewModel : ViewModelBase
 
 public sealed partial class ProjectTaskRowViewModel(
     TaskItem task,
+    ProjectTaskStatusInfo status,
     Action<TaskItem>? onCompleteRequested = null,
     bool canComplete = true,
-    Action<TaskItem>? onEditRequested = null)
+    Action<TaskItem>? onEditRequested = null,
+    Action<Domain.CalendarBlockId, DateOnly>? onSessionRequested = null)
     : ViewModelBase
 {
     public string Title => task.Title;
@@ -312,121 +353,78 @@ public sealed partial class ProjectTaskRowViewModel(
     /// <summary>Whole-task completion; repeating tasks complete per occurrence instead.</summary>
     public bool CanComplete => canComplete;
 
-    public bool IsCompleted => task.IsCompleted;
+    public ProjectTaskStatus Status => status.Kind;
 
-    public bool IsAiOrigin => task.Origin == TaskOrigin.Ai;
+    public DateOnly? SessionDate => status.SessionDate;
 
-    public string MetaText
+    public TimeOnly? SessionStart => status.SessionStart;
+
+    /// <summary>The session the affix names, when there is one. Null otherwise.</summary>
+    public Domain.CalendarBlockId? SessionBlockId => status.SessionBlockId;
+
+    public DateOnly? CompletedOn => status.CompletedOn;
+
+    /// <summary>
+    /// Both halves, because opening the session needs both. Checking only the block
+    /// would let a half-built status render an affix that silently does nothing.
+    /// </summary>
+    public bool HasSessionAffix => status.SessionBlockId is not null && status.SessionDate is not null;
+
+    /// <summary>Completed rows stay in place and recede rather than moving away.</summary>
+    public bool IsCompletedRow => status.Kind == ProjectTaskStatus.Done;
+
+    public string SessionControlName => $"Edit session for {task.Title}";
+
+    public string CompleteControlName => $"Complete {task.Title}";
+
+    /// <summary>
+    /// Display only. Tests assert <see cref="Status"/> instead, so rewording this
+    /// cannot fail a test about behavior.
+    /// </summary>
+    public string StatusText => status.Kind switch
     {
-        get
-        {
-            if (task.IsCompleted)
-            {
-                return task.CompletedAt is { } at
-                    ? $"done {at.LocalDateTime:ddd}".ToLowerInvariant()
-                    : "done";
-            }
+        ProjectTaskStatus.NeedsOutcome => "needs outcome",
+        ProjectTaskStatus.Scheduled => WithEstimate(
+            status.SessionDate is null
+                // Scheduled, but the series' next occurrence sits outside the window
+                // GetScheduledBlocks expands, so there is no date to name.
+                ? "scheduled"
+                : $"{status.SessionDate:ddd} {status.SessionStart:h:mm tt}"),
+        ProjectTaskStatus.Done => status.CompletedOn is { } on
+            ? $"✓ done {on:ddd}"
+            : "✓ done",
+        _ => WithEstimate("unscheduled"),
+    };
 
-            var parts = new List<string>(2);
-            if (task.Deadline is { } deadline)
-            {
-                parts.Add(deadline.ToString("ddd", CultureInfo.CurrentCulture));
-            }
-
-            if (task.EstimatedDuration is { } duration)
-            {
-                parts.Add(TaskRowViewModel.FormatDuration(duration));
-            }
-
-            return string.Join(" · ", parts);
-        }
-    }
+    private string WithEstimate(string when)
+        => task.EstimatedDuration is { } estimate
+            ? $"{when} · {TaskRowViewModel.FormatDuration(estimate)}"
+            : when;
 
     /// <summary>Completes through the owner's one authoritative service path.</summary>
     [RelayCommand]
     private void Complete() => onCompleteRequested?.Invoke(task);
-
-    public bool CanEdit => onEditRequested is not null;
 
     public string EditControlName => $"Edit task {task.Title}";
 
     /// <summary>Opens the one canonical Task editor for this task.</summary>
     [RelayCommand]
     private void Edit() => onEditRequested?.Invoke(task);
-}
 
-/// <summary>
-/// One scheduled-work row: a session of one of the project's tasks. Repeating
-/// sessions carry a per-occurrence completion toggle that shares the calendar's
-/// persistence path; one-off sessions resolve through their Task instead.
-/// </summary>
-public sealed partial class ScheduledBlockRowViewModel : ViewModelBase
-{
-    private readonly ProjectDetailViewModel _owner;
-    private readonly Application.Projects.ProjectScheduledBlock _row;
-    private readonly string _accentColor;
-
-    internal ScheduledBlockRowViewModel(
-        ProjectDetailViewModel owner, Application.Projects.ProjectScheduledBlock row, string accentColor)
-    {
-        _owner = owner;
-        _row = row;
-        _accentColor = accentColor;
-    }
-
-    public string Title => _row.Title;
-
-    /// <summary>Stable row identity for keyboard-focus restoration.</summary>
-    public Domain.CalendarBlockId BlockId => _row.Block.Id;
-
-    public DateOnly Date => _row.Date;
-
-    public TimeOnly Start => _row.Block.StartTime;
-
-    public TimeSpan Duration => _row.Block.Duration;
-
-    public string WhenText => string.Create(
-        CultureInfo.CurrentCulture, $"{Date:ddd} {Start:h\\:mm tt}");
-
-    public string DurationText => TaskRowViewModel.FormatDuration(Duration);
-
-    /// <summary>Lazy: brushes are composition resources and must be created on the UI thread.</summary>
-    public IBrush AccentBrush => ProjectsViewModel.BrushFor(_accentColor);
-
-    public bool IsDone => _row.State == Application.Projects.ProjectBlockState.Done;
-
-    /// <summary>End time passed without completion — quietly flagged, never hidden.</summary>
-    public bool IsOverdue => _row.State == Application.Projects.ProjectBlockState.Overdue;
-
-    /// <summary>Every local session completes here; external events never do.</summary>
-    public bool HasCompletionControl => !_row.Block.IsExternal;
-
-    /// <summary>A repeating session completes per occurrence; a one-off by outcome.</summary>
-    public bool IsRepeating => _row.Block.Recurrence is not null;
-
-    public string CompletionControlName => IsDone ? $"Reopen {Title}" : $"Mark {Title} done";
-
+    /// <summary>
+    /// The affix opens the one session it names — the session scope, where the row
+    /// itself is whole-task scope. A row with no affix has nothing to open. Both the
+    /// block id and its date are always populated together (<see cref="ProjectTaskStatusInfo"/>),
+    /// so requiring both here rather than tolerating a missing date is not a narrowing.
+    /// </summary>
     [RelayCommand]
-    private void ToggleCompletion()
+    private void OpenSession()
     {
-        if (IsRepeating)
+        if (status.SessionBlockId is { } blockId && status.SessionDate is { } date)
         {
-            _owner.SetOccurrenceCompletion(_row.Block.Id, Date, !IsDone);
-        }
-        else
-        {
-            _owner.SetSessionCompletion(_row.Block.Id, !IsDone);
+            onSessionRequested?.Invoke(blockId, date);
         }
     }
-
-    /// <summary>External events sync in read-only; only task sessions open the editor.</summary>
-    public bool CanEdit => !_row.Block.IsExternal;
-
-    public string EditControlName => $"Edit session {Title}";
-
-    /// <summary>Opens the canonical Task editor scoped to this row's occurrence date.</summary>
-    [RelayCommand]
-    private void Edit() => _owner.RequestSessionEdit(_row.Block.Id, Date);
 }
 
 public sealed partial class FolioCardViewModel(

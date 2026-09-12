@@ -17,10 +17,10 @@ using BeBoosted.Domain.Tasks;
 namespace BeBoosted.Desktop.Tests.Ui;
 
 /// <summary>
-/// The Projects surface is a full editor entry point: task rows AND
-/// scheduled-session rows are task-scoped and open the whole-task editor
-/// (the F-03 rule), and completing from the project detail refreshes every
-/// surface through one notification chain.
+/// The Projects surface is a full editor entry point: a task row's title opens the
+/// whole-task editor (the F-03 rule — never a silently picked session), while its
+/// time affix, when present, opens the one session it names. Completing from the
+/// project detail refreshes every surface through one notification chain.
 /// </summary>
 public sealed class ProjectEntryPointTests
 {
@@ -113,37 +113,40 @@ public sealed class ProjectEntryPointTests
         fixture.Window.Close();
     }
 
-    /// <summary>A scheduled-session row in a list is still task-scoped (F-03).</summary>
+    /// <summary>
+    /// The affix names one session, so clicking it opens that session directly — not
+    /// the whole task (the row's title is the whole-task entry point instead).
+    /// </summary>
     [AvaloniaFact]
-    public void ScheduledSessionRow_EditButton_OpensTheWholeTaskEditor()
+    public void SessionAffix_OpensThatSessionsEditor()
     {
         var fixture = CreateProjectShell();
 
-        // The repeating Stats HW session's upcoming occurrence row (today).
-        ClickByName(fixture.Window, "Edit session Stats HW");
+        // The Stats HW row's affix, naming its upcoming occurrence (today).
+        ClickByName(fixture.Window, "Edit session for Stats HW");
 
-        var editor = Assert.IsType<WholeTaskEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
-        Assert.Equal("Stats HW", editor.Title);
-        Assert.Single(editor.Sessions);
-
-        // Occurrence completion lives in the pushed session editor (F-15 resolves today).
-        editor.Sessions.Single().EditCommand.Execute(null);
-        fixture.Window.CaptureRenderedFrame();
+        // Occurrence completion lives right here (F-15 resolves today).
         var session = Assert.IsType<SessionEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
+        Assert.Equal("Stats HW", session.TaskTitle);
         Assert.Equal(TestShell.DesignDate, session.OccurrenceDate);
         Assert.False(session.IsOccurrenceCompleted);
         session.IsOccurrenceCompleted = true;
         session.SaveCommand.Execute(null);
         fixture.Window.CaptureRenderedFrame();
-        var detail = fixture.Shell.Projects.Detail!;
-        Assert.Contains(
-            detail.ScheduledBlocks.Concat(detail.CompletedScheduledBlocks),
-            r => r.IsDone && r.Date == TestShell.DesignDate);
+
+        // A done occurrence is no longer a row of its own: the task's one row follows
+        // the completion by naming the next occurrence instead.
+        var row = fixture.Shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW");
+        Assert.Equal(TestShell.DesignDate.AddDays(7), row.SessionDate);
         fixture.Window.Close();
     }
 
+    /// <summary>
+    /// The affix survives its own occurrence being completed — it renames itself to
+    /// the next one and still opens that (new) session's editor.
+    /// </summary>
     [AvaloniaFact]
-    public void CompletedScheduledRow_EditButton_OpensTheEditor()
+    public void SessionAffix_AfterTheOccurrenceIsDone_StillOpensTheEditor()
     {
         var fixture = CreateProjectShell();
         fixture.Shell.Calendar.SetOccurrenceDone(
@@ -151,10 +154,14 @@ public sealed class ProjectEntryPointTests
         fixture.Window.CaptureRenderedFrame();
         fixture.Window.CaptureRenderedFrame();
 
-        ClickByName(fixture.Window, "Edit session Stats HW");
+        var row = fixture.Shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW");
+        Assert.Equal(TestShell.DesignDate.AddDays(7), row.SessionDate);
 
-        var editor = Assert.IsType<WholeTaskEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
-        Assert.Equal("Stats HW", editor.Title);
+        ClickByName(fixture.Window, "Edit session for Stats HW");
+
+        var editor = Assert.IsType<SessionEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
+        Assert.Equal("Stats HW", editor.TaskTitle);
+        Assert.Equal(TestShell.DesignDate.AddDays(7), editor.OccurrenceDate);
         fixture.Window.Close();
     }
 
@@ -171,7 +178,7 @@ public sealed class ProjectEntryPointTests
         var changes = 0;
         shell.Calendar.DataChanged += () => changes++;
 
-        var row = shell.Projects.Detail!.OpenTasks.Single(t => t.Title == "PIQ2");
+        var row = shell.Projects.Detail!.Tasks.Single(t => t.Title == "PIQ2");
         row.CompleteCommand.Execute(null);
         fixture.Window.CaptureRenderedFrame();
 
@@ -179,8 +186,10 @@ public sealed class ProjectEntryPointTests
         Assert.True(fixture.Tasks.GetById(fixture.OpenTaskId)!.IsCompleted);
         // The Inbox queue dropped it without a manual reload.
         Assert.DoesNotContain(shell.Inbox.Tasks, r => r.Title == "PIQ2");
-        // The open detail moved it to recently completed.
-        Assert.Contains(shell.Projects.Detail!.RecentlyCompleted, t => t.Title == "PIQ2");
+        // The open detail keeps its one row and reports it done in place.
+        Assert.Equal(
+            ProjectTaskStatus.Done,
+            shell.Projects.Detail!.Tasks.Single(t => t.Title == "PIQ2").Status);
         // Navigating back to Calendar shows fresh completion state immediately.
         shell.NavigateCommand.Execute(AppSection.Calendar);
         fixture.Window.CaptureRenderedFrame();
@@ -205,11 +214,13 @@ public sealed class ProjectEntryPointTests
         editor.SaveCommand.Execute(null);
 
         // Added to the open new project immediately…
-        Assert.Contains(shell.Projects.Detail!.OpenTasks, t => t.Title == "PIQ2");
+        Assert.Contains(
+            shell.Projects.Detail!.Tasks,
+            t => t.Title == "PIQ2" && t.Status != ProjectTaskStatus.Done);
         // …and gone from the old one.
         shell.Projects.CloseDetailCommand.Execute(null);
         shell.Projects.Projects.Single(p => p.Name == "Schoolwork").OpenCommand.Execute(null);
-        Assert.DoesNotContain(shell.Projects.Detail!.OpenTasks, t => t.Title == "PIQ2");
+        Assert.DoesNotContain(shell.Projects.Detail!.Tasks, t => t.Title == "PIQ2");
         fixture.Window.Close();
     }
 }

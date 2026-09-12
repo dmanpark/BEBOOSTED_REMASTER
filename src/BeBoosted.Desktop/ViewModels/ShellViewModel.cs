@@ -71,9 +71,15 @@ public sealed partial class ShellViewModel : ViewModelBase
         // Project rows share the same canonical editor and the same single
         // post-mutation chain (task completion and occurrence toggles alike).
         Projects.TaskEditRequested += Calendar.OpenTaskEditorForTask;
-        // A scheduled-session row in a project list is still task-scoped (F-03).
-        Projects.SessionEditRequested += (id, _) => Calendar.OpenTaskEditorForBlockOwner(id);
+        // The affix names one session, so clicking it opens that session on that
+        // occurrence. The row's title still opens the whole task - F-03's rule is that
+        // a list never silently picks a session, and an affix that names it is not a
+        // silent pick. Sessions are no longer rows of their own here.
+        Projects.SessionEditRequested += (id, date) => Calendar.OpenTaskEditorForBlock(id, date);
         Projects.TasksMutated += Calendar.NotifyTasksMutated;
+        // The header's "New task" button opens the same editor as the shell's own
+        // New task button, with the project already chosen.
+        Projects.NewTaskRequested += Calendar.OpenNewTaskEditorInProject;
 
         Inbox.PropertyChanged += (_, e) =>
         {
@@ -91,6 +97,11 @@ public sealed partial class ShellViewModel : ViewModelBase
                 // The sort gate is period-scoped: another day can hold no ranks yet.
                 StartPrioritySortCommand.NotifyCanExecuteChanged();
                 PlanCommand.NotifyCanExecuteChanged();
+            }
+
+            if (e.PropertyName == nameof(CalendarViewModel.ViewKind))
+            {
+                OnPropertyChanged(nameof(ShowDragHint));
             }
         };
         // Completing scheduled work changes the live set without touching the inbox
@@ -123,11 +134,24 @@ public sealed partial class ShellViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsCalendarActive))]
     [NotifyPropertyChangedFor(nameof(IsProjectsActive))]
     [NotifyPropertyChangedFor(nameof(IsSettingsActive))]
+    [NotifyPropertyChangedFor(nameof(ShowDragHint))]
     public partial AppSection ActiveSection { get; private set; } = AppSection.Calendar;
 
     /// <summary>The Inbox is a drawer over the current calendar surface, never a full page.</summary>
     [ObservableProperty]
     public partial bool IsInboxOpen { get; set; }
+
+    partial void OnIsInboxOpenChanged(bool value) => OnPropertyChanged(nameof(ShowDragHint));
+
+    /// <summary>
+    /// "Drag onto the calendar" is only true when a calendar grid is actually behind
+    /// the drawer. Today is a list, and telling someone to drag onto it offers an
+    /// interaction the surface does not have — and so do Projects and Settings, which
+    /// the ungated rail toggle can open this drawer over just as easily. The section
+    /// has to be part of the question, not just the calendar's own view kind.
+    /// </summary>
+    public bool ShowDragHint
+        => IsInboxOpen && IsCalendarActive && Calendar.ViewKind == CalendarViewKind.Week;
 
     public bool IsCalendarActive => ActiveSection == AppSection.Calendar;
 

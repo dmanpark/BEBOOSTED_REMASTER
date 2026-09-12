@@ -19,8 +19,9 @@ namespace BeBoosted.Desktop.Tests.Ui;
 /// <summary>
 /// Real click paths for per-occurrence completion of repeating tasks: the calendar
 /// circle marks only the clicked day's occurrence done without opening the editor, the
-/// Project page circle shares the same path, accessible names flip between mark/reopen,
-/// and one-off sessions and locked externals get no occurrence circle.
+/// Project detail shares the same completion (through its own path — it renders one
+/// row per task, not per occurrence), accessible names flip between mark/reopen, and
+/// one-off sessions and locked externals get no occurrence circle.
 /// </summary>
 public sealed class OccurrenceCompletionUiTests
 {
@@ -120,8 +121,15 @@ public sealed class OccurrenceCompletionUiTests
         window.Close();
     }
 
+    /// <summary>
+    /// The project page no longer renders a row — or a circle — per occurrence: a
+    /// repeating task appears once, and its affix names the next occurrence. So the
+    /// completion is driven from the only control that still offers it — the calendar
+    /// circle — and what this pins is that the project's single row follows it: the
+    /// rendered affix advances to the following occurrence and comes back on reopen.
+    /// </summary>
     [AvaloniaFact]
-    public void ProjectPageCircleClick_TogglesTheSameCompletion_AndCalendarFollows()
+    public void CompletingAnOccurrenceOnTheCalendar_AdvancesTheProjectRowsAffix()
     {
         var fixture = CreateShellWithRepeatingStatsHw();
         var window = fixture.Window;
@@ -129,36 +137,54 @@ public sealed class OccurrenceCompletionUiTests
         fixture.Shell.Projects.OpenProject(fixture.ProjectId);
         window.CaptureRenderedFrame();
 
-        var circle = window.GetVisualDescendants()
-            .OfType<Button>()
-            .First(b => b.IsEffectivelyVisible
-                && AutomationProperties.GetName(b) == "Mark Stats HW done");
-        Click(window, circle);
-
         var detail = fixture.Shell.Projects.Detail!;
-        var rows = detail.ScheduledBlocks.Concat(detail.CompletedScheduledBlocks).ToList();
-        Assert.Contains(rows, r => r.IsDone && r.Date == TestShell.DesignDate);
+        var row = Assert.Single(detail.Tasks);
+        Assert.Equal(TestShell.DesignDate, row.SessionDate);
+        AssertAffixRendered(window, row.StatusText);
 
-        // The calendar surface reflects it immediately.
-        fixture.Shell.NavigateCommand.Execute(AppSection.Calendar);
-        window.CaptureRenderedFrame();
-        ScrollCalendarTo(window, 780);
-        var view = FindBlockView(window, "Stats HW");
-        Assert.True(((CalendarBlockViewModel)view.DataContext!).IsDone);
+        ClickTheOccurrenceCircle(fixture);
 
-        // Reopen from the Project page updates both again.
+        // Only the clicked day's occurrence completed, and the one row moved on to
+        // the next one rather than splitting into a completed row of its own.
+        Assert.NotNull(fixture.Completions.Get(fixture.StatsSessionId, TestShell.DesignDate));
+        Assert.True(((CalendarBlockViewModel)FindBlockView(window, "Stats HW").DataContext!).IsDone);
+
         fixture.Shell.NavigateCommand.Execute(AppSection.Projects);
         window.CaptureRenderedFrame();
-        var reopen = window.GetVisualDescendants()
-            .OfType<Button>()
-            .First(b => b.IsEffectivelyVisible
-                && AutomationProperties.GetName(b) == "Reopen Stats HW");
-        Click(window, reopen);
-        Assert.Contains(
-            fixture.Shell.Projects.Detail!.ScheduledBlocks,
-            r => !r.IsDone && r.Date == TestShell.DesignDate);
+        var advanced = Assert.Single(fixture.Shell.Projects.Detail!.Tasks);
+        Assert.Equal(TestShell.DesignDate.AddDays(7), advanced.SessionDate);
+        AssertAffixRendered(window, advanced.StatusText);
+
+        // Reopening through the same control updates both again.
+        ClickTheOccurrenceCircle(fixture);
+        Assert.Null(fixture.Completions.Get(fixture.StatsSessionId, TestShell.DesignDate));
+
+        fixture.Shell.NavigateCommand.Execute(AppSection.Projects);
+        window.CaptureRenderedFrame();
+        var reopened = Assert.Single(fixture.Shell.Projects.Detail!.Tasks);
+        Assert.Equal(TestShell.DesignDate, reopened.SessionDate);
+        AssertAffixRendered(window, reopened.StatusText);
         window.Close();
     }
+
+    /// <summary>
+    /// Stands on the Week timeline and clicks the rendered occurrence circle for
+    /// today's "Stats HW" — the one control that still completes an occurrence.
+    /// </summary>
+    private static void ClickTheOccurrenceCircle(Fixture fixture)
+    {
+        fixture.Shell.NavigateCommand.Execute(AppSection.Calendar);
+        fixture.Window.CaptureRenderedFrame();
+        ScrollCalendarTo(fixture.Window, 780);
+        var view = FindBlockView(fixture.Window, "Stats HW");
+        Click(fixture.Window, view.FindControl<Button>("OccurrenceDoneButton")!);
+    }
+
+    /// <summary>The affix is the project row's only rendered word about its session.</summary>
+    private static void AssertAffixRendered(MainWindow window, string affix)
+        => Assert.Contains(
+            window.GetVisualDescendants().OfType<TextBlock>(),
+            t => t.IsEffectivelyVisible && t.Text == affix);
 
     [AvaloniaFact]
     public void ExternalEventsAndOneOffSessions_GetNoOccurrenceCircle()
@@ -172,8 +198,10 @@ public sealed class OccurrenceCompletionUiTests
 
         var oneOff = FindBlockView(window, "Practice DECA role-play");
         Assert.False(oneOff.FindControl<Button>("OccurrenceDoneButton")!.IsVisible);
-        // One-off sessions keep their multi-outcome flyout control instead.
+        // One-off sessions get the equivalent pair instead: a checkbox, plus the
+        // overflow holding the outcomes that are not a simple finish.
         Assert.True(oneOff.FindControl<Button>("CompleteButton")!.IsVisible);
+        Assert.True(oneOff.FindControl<Button>("OutcomeButton")!.IsVisible);
         window.Close();
     }
 

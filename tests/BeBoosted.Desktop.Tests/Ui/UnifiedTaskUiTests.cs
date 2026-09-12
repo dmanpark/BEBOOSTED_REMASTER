@@ -167,7 +167,7 @@ public sealed class UnifiedTaskUiTests
         shell.NavigateCommand.Execute(AppSection.Projects);
         shell.Projects.NewProjectName = "CAPPs";
         Assert.True(shell.Projects.TryCreateProject());
-        Assert.Empty(shell.Projects.Detail!.OpenTasks);
+        Assert.Empty(shell.Projects.Detail!.Tasks);
 
         shell.NavigateCommand.Execute(AppSection.Calendar);
         shell.Inbox.CaptureText = "PIQ2";
@@ -193,7 +193,9 @@ public sealed class UnifiedTaskUiTests
         Assert.Equal(
             shell.Projects.Detail!.Project.Id,
             tasks.GetAll().Single(t => t.Title == "PIQ2").ProjectId);
-        Assert.Contains(shell.Projects.Detail.OpenTasks, t => t.Title == "PIQ2");
+        Assert.Contains(
+            shell.Projects.Detail.Tasks,
+            t => t.Title == "PIQ2" && t.Status != ProjectTaskStatus.Done);
         window.Close();
     }
 
