@@ -95,6 +95,11 @@ public sealed partial class ShellViewModel : ViewModelBase
                 StartPrioritySortCommand.NotifyCanExecuteChanged();
                 PlanCommand.NotifyCanExecuteChanged();
             }
+
+            if (e.PropertyName == nameof(CalendarViewModel.ViewKind))
+            {
+                OnPropertyChanged(nameof(ShowDragHint));
+            }
         };
         // Completing scheduled work changes the live set without touching the inbox
         // count, so every calendar mutation re-asks both gates.
@@ -131,6 +136,16 @@ public sealed partial class ShellViewModel : ViewModelBase
     /// <summary>The Inbox is a drawer over the current calendar surface, never a full page.</summary>
     [ObservableProperty]
     public partial bool IsInboxOpen { get; set; }
+
+    partial void OnIsInboxOpenChanged(bool value) => OnPropertyChanged(nameof(ShowDragHint));
+
+    /// <summary>
+    /// "Drag onto the calendar" is only true when a calendar grid is actually behind
+    /// the drawer. Today is a list, and telling someone to drag onto it offers an
+    /// interaction the surface does not have.
+    /// </summary>
+    public bool ShowDragHint
+        => IsInboxOpen && Calendar.ViewKind == CalendarViewKind.Week;
 
     public bool IsCalendarActive => ActiveSection == AppSection.Calendar;
 
