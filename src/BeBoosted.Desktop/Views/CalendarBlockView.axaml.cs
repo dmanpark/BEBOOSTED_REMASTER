@@ -25,14 +25,14 @@ public partial class CalendarBlockView : UserControl
     /// 20 wide plus its 8 right margin (28) and the overflow's 20 plus its 6 left margin
     /// (26) — 75px, with nothing left over for the title.
     /// </summary>
-    private const double BothControlsFitWidth = 2 + 3 + 16 + 28 + 26;
+    internal const double BothControlsFitWidth = 2 + 3 + 16 + 28 + 26;
 
     /// <summary>
     /// The narrowest title the overflow is willing to share a block with. Measured, not
     /// picked: the word "Practice" at the title's own 12px SemiBold is 48px exactly, so
     /// this is about eight characters — enough to tell two sessions apart at a glance.
     /// </summary>
-    private const double MinimumSharedTitleWidth = 48;
+    internal const double MinimumSharedTitleWidth = 48;
 
     /// <summary>
     /// What the overflow actually costs a block: room for both controls AND for a title
@@ -53,7 +53,7 @@ public partial class CalendarBlockView : UserControl
     /// be arranged into. While those disagreed, no width predicate could have worked: the
     /// inner grid was laid out for a width the block never got.
     /// </summary>
-    private const double OverflowFitWidth = BothControlsFitWidth + MinimumSharedTitleWidth;
+    internal const double OverflowFitWidth = BothControlsFitWidth + MinimumSharedTitleWidth;
 
     private TimelineSurfaceView? _surface;
     private Avalonia.Point _pressPoint;

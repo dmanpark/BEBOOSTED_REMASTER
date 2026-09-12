@@ -9,6 +9,7 @@ using BeBoosted.Application.Settings;
 using BeBoosted.Desktop.Tests.Support;
 using BeBoosted.Desktop.ViewModels;
 using BeBoosted.Desktop.Views;
+using BeBoosted.Domain;
 using BeBoosted.Domain.Calendar;
 using BeBoosted.Domain.Scheduling;
 using BeBoosted.Domain.Tasks;
@@ -109,10 +110,12 @@ public sealed class CompletionParityTests
     }
 
     /// <summary>
-    /// The overflow needs 123px of block: 75 for itself and the checkbox — see
-    /// CalendarBlockView.BothControlsFitWidth, which sums that off the AXAML — plus 48
-    /// for a title worth reading beside them, which is CalendarBlockView's
-    /// MinimumSharedTitleWidth. Below that the overflow hides and the checkbox stays,
+    /// The overflow needs CalendarBlockView.OverflowFitWidth of block — 123px, as 75 for
+    /// itself and the checkbox (BothControlsFitWidth, summed off the AXAML) plus 48 for a
+    /// title worth reading beside them (MinimumSharedTitleWidth). The rows read that
+    /// constant rather than a copy of its value, so retuning it moves what they demand
+    /// instead of leaving them pinned to a snapshot of today's number.
+    /// Below the threshold the overflow hides and the checkbox stays,
     /// finishing being the common case; above it the overflow is back, so this is a width
     /// response and not a deletion. See the AXAML's styles for what hiding it costs.
     ///
@@ -129,9 +132,14 @@ public sealed class CompletionParityTests
     /// option the user was shown and turned down. It is the row that should go red first
     /// if anyone retunes the number.
     ///
-    /// 1920x1080 with two overlapping is deliberately absent: it lands on exactly 123px,
-    /// so pinning it would be a row that passes by 0px, and this file has just finished
-    /// removing one of those. The report carries the measurement instead.
+    /// 1920x1080 with two overlapping is the tightest row here: that block is 123px, the
+    /// threshold to the pixel. It is only worth pinning because the guard below reads the
+    /// constant rather than a copy of its value — as a hard-coded 123 it would have been
+    /// a row passing by 0px of coincidence, which is not worth having. Read against the
+    /// constant it says something real, that a block exactly at the threshold still shows
+    /// the overflow, and it is what stops the constant drifting upward unnoticed: the
+    /// pair of it and the 1440 row hold the number inside about 15..48, where the rows'
+    /// nearest block widths (89 below, 123 at) sit.
     /// </summary>
     [AvaloniaTheory]
     [InlineData(1100, 720, 1, true)]
@@ -141,6 +149,7 @@ public sealed class CompletionParityTests
     [InlineData(1440, 960, 2, false)]
     [InlineData(1440, 960, 3, false)]
     [InlineData(1920, 1080, 1, true)]
+    [InlineData(1920, 1080, 2, true)]
     [InlineData(1920, 1080, 3, false)]
     public void TheControlsOfABlock_StayInsideIt(
         double windowWidth, double windowHeight, int overlapping, bool expectOverflow)
@@ -156,11 +165,14 @@ public sealed class CompletionParityTests
             // the rows that expect one really are wider. Without this a layout change that
             // stopped them overlapping would leave nothing at risk and every assertion
             // below would pass witnessing nothing.
+            var fits = CalendarBlockView.OverflowFitWidth;
             Assert.True(
-                expectOverflow ? view.Bounds.Width >= 123 : view.Bounds.Width < 123,
+                expectOverflow ? view.Bounds.Width >= fits : view.Bounds.Width < fits,
                 $"{overlapping} overlapping sessions at {windowWidth}x{windowHeight} give a "
-                + $"{view.Bounds.Width}-wide block, which is the wrong side of 123 for this row "
-                + "to be witnessing what it claims");
+                + $"{view.Bounds.Width}-wide block, which is the wrong side of "
+                + $"CalendarBlockView.OverflowFitWidth ({fits}) for this row to witness what it "
+                + "claims. If that constant was just retuned, these rows are what it has to "
+                + "answer to: pick window sizes that still straddle it, or revisit the number.");
 
             // Every control the block offers is laid out inside it. This used to clear
             // the edge by 1px on a lone block and by nothing at all on an overlapping
@@ -613,11 +625,34 @@ public sealed class CompletionParityTests
         var (window, _) = ShowWeek(tasks, blocks);
 
         Assert.True(SessionViewModel(window, elapsed).NeedsOutcome);
-        Assert.Contains(
+
+        // Being in the tree is not being on screen. The chip shares the title's row, and
+        // whichever of them is laid out first takes the width — so when the title went
+        // first this assertion passed over a chip arranged at 0px, and the copy an earlier
+        // task existed to unify was invisible on any block with a longish title. The small
+        // fixed-width items get their space first now; the title trims, which is what
+        // trimming is for.
+        var chip = Assert.Single(
             SessionView(window, elapsed).GetVisualDescendants().OfType<TextBlock>(),
             t => t.Text == "Needs outcome");
+        Assert.True(chip.IsEffectivelyVisible);
+        Assert.True(
+            chip.Bounds.Width > 0,
+            $"the chip is arranged at {chip.Bounds.Width}px wide, so it is in the visual tree "
+            + "and nowhere on screen");
+
         Assert.DoesNotContain(
             window.GetVisualDescendants().OfType<TextBlock>(),
             t => t.Text == "outcome?");
     }
+
+    // The lock icon beside the title has no test of its own, and that is a finding rather
+    // than an omission. One was written — a long-titled external event, asserting the lock
+    // is arranged wider than 0px — and it passed against the very layout that starved the
+    // chip to 0px, so it could not fail for the reason it claimed. The asymmetry is
+    // structural: the lock is a Path with an explicit Width="11", which is arranged at its
+    // own size even out of a starved slot, while the chip is a Border sized by its content
+    // and collapses. So the lock was never actually at risk and the chip always was. If
+    // the lock ever loses that fixed Width, it joins the chip's case and wants the chip's
+    // test.
 }
