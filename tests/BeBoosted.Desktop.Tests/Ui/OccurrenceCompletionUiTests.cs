@@ -97,7 +97,9 @@ public sealed class OccurrenceCompletionUiTests
         var view = FindBlockView(window, "Stats HW");
         var circle = view.FindControl<Button>("OccurrenceDoneButton")!;
         Assert.True(circle.IsVisible);
-        Assert.Equal("Mark Stats HW done", AutomationProperties.GetName(circle));
+        Assert.Equal(
+            $"Complete Stats HW on {TestShell.DesignDate:ddd d MMM}",
+            AutomationProperties.GetName(circle));
 
         Click(window, circle);
 
@@ -112,7 +114,9 @@ public sealed class OccurrenceCompletionUiTests
         // opacity and the strike-through title.
         Assert.Contains("done", doneView.FindControl<Border>("BlockBorder")!.Classes);
         var doneCircle = doneView.FindControl<Button>("OccurrenceDoneButton")!;
-        Assert.Equal("Reopen Stats HW", AutomationProperties.GetName(doneCircle));
+        Assert.Equal(
+            $"Reopen Stats HW on {TestShell.DesignDate:ddd d MMM}",
+            AutomationProperties.GetName(doneCircle));
 
         Click(window, doneCircle);
         var reopened = FindBlockView(window, "Stats HW");
@@ -123,13 +127,15 @@ public sealed class OccurrenceCompletionUiTests
 
     /// <summary>
     /// The project page no longer renders a row — or a circle — per occurrence: a
-    /// repeating task appears once, and its affix names the next occurrence. So the
-    /// completion is driven from the only control that still offers it — the calendar
-    /// circle — and what this pins is that the project's single row follows it: the
-    /// rendered affix advances to the following occurrence and comes back on reopen.
+    /// repeating task appears once, and its affix names today's occurrence. What this
+    /// pins is that the project's single row follows a completion driven from the
+    /// calendar: the rendered affix goes on naming the occurrence that was just ticked,
+    /// now with its own circle checked, and unchecks again on reopen. It deliberately
+    /// does NOT advance to next week's — that would make the completion irreversible
+    /// from the project page, which is the whole reason the row keeps naming it.
     /// </summary>
     [AvaloniaFact]
-    public void CompletingAnOccurrenceOnTheCalendar_AdvancesTheProjectRowsAffix()
+    public void CompletingAnOccurrenceOnTheCalendar_ChecksTheProjectRowsCircle()
     {
         var fixture = CreateShellWithRepeatingStatsHw();
         var window = fixture.Window;
@@ -144,16 +150,17 @@ public sealed class OccurrenceCompletionUiTests
 
         ClickTheOccurrenceCircle(fixture);
 
-        // Only the clicked day's occurrence completed, and the one row moved on to
-        // the next one rather than splitting into a completed row of its own.
+        // Only the clicked day's occurrence completed, and the one row reports it in
+        // place rather than splitting into a completed row of its own.
         Assert.NotNull(fixture.Completions.Get(fixture.StatsSessionId, TestShell.DesignDate));
         Assert.True(((CalendarBlockViewModel)FindBlockView(window, "Stats HW").DataContext!).IsDone);
 
         fixture.Shell.NavigateCommand.Execute(AppSection.Projects);
         window.CaptureRenderedFrame();
-        var advanced = Assert.Single(fixture.Shell.Projects.Detail!.Tasks);
-        Assert.Equal(TestShell.DesignDate.AddDays(7), advanced.SessionDate);
-        AssertAffixRendered(window, advanced.StatusText);
+        var ticked = Assert.Single(fixture.Shell.Projects.Detail!.Tasks);
+        Assert.Equal(TestShell.DesignDate, ticked.SessionDate);
+        Assert.True(ticked.IsDone);
+        AssertAffixRendered(window, ticked.StatusText);
 
         // Reopening through the same control updates both again.
         ClickTheOccurrenceCircle(fixture);
@@ -163,6 +170,7 @@ public sealed class OccurrenceCompletionUiTests
         window.CaptureRenderedFrame();
         var reopened = Assert.Single(fixture.Shell.Projects.Detail!.Tasks);
         Assert.Equal(TestShell.DesignDate, reopened.SessionDate);
+        Assert.False(reopened.IsDone);
         AssertAffixRendered(window, reopened.StatusText);
         window.Close();
     }
@@ -194,14 +202,29 @@ public sealed class OccurrenceCompletionUiTests
         ScrollCalendarTo(window, 700);
 
         var external = FindBlockView(window, "Imported standup");
-        Assert.False(external.FindControl<Button>("OccurrenceDoneButton")!.IsVisible);
+        Assert.False(external.FindControl<Button>("OccurrenceDoneButton")!.IsEffectivelyVisible);
 
         var oneOff = FindBlockView(window, "Practice DECA role-play");
-        Assert.False(oneOff.FindControl<Button>("OccurrenceDoneButton")!.IsVisible);
+        Assert.False(oneOff.FindControl<Button>("OccurrenceDoneButton")!.IsEffectivelyVisible);
         // One-off sessions get the equivalent pair instead: a checkbox, plus the
-        // overflow holding the outcomes that are not a simple finish.
-        Assert.True(oneOff.FindControl<Button>("CompleteButton")!.IsVisible);
-        Assert.True(oneOff.FindControl<Button>("OutcomeButton")!.IsVisible);
+        // overflow holding the outcomes that are not a simple finish. The checkbox is
+        // there at any width — this session shares its hour with Stats HW, which
+        // squeezes it to 89px, and the checkbox needs 33.
+        Assert.True(oneOff.FindControl<Button>("CompleteButton")!.IsEffectivelyVisible);
+
+        // The overflow is read off a session with its hour to itself, because 89px is
+        // below the width at which a block offers one at all: the outcomes would sit
+        // beside a title trimmed to an ellipsis. "Draft personal statement" is the same
+        // kind of block — a one-off local session — with room to show the pair.
+        var roomyOneOff = FindBlockView(window, "Draft personal statement");
+        Assert.True(
+            roomyOneOff.Bounds.Width >= CalendarBlockView.OverflowFitWidth,
+            $"the roomy fixture is {roomyOneOff.Bounds.Width} wide, under "
+            + $"CalendarBlockView.OverflowFitWidth ({CalendarBlockView.OverflowFitWidth}), so it "
+            + "no longer offers the overflow and this half of the test witnesses nothing");
+        Assert.False(roomyOneOff.FindControl<Button>("OccurrenceDoneButton")!.IsEffectivelyVisible);
+        Assert.True(roomyOneOff.FindControl<Button>("CompleteButton")!.IsEffectivelyVisible);
+        Assert.True(roomyOneOff.FindControl<Button>("OutcomeButton")!.IsEffectivelyVisible);
         window.Close();
     }
 

@@ -341,7 +341,12 @@ public sealed partial class DailyRowViewModel : ViewModelBase
 
     // ---- Accessible names ----
 
-    public string CompletionControlName => IsDone ? $"Reopen {Title}" : $"Mark {Title} done";
+    /// <summary>
+    /// One verb for the complete half, everywhere it is offered — see
+    /// <see cref="CalendarBlockViewModel.CompletionControlName"/>, whose control this is
+    /// the Today-list twin of.
+    /// </summary>
+    public string CompletionControlName => IsDone ? $"Reopen {Title}" : $"Complete {Title}";
 
     public string OutcomeControlName => $"Record outcome for {Title}";
 

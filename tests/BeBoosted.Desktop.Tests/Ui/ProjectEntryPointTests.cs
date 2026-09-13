@@ -134,16 +134,19 @@ public sealed class ProjectEntryPointTests
         session.SaveCommand.Execute(null);
         fixture.Window.CaptureRenderedFrame();
 
-        // A done occurrence is no longer a row of its own: the task's one row follows
-        // the completion by naming the next occurrence instead.
+        // A done occurrence is no longer a row of its own — and the row does NOT jump
+        // to next week the instant today's is ticked. It keeps naming today's, checked,
+        // so the completion stays undoable from this screen. It advances tomorrow.
         var row = fixture.Shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW");
-        Assert.Equal(TestShell.DesignDate.AddDays(7), row.SessionDate);
+        Assert.Equal(TestShell.DesignDate, row.SessionDate);
+        Assert.True(row.IsDone);
         fixture.Window.Close();
     }
 
     /// <summary>
-    /// The affix survives its own occurrence being completed — it renames itself to
-    /// the next one and still opens that (new) session's editor.
+    /// The affix survives its own occurrence being completed — it goes on naming that
+    /// occurrence and still opens its editor, which is what keeps the completion
+    /// reversible from here rather than only on Today or the Week timeline.
     /// </summary>
     [AvaloniaFact]
     public void SessionAffix_AfterTheOccurrenceIsDone_StillOpensTheEditor()
@@ -155,13 +158,14 @@ public sealed class ProjectEntryPointTests
         fixture.Window.CaptureRenderedFrame();
 
         var row = fixture.Shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW");
-        Assert.Equal(TestShell.DesignDate.AddDays(7), row.SessionDate);
+        Assert.Equal(TestShell.DesignDate, row.SessionDate);
 
         ClickByName(fixture.Window, "Edit session for Stats HW");
 
         var editor = Assert.IsType<SessionEditorViewModel>(fixture.Shell.Calendar.ActiveTaskEditor);
         Assert.Equal("Stats HW", editor.TaskTitle);
-        Assert.Equal(TestShell.DesignDate.AddDays(7), editor.OccurrenceDate);
+        Assert.Equal(TestShell.DesignDate, editor.OccurrenceDate);
+        Assert.True(editor.IsOccurrenceCompleted);
         fixture.Window.Close();
     }
 
@@ -179,7 +183,7 @@ public sealed class ProjectEntryPointTests
         shell.Calendar.DataChanged += () => changes++;
 
         var row = shell.Projects.Detail!.Tasks.Single(t => t.Title == "PIQ2");
-        row.CompleteCommand.Execute(null);
+        row.ToggleDoneCommand.Execute(null);
         fixture.Window.CaptureRenderedFrame();
 
         Assert.Equal(1, changes); // exactly one announcement

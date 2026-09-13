@@ -238,16 +238,22 @@ public sealed class ShellProjectRefreshTests
         Assert.Equal(1, detailRefreshes);
         Assert.Equal(1, inboxResets);
         Assert.True(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
-        // A done occurrence is no longer a row of its own: the task's one row follows
-        // the completion by naming the next occurrence instead.
-        Assert.Equal(Tomorrow.AddDays(7), Assert.Single(detail.Tasks).SessionDate);
+        // A done occurrence is no longer a row of its own: the task's one row reports it
+        // in place, still naming tomorrow's occurrence with its circle checked. It does
+        // not advance to the week after — tomorrow has not been and gone, and a row that
+        // renamed itself on the tick would make the tick unundoable from the project.
+        var ticked = Assert.Single(detail.Tasks);
+        Assert.Equal(Tomorrow, ticked.SessionDate);
+        Assert.True(ticked.IsDone);
 
         // Reopening from the calendar flows through the same chain again.
         CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
         Assert.Equal(2, changes);
         Assert.Equal(2, detailRefreshes);
         Assert.False(CalendarBlockFor(shell, blockId, Tomorrow).IsDone);
-        Assert.Equal(Tomorrow, Assert.Single(detail.Tasks).SessionDate);
+        var untickedRow = Assert.Single(detail.Tasks);
+        Assert.Equal(Tomorrow, untickedRow.SessionDate);
+        Assert.False(untickedRow.IsDone);
 
         // A no-op request emits no success notification anywhere. The toggle cannot
         // ask for the state it is already in, so the path beneath it is asked directly.
@@ -303,7 +309,7 @@ public sealed class ShellProjectRefreshTests
         shell.Calendar.ViewKind = BeBoosted.Application.Settings.CalendarViewKind.Week;
         shell.NavigateCommand.Execute(AppSection.Projects);
         shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW")
-            .CompleteCommand.Execute(null);
+            .ToggleDoneCommand.Execute(null);
         Assert.Equal(BlockOutcome.Done, blocks.GetById(blockId)!.Outcome);
         Assert.Equal(
             ProjectTaskStatus.Done, Assert.Single(shell.Projects.Detail!.Tasks).Status);
@@ -320,7 +326,9 @@ public sealed class ShellProjectRefreshTests
     /// <summary>
     /// A repeating task completes per occurrence and never as a whole: its project row
     /// offers no whole-task control, and completing an occurrence leaves both the Task
-    /// and the block's own outcome alone while still moving the row to the next one.
+    /// and the block's own outcome alone. The row keeps naming that occurrence, checked,
+    /// rather than advancing — the occurrence's own day has not passed, so the tick has
+    /// to stay undoable from the row it was made on.
     /// </summary>
     [Fact]
     public void CompletingARepeatingOccurrence_LeavesTheTaskAndBlockOutcomeAlone()
@@ -332,18 +340,25 @@ public sealed class ShellProjectRefreshTests
         var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
 
         var row = Assert.Single(shell.Projects.Detail!.Tasks);
-        Assert.False(row.CanComplete);
+
+        // The circle this row carries is the named occurrence's, not the whole task's:
+        // ticking it below leaves the Task open, which is the assertion that says so.
+        Assert.True(row.ShowCheck);
         Assert.Equal(Tomorrow, row.SessionDate);
 
         CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
 
         Assert.False(tasks.GetById(task.Id)!.IsCompleted);
         Assert.Equal(BlockOutcome.None, blocks.GetById(blockId)!.Outcome);
-        Assert.Equal(
-            Tomorrow.AddDays(7), Assert.Single(shell.Projects.Detail!.Tasks).SessionDate);
+        var ticked = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(Tomorrow, ticked.SessionDate);
+        Assert.NotEqual(Tomorrow.AddDays(7), ticked.SessionDate);
+        Assert.True(ticked.IsDone);
 
         CalendarBlockFor(shell, blockId, Tomorrow).ToggleOccurrenceDoneCommand.Execute(null);
-        Assert.Equal(Tomorrow, Assert.Single(shell.Projects.Detail!.Tasks).SessionDate);
+        var reopenedRow = Assert.Single(shell.Projects.Detail!.Tasks);
+        Assert.Equal(Tomorrow, reopenedRow.SessionDate);
+        Assert.False(reopenedRow.IsDone);
     }
 
     /// <summary>
@@ -359,7 +374,7 @@ public sealed class ShellProjectRefreshTests
         shell.Calendar.DataChanged += () => changes++;
 
         var row = shell.Projects.Detail!.Tasks.Single(t => t.Title == "Stats HW");
-        row.CompleteCommand.Execute(null);
+        row.ToggleDoneCommand.Execute(null);
 
         var task = tasks.GetAll().Single(t => t.Title == "Stats HW");
         Assert.True(task.IsCompleted);
@@ -441,7 +456,7 @@ public sealed class ShellProjectRefreshTests
             }
         };
 
-        detail.Tasks.Single(t => t.Title == "Essay plan").CompleteCommand.Execute(null);
+        detail.Tasks.Single(t => t.Title == "Essay plan").ToggleDoneCommand.Execute(null);
 
         Assert.Equal(1, detailRefreshes);
         Assert.Equal(1, changes);

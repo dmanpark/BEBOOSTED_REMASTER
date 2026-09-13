@@ -22,6 +22,7 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     private readonly Application.Calendar.CalendarService _calendar;
     private readonly IFileRevealService _opener;
     private readonly Application.Ai.AiService _ai;
+    private readonly Application.Abstractions.IClock _clock;
 
     public ProjectsViewModel(
         ProjectService service,
@@ -30,7 +31,8 @@ public sealed partial class ProjectsViewModel : ViewModelBase
         IResourceRepository resources,
         Application.Calendar.CalendarService calendar,
         IFileRevealService opener,
-        Application.Ai.AiService ai)
+        Application.Ai.AiService ai,
+        Application.Abstractions.IClock clock)
     {
         _service = service;
         _projects = projects;
@@ -39,6 +41,7 @@ public sealed partial class ProjectsViewModel : ViewModelBase
         _calendar = calendar;
         _opener = opener;
         _ai = ai;
+        _clock = clock;
         ReloadList();
     }
 
@@ -145,7 +148,7 @@ public sealed partial class ProjectsViewModel : ViewModelBase
     {
         if (_projects.GetById(id) is { } project)
         {
-            Detail = new ProjectDetailViewModel(this, project, _service, _files, _calendar);
+            Detail = new ProjectDetailViewModel(this, project, _service, _files, _calendar, _clock);
         }
     }
 

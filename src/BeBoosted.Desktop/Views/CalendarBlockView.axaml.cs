@@ -18,6 +18,52 @@ namespace BeBoosted.Desktop.Views;
 /// </summary>
 public partial class CalendarBlockView : UserControl
 {
+    /// <summary>
+    /// The narrowest block that holds the checkbox and the overflow at once, summed
+    /// straight off this view's own AXAML rather than guessed: 1px of border a side (2),
+    /// the project-accent edge (3), the inner grid's 8+8 margin (16), the checkbox's
+    /// 20 wide plus its 8 right margin (28) and the overflow's 20 plus its 6 left margin
+    /// (26) — 75px, with nothing left over for the title.
+    ///
+    /// The accent edge is counted unconditionally although it renders only on a local
+    /// task session (<c>IsVisible="{Binding IsSession}"</c>), so for a proposal or an
+    /// external event this over-estimates by 3px. Left that way deliberately: the number
+    /// is a threshold below which controls are hidden, so over-estimating hides them very
+    /// slightly early rather than laying one outside the block it belongs to, and one
+    /// constant summed straight off the AXAML stays auditable where a per-kind sum would
+    /// not. It is also moot in practice — the two controls this measures are a task
+    /// session's own, and neither a proposal nor an external event draws either of them.
+    /// </summary>
+    internal const double BothControlsFitWidth = 2 + 3 + 16 + 28 + 26;
+
+    /// <summary>
+    /// The narrowest title the overflow is willing to share a block with. Measured, not
+    /// picked: the word "Practice" at the title's own 12px SemiBold is 48px exactly, so
+    /// this is about eight characters — enough to tell two sessions apart at a glance.
+    /// </summary>
+    internal const double MinimumSharedTitleWidth = 48;
+
+    /// <summary>
+    /// What the overflow actually costs a block: room for both controls AND for a title
+    /// worth reading beside them. <see cref="BothControlsFitWidth"/> alone answers the
+    /// narrower question "what fits both controls", and using it as the threshold kept
+    /// both controls on an 89px block (1440x960, two overlapping) beside a 9px title that
+    /// was an ellipsis and nothing else — which is the option that was weighed against
+    /// this one and turned down. Two derived constants, not one tuned number.
+    ///
+    /// How many sessions share an hour decides whether a block clears 123, not the
+    /// window: two overlapping give 65px at 1100x720, 89px at 1440x960 and 123px at
+    /// 1920x1080; three give 43, 59 and 82. The checkbox alone needs 33px, so it survives
+    /// all of them; the title is what gets cut. Below 123 the overflow hides — see the
+    /// styles in the AXAML for exactly what that costs and why it is acceptable.
+    ///
+    /// This reads the arranged width, which is the true one only because
+    /// <see cref="Controls.TimelinePanel"/> now measures each block at the width it will
+    /// be arranged into. While those disagreed, no width predicate could have worked: the
+    /// inner grid was laid out for a width the block never got.
+    /// </summary>
+    internal const double OverflowFitWidth = BothControlsFitWidth + MinimumSharedTitleWidth;
+
     private TimelineSurfaceView? _surface;
     private Avalonia.Point _pressPoint;
     private double _originStartMinutes;
@@ -36,7 +82,16 @@ public partial class CalendarBlockView : UserControl
         AddHandler(PointerReleasedEvent, OnPointerReleasedHandler, RoutingStrategies.Tunnel);
         AddHandler(PointerCaptureLostEvent, OnPointerCaptureLostHandler);
         AddHandler(KeyDownEvent, OnKeyDownHandler);
+        SizeChanged += OnSizeChangedHandler;
     }
+
+    /// <summary>
+    /// A block learns how narrow it is only when it is laid out, because its width comes
+    /// from how many sessions share its hour rather than from anything it knows about
+    /// itself. The class does the rest — see <see cref="OverflowFitWidth"/>.
+    /// </summary>
+    private void OnSizeChangedHandler(object? sender, SizeChangedEventArgs e)
+        => BlockBorder.Classes.Set("narrow", e.NewSize.Width < OverflowFitWidth);
 
     private CalendarBlockViewModel? Vm => DataContext as CalendarBlockViewModel;
 
@@ -282,6 +337,18 @@ public partial class CalendarBlockView : UserControl
                 {
                     surface?.RememberFocus(Vm.Id);
                     Vm.ToggleSessionDoneCommand.Execute(null);
+                    e.Handled = true;
+                }
+
+                // A repeating occurrence carries its own circle instead of a checkbox,
+                // so ShowCompletionControl is false for it and the branch above never
+                // fires - Enter used to open the editor while the equivalent one-off
+                // finished. The keyboard presses whichever control the block offers, and
+                // the already-done exception above applies here word for word.
+                else if (Vm.ShowOccurrenceCompletionControl && !Vm.IsDone)
+                {
+                    surface?.RememberFocus(Vm.Id);
+                    Vm.ToggleOccurrenceDoneCommand.Execute(null);
                     e.Handled = true;
                 }
 

@@ -20,6 +20,36 @@
       <Setter Property="BorderBrush" Value="{DynamicResource BrushGraphite}" />
       <Setter Property="BoxShadow" Value="0 0 0 3 #8CC8F24A" />
     </Style>
+    <!-- Both controls need 75px of block to sit inside one — see BothControlsFitWidth,
+         which sums these very numbers — and the overflow asks for 48px of title beside
+         them on top of that, so it appears at 123px and not before. Both controls beside
+         a title trimmed to an ellipsis is the arrangement this design was chosen over.
+         Enough sessions sharing an hour squeeze a block under 123 at any window size, so
+         below it the overflow hides and the checkbox stays: finishing is the common case.
+
+         What that costs, stated exactly rather than waved at. Remove from calendar is
+         unaffected — a block click opens the session editor, which carries it. Needs
+         more time and Didn't happen are reachable for an elapsed session (the header's
+         Review bar lists every elapsed block still without an outcome) and for one today
+         (Today's row carries the same overflow). For a squeezed FUTURE session on another
+         day they are reachable from nowhere while the overflow is hidden. That is judged
+         acceptable rather than overlooked: neither outcome means anything for work that
+         has not happened yet, and the block joins the Review bar the moment it elapses.
+         If that judgement is ever wrong, the answer is a wider threshold, not a control
+         laid outside the block it belongs to.
+
+         Visibility is style-driven rather than bound because a local binding outranks a
+         style, so the narrow rule could never overrule a bound IsVisible; .offered is
+         ShowOutcomeAction wearing a class instead. -->
+    <Style Selector="Button#OutcomeButton">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="Button#OutcomeButton.offered">
+      <Setter Property="IsVisible" Value="True" />
+    </Style>
+    <Style Selector="Border#BlockBorder.narrow Button#OutcomeButton">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
   </UserControl.Styles>
 
   <Border Name="BlockBorder"
@@ -55,9 +85,9 @@
           <!-- The other outcomes: quiet, never competing with the checkbox -->
           <Button Grid.Row="0" Grid.Column="2" Grid.RowSpan="2"
                   Name="OutcomeButton"
-                  Classes="icon" Width="20" Height="20"
+                  Classes="icon" Classes.offered="{Binding ShowOutcomeAction}"
+                  Width="20" Height="20"
                   Margin="6,1,0,0" VerticalAlignment="Top"
-                  IsVisible="{Binding ShowOutcomeAction}"
                   AutomationProperties.Name="{Binding Title, StringFormat='Record outcome for {0}'}"
                   ToolTip.Tip="Needs more time, or didn't happen">
             <Path Classes="icon" Data="{StaticResource IconMore}" Width="12" Height="12"
@@ -103,8 +133,8 @@
                   BorderBrush="{StaticResource BrushBorderStrong}" BorderThickness="1.5"
                   IsVisible="{Binding ShowOccurrenceCompletionControl}"
                   Command="{Binding ToggleOccurrenceDoneCommand}"
-                  AutomationProperties.Name="{Binding CompletionControlName}"
-                  ToolTip.Tip="{Binding CompletionControlName}">
+                  AutomationProperties.Name="{Binding OccurrenceCompletionControlName}"
+                  ToolTip.Tip="{Binding OccurrenceCompletionControlName}">
             <Path Classes="icon" Data="{StaticResource IconCheck}" Width="9" Height="9"
                   StrokeThickness="1.8" IsVisible="{Binding IsDone}" />
           </Button>
@@ -176,25 +206,51 @@
             </Button.Flyout>
           </Button>
 
-          <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="6">
+          <!-- A DockPanel, not a StackPanel: a horizontal StackPanel measures its
+               children at infinite width, so TextTrimming on the title never engaged and
+               a long one was laid out clean across the overflow button in the column to
+               its right — and, being declared later, took the button's clicks, which fell
+               through to the block and opened the editor.
+
+               The meta group is docked first and the title fills what is left, which is
+               the deliberate half of the choice. Whichever child is laid out first takes
+               the width it wants, and the title always wants all of it — so putting the
+               title first starved the session label, the lock and the chip to 0px. Those
+               are small, fixed and load-bearing: the chip is the "Needs outcome" copy an
+               earlier task existed to unify, and the lock is the "synced — BeBoosted
+               never edits it" contract. The title is the one thing here that can shrink
+               gracefully, because it trims. So it is the one that yields.
+
+               Inside the group a StackPanel is fine and wanted: its children are small
+               and fixed, and measuring them unconstrained is exactly right for them. The
+               6px gaps are per-child left margins rather than Spacing so that a group
+               with every child hidden takes no width at all and costs the title nothing. -->
+          <DockPanel Grid.Row="0" Grid.Column="1">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <TextBlock Classes="meta" Text="{Binding SessionLabel}"
+                         IsVisible="{Binding HasSessionLabel}" VerticalAlignment="Center"
+                         Margin="6,0,0,0" />
+              <Path Classes="icon" Data="{StaticResource IconLock}"
+                    Width="11" Height="11" Margin="6,0,0,0"
+                    StrokeThickness="1.2" Stroke="{StaticResource BrushPencilGray}"
+                    IsVisible="{Binding IsLocked}" VerticalAlignment="Center"
+                    ToolTip.Tip="Synced from an external calendar — BeBoosted never edits it" />
+              <Border Background="{StaticResource BrushWorkbenchCream}"
+                      BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
+                      CornerRadius="3" Padding="4,0" Margin="6,0,0,0"
+                      IsVisible="{Binding NeedsOutcome}">
+                <TextBlock Classes="meta" Text="Needs outcome" />
+              </Border>
+            </StackPanel>
             <TextBlock Name="TitleText" Text="{Binding Title}"
                        FontSize="{StaticResource TextSizeSmall}" FontWeight="SemiBold"
                        TextTrimming="CharacterEllipsis" />
-            <TextBlock Classes="meta" Text="{Binding SessionLabel}"
-                       IsVisible="{Binding HasSessionLabel}" VerticalAlignment="Center" />
-            <Path Classes="icon" Data="{StaticResource IconLock}" Width="11" Height="11"
-                  StrokeThickness="1.2" Stroke="{StaticResource BrushPencilGray}"
-                  IsVisible="{Binding IsLocked}" VerticalAlignment="Center"
-                  ToolTip.Tip="Synced from an external calendar — BeBoosted never edits it" />
-            <Border Background="{StaticResource BrushWorkbenchCream}"
-                    BorderBrush="{StaticResource BrushBorderDefault}" BorderThickness="1"
-                    CornerRadius="3" Padding="4,0"
-                    IsVisible="{Binding NeedsOutcome}">
-              <TextBlock Classes="meta" Text="Needs outcome" />
-            </Border>
-          </StackPanel>
+          </DockPanel>
+          <!-- The time line under the title is constrained by its star column already,
+               so trimming it only needs asking for. -->
           <TextBlock Grid.Row="1" Grid.Column="1" Classes="meta"
-                     Text="{Binding TimeText}" Margin="0,1,0,0" />
+                     Text="{Binding TimeText}" Margin="0,1,0,0"
+                     TextTrimming="CharacterEllipsis" />
         </Grid>
       </DockPanel>
 

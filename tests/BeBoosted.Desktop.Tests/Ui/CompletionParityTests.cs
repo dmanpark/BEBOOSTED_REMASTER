@@ -9,7 +9,9 @@ using BeBoosted.Application.Settings;
 using BeBoosted.Desktop.Tests.Support;
 using BeBoosted.Desktop.ViewModels;
 using BeBoosted.Desktop.Views;
+using BeBoosted.Domain;
 using BeBoosted.Domain.Calendar;
+using BeBoosted.Domain.Scheduling;
 using BeBoosted.Domain.Tasks;
 
 namespace BeBoosted.Desktop.Tests.Ui;
@@ -70,27 +72,24 @@ public sealed class CompletionParityTests
     }
 
     /// <summary>
-    /// Two overlapping sessions at the app's smallest supported window (1100x720)
-    /// squeeze a block to about 65px, narrower than the checkbox and the overflow
-    /// together - so the overflow is laid out past the block's right edge, measured at
-    /// x=100 inside a 65px block. It does not steal the neighbour's clicks, because the
-    /// adjacent block paints over it, and that occlusion is what this pins: nothing is
-    /// clipped here, so if z-order ever changed, an escaped control would start taking
-    /// clicks meant for the block beside it.
-    ///
-    /// The escape itself is NOT fixed. Making the overflow reachable on a squeezed
-    /// block is narrow-column work, which this pass was explicitly scoped out of and
-    /// which the P2 backlog owns. Until then the outcomes stay reachable from Today and
-    /// from the session editor. If you come here to change the block's layout, that is
-    /// the thing to fix, and this test should become a containment assertion.
+    /// Shows overlapping sessions of equal length on the design date, so the timeline
+    /// splits one day column between them and every block comes out squeezed alike.
+    /// Long titles on purpose: a short one cannot witness the title overhanging its
+    /// column, and the overhang is what used to swallow the overflow's clicks.
     /// </summary>
-    [AvaloniaFact]
-    public void TheOverflowOfASqueezedBlock_DoesNotTakeItsNeighboursClicks()
+    private static (MainWindow Window, List<CalendarBlock> Sessions) ShowWeekWithOverlapping(
+        int overlapping, double windowWidth, double windowHeight)
     {
+        var titles = new[]
+        {
+            "Practice DECA role-play for the regional qualifier",
+            "Prepare the regional qualifier binder and dividers",
+            "Reread the case study and annotate the exhibits",
+        };
         var tasks = new InMemoryTaskRepository();
         var blocks = new InMemoryCalendarBlockRepository();
         var sessions = new List<CalendarBlock>();
-        foreach (var title in new[] { "Practice DECA role-play", "Prepare regional qualifier binder" })
+        foreach (var title in titles.Take(overlapping))
         {
             var task = TaskItem.Create(title, DateTimeOffset.Now);
             tasks.Add(task);
@@ -101,46 +100,164 @@ public sealed class CompletionParityTests
         }
 
         var shell = TestShell.Create(tasks: tasks, blocks: blocks);
-        var window = new MainWindow { DataContext = shell, Width = 1100, Height = 720 };
+        var window = new MainWindow { DataContext = shell, Width = windowWidth, Height = windowHeight };
         window.Show();
         shell.Calendar.ViewKind = CalendarViewKind.Week;
         shell.Calendar.Reload();
         Dispatcher.UIThread.RunJobs();
         window.CaptureRenderedFrame();
+        return (window, sessions);
+    }
+
+    /// <summary>
+    /// The overflow needs CalendarBlockView.OverflowFitWidth of block — 123px, as 75 for
+    /// itself and the checkbox (BothControlsFitWidth, summed off the AXAML) plus 48 for a
+    /// title worth reading beside them (MinimumSharedTitleWidth). The rows read that
+    /// constant rather than a copy of its value, so retuning it moves what they demand
+    /// instead of leaving them pinned to a snapshot of today's number.
+    /// Below the threshold the overflow hides and the checkbox stays,
+    /// finishing being the common case; above it the overflow is back, so this is a width
+    /// response and not a deletion. See the AXAML's styles for what hiding it costs.
+    ///
+    /// Two things make the rows what they are.
+    ///
+    /// The defect these replaced put the overflow at a position fixed by the day
+    /// column's width rather than the block's — a condition of the overlap count, not of
+    /// the window — so it escaped at every window size, and a theory pinned at one size
+    /// would have agreed with any predicate that happened to be right there.
+    ///
+    /// And 1440x960 with two overlapping is the case that made the threshold 123 rather
+    /// than 75. An 89px block clears 75, so the previous constant kept both controls
+    /// there beside a 9px title: an ellipsis and nothing else, which is precisely the
+    /// option the user was shown and turned down. It is the row that should go red first
+    /// if anyone retunes the number.
+    ///
+    /// 1920x1080 with two overlapping is the tightest row here: that block is 123px, the
+    /// threshold to the pixel. It is only worth pinning because the guard below reads the
+    /// constant rather than a copy of its value — as a hard-coded 123 it would have been
+    /// a row passing by 0px of coincidence, which is not worth having. Read against the
+    /// constant it says something real, that a block exactly at the threshold still shows
+    /// the overflow, and it is what stops the constant drifting upward unnoticed: the
+    /// pair of it and the 1440 row hold the number inside about 15..48, where the rows'
+    /// nearest block widths (89 below, 123 at) sit.
+    /// </summary>
+    [AvaloniaTheory]
+    [InlineData(1100, 720, 1, true)]
+    [InlineData(1100, 720, 2, false)]
+    [InlineData(1100, 720, 3, false)]
+    [InlineData(1440, 960, 1, true)]
+    [InlineData(1440, 960, 2, false)]
+    [InlineData(1440, 960, 3, false)]
+    [InlineData(1920, 1080, 1, true)]
+    [InlineData(1920, 1080, 2, true)]
+    [InlineData(1920, 1080, 3, false)]
+    public void TheControlsOfABlock_StayInsideIt(
+        double windowWidth, double windowHeight, int overlapping, bool expectOverflow)
+    {
+        var (window, sessions) = ShowWeekWithOverlapping(overlapping, windowWidth, windowHeight);
 
         foreach (var session in sessions)
         {
             var view = SessionView(window, session);
-            var overflow = view.GetVisualDescendants().OfType<Button>()
-                .Single(b => b.Name == "OutcomeButton");
 
-            // The premise, pinned: these blocks really are squeezed narrower than the
-            // checkbox and the overflow together, which is what pushes the overflow past
-            // the right edge in the first place. Without this the docstring above could
-            // quietly become fiction — a layout change that stopped them overlapping
-            // would leave nothing beyond the edge and the assertion would still pass.
+            // The premise, pinned per row: the rows that expect no overflow really are
+            // narrower than the checkbox, the overflow and a readable title together, and
+            // the rows that expect one really are wider. Without this a layout change that
+            // stopped them overlapping would leave nothing at risk and every assertion
+            // below would pass witnessing nothing.
+            var fits = CalendarBlockView.OverflowFitWidth;
             Assert.True(
-                view.Bounds.Width < 100,
-                $"the fixture no longer squeezes the block: it is {view.Bounds.Width} wide, "
-                + "so the overflow is not escaping and this test is witnessing nothing");
+                expectOverflow ? view.Bounds.Width >= fits : view.Bounds.Width < fits,
+                $"{overlapping} overlapping sessions at {windowWidth}x{windowHeight} give a "
+                + $"{view.Bounds.Width}-wide block, which is the wrong side of "
+                + $"CalendarBlockView.OverflowFitWidth ({fits}) for this row to witness what it "
+                + "claims. If that constant was just retuned, these rows are what it has to "
+                + "answer to: pick window sizes that still straddle it, or revisit the number.");
 
-            // Just past this block's right edge, level with the overflow. Whatever the
-            // user hits there belongs to the neighbour, never to this block's controls.
-            var origin = view.TranslatePoint(new Point(0, 0), window)!.Value;
-            var beyond = new Point(
-                origin.X + view.Bounds.Width + 4,
-                origin.Y + overflow.Bounds.Center.Y);
+            // Every control the block offers is laid out inside it. This used to clear
+            // the edge by 1px on a lone block and by nothing at all on an overlapping
+            // one — the day column's 4px inset was the whole margin — so the numbers in
+            // the failure message are worth reading even when it is close.
+            var rendered = view.GetVisualDescendants().OfType<Button>()
+                .Where(b => b.IsEffectivelyVisible)
+                .ToList();
+            Assert.NotEmpty(rendered);
+            foreach (var control in rendered)
+            {
+                var left = control.TranslatePoint(new Point(0, 0), view)!.Value.X;
+                var right = control
+                    .TranslatePoint(new Point(control.Bounds.Width, 0), view)!.Value.X;
+                Assert.True(
+                    left >= 0 && right <= view.Bounds.Width,
+                    $"{control.Name} spans {left}–{right} inside a {view.Bounds.Width}-wide block, "
+                    + "so it is laid out outside the block it belongs to");
+            }
 
-            var hit = ((Visual)window).GetVisualsAt(beyond).FirstOrDefault();
+            // The checkbox is the one that always stays: finishing is the common case,
+            // and even a 43px block has room for it.
+            Assert.True(
+                view.FindControl<Button>("CompleteButton")!.IsEffectivelyVisible,
+                "every block keeps the control that finishes a session");
+            Assert.Equal(
+                expectOverflow, view.FindControl<Button>("OutcomeButton")!.IsEffectivelyVisible);
 
-            // Hitting nothing at all would satisfy the occlusion assertion below without
-            // proving anything: the point has to land on the neighbouring block.
-            Assert.True(hit is not null, "nothing was hit 4 px past the block's right edge");
-            Assert.False(
-                ReferenceEquals(hit, overflow) || hit!.GetVisualAncestors().Contains(overflow),
-                $"a click {4} px past a {view.Bounds.Width}-wide block reached that block's own "
-                + "overflow, so it is stealing the neighbouring block's clicks");
+            // The title is a control too, in the sense that matters here: it overhung its
+            // own grid column at every width, so it is checked the same way.
+            var title = view.FindControl<TextBlock>("TitleText")!;
+            var titleRight = title.TranslatePoint(new Point(title.Bounds.Width, 0), view)!.Value.X;
+            Assert.True(
+                titleRight <= view.Bounds.Width,
+                $"the title reaches {titleRight} inside a {view.Bounds.Width}-wide block, so it "
+                + "still overhangs — trimming is not engaging and it can cover the overflow");
         }
+
+        window.Close();
+    }
+
+    // There is deliberately no test here that a block clips its own subtree, and please
+    // do not add one back without first watching it fail. One was written and deleted:
+    // with the layout contained there is nothing outside a block for a clip to catch, so
+    // it stayed green even with BOTH redundant clip layers removed — Border.calendarBlock's
+    // ClipToBounds, and the one CalendarBlockView gets free from Avalonia's UserControl
+    // default. Those layers are still in the code and still worth having as a backstop,
+    // but a test that cannot fail is worse than none, and its inability to fail is itself
+    // the result worth recording: containment no longer rests on clipping the way it did.
+
+    /// <summary>
+    /// The overflow has to be clickable, not merely visible. It sits in the grid's third
+    /// column and the title's panel in the second, but a horizontal StackPanel measures
+    /// its children at infinite width, so TextTrimming never engaged and a long title was
+    /// laid out straight across the button - and, being declared later, took its clicks.
+    /// A click that lands on the title falls through to the block and opens the editor,
+    /// which is how the overflow could be on screen and unreachable at the same time.
+    /// </summary>
+    [AvaloniaFact]
+    public void TheOverflowOfARoomyBlock_TakesItsOwnClicks()
+    {
+        var (window, sessions) = ShowWeekWithOverlapping(1, 1440, 960);
+        var view = SessionView(window, sessions[0]);
+        var overflow = view.FindControl<Button>("OutcomeButton")!;
+        var title = view.FindControl<TextBlock>("TitleText")!;
+
+        // The premise: a roomy block showing the overflow, and a title long enough that
+        // an unconstrained one would run straight over it. A short title would leave the
+        // button clear and this test would witness nothing.
+        Assert.True(overflow.IsEffectivelyVisible);
+        Assert.True(
+            title.Text!.Length > 30,
+            "the fixture's title is too short to reach the overflow, so nothing is at stake");
+
+        var centre = overflow
+            .TranslatePoint(new Point(overflow.Bounds.Width / 2, overflow.Bounds.Height / 2), window)!.Value;
+        var hit = ((Visual)window).GetVisualsAt(centre).FirstOrDefault();
+
+        Assert.True(hit is not null, "nothing was hit at the overflow's own centre");
+        Assert.True(
+            ReferenceEquals(hit, overflow) || hit!.GetVisualAncestors().Contains(overflow),
+            $"a click on the overflow's own centre reached {hit!.GetType().Name} "
+            + $"#{(hit as Control)?.Name} instead, so the button is unreachable");
+
+        window.Close();
     }
 
     private static CalendarBlockView SessionView(MainWindow window, CalendarBlock session)
@@ -266,6 +383,13 @@ public sealed class CompletionParityTests
         Assert.False(block.ShowCompletionControl, "a settled session keeps no checkbox");
         Assert.False(block.ShowOutcomeAction, "nor the overflow it was settled from");
 
+        // And on screen, not just in the view model: the overflow's visibility is now
+        // style-driven off a class, so a predicate that stopped reaching the button
+        // would leave both properties saying the right thing over a rendered control.
+        var view = SessionView(window, session);
+        Assert.False(view.FindControl<Button>("CompleteButton")!.IsEffectivelyVisible);
+        Assert.False(view.FindControl<Button>("OutcomeButton")!.IsEffectivelyVisible);
+
         // Now stand where Today stands and look at the very same session. Its rows are
         // only built for the Today view, and a settled session moves to that day's
         // completed history rather than staying scheduled.
@@ -386,6 +510,104 @@ public sealed class CompletionParityTests
         => key == Key.Enter ? PhysicalKey.Enter : PhysicalKey.Space;
 
     /// <summary>
+    /// "Stats HW", repeating every Tuesday from the design date — a block whose single
+    /// completion control is the occurrence circle, not the one-off checkbox.
+    /// </summary>
+    private static (MainWindow Window, ShellViewModel Shell, CalendarBlock Session,
+        InMemoryOccurrenceCompletionRepository Completions) ShowWeekWithRepeatingSession()
+    {
+        var tasks = new InMemoryTaskRepository();
+        var blocks = new InMemoryCalendarBlockRepository();
+        var completions = new InMemoryOccurrenceCompletionRepository();
+        var shell = TestShell.Create(tasks: tasks, blocks: blocks, completions: completions);
+
+        var task = TaskItem.Create("Stats HW", DateTimeOffset.Now);
+        tasks.Add(task);
+        var session = CalendarBlock.CreateTaskSession(
+            task.Id, Date, new TimeOnly(16, 0), new TimeOnly(17, 0), DateTimeOffset.Now,
+            RecurrenceRule.Weekly(1, DayOfWeek.Tuesday));
+        blocks.Add(session);
+
+        var window = new MainWindow { DataContext = shell, Width = 1440, Height = 960 };
+        window.Show();
+        shell.Calendar.ViewKind = CalendarViewKind.Week;
+        shell.Calendar.Reload();
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+        return (window, shell, session, completions);
+    }
+
+    /// <summary>
+    /// A repeating series renders one view per day it falls on, all sharing the block's
+    /// id — this picks the occurrence on the design date, never next week's.
+    /// </summary>
+    private static CalendarBlockView OccurrenceView(MainWindow window, CalendarBlock session)
+        => window.GetVisualDescendants().OfType<CalendarBlockView>()
+            .Single(v => ((CalendarBlockViewModel)v.DataContext!).Id == session.Id
+                && ((CalendarBlockViewModel)v.DataContext!).Date == Date);
+
+    /// <summary>
+    /// The gap the checkbox work left behind: a repeating occurrence has no checkbox,
+    /// so ShowCompletionControl is false and Enter fell straight through to the editor
+    /// while the equivalent one-off finished. Its own circle already ticks it by mouse;
+    /// the keyboard now does the same thing.
+    /// </summary>
+    [AvaloniaTheory]
+    [InlineData(Key.Enter)]
+    [InlineData(Key.Space)]
+    public void PressingEnterOnAFocusedRepeatingOccurrence_FinishesThatDay(Key key)
+    {
+        var (window, shell, session, completions) = ShowWeekWithRepeatingSession();
+        var view = OccurrenceView(window, session);
+        var block = (CalendarBlockViewModel)view.DataContext!;
+
+        // The premise: this really is the circle's block, not a one-off wearing a
+        // checkbox — otherwise the one-off branch would be doing all the work here.
+        Assert.True(block.ShowOccurrenceCompletionControl);
+        Assert.False(block.ShowCompletionControl);
+        Assert.False(block.IsDone);
+
+        view.Focus();
+        Dispatcher.UIThread.RunJobs();
+        window.KeyPress(key, RawInputModifiers.None, PhysicalKeyOf(key), keySymbol: null);
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+
+        // Only the pressed day's occurrence completes, exactly as the circle does.
+        Assert.NotNull(completions.Get(session.Id, Date));
+        Assert.Null(completions.Get(session.Id, Date.AddDays(7)));
+        Assert.True(((CalendarBlockViewModel)OccurrenceView(window, session).DataContext!).IsDone);
+        Assert.Null(shell.Calendar.ActiveTaskEditor);
+    }
+
+    /// <summary>
+    /// The same exception the one-off carries: a finished occurrence falls through to
+    /// the editor rather than unticking, so a stray Enter cannot silently reopen it.
+    /// </summary>
+    [AvaloniaFact]
+    public void PressingEnterOnAnAlreadyDoneOccurrence_OpensTheEditor_RatherThanUndoing()
+    {
+        var (window, shell, session, completions) = ShowWeekWithRepeatingSession();
+        ((CalendarBlockViewModel)OccurrenceView(window, session).DataContext!)
+            .ToggleOccurrenceDoneCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+        var view = OccurrenceView(window, session);
+        Assert.True(((CalendarBlockViewModel)view.DataContext!).IsDone);
+
+        view.Focus();
+        Dispatcher.UIThread.RunJobs();
+        window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, keySymbol: null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(completions.Get(session.Id, Date));
+        Assert.True(
+            ((CalendarBlockViewModel)OccurrenceView(window, session).DataContext!).IsDone,
+            "Enter must not undo a finished occurrence");
+        Assert.NotNull(shell.Calendar.ActiveTaskEditor);
+    }
+
+    /// <summary>
     /// The chip only renders on an elapsed session with no outcome yet, so the session
     /// here is a morning one - the clock reads 14:10 on this date. Asserting only that
     /// the old copy is gone would stay green if the chip were deleted outright.
@@ -403,11 +625,34 @@ public sealed class CompletionParityTests
         var (window, _) = ShowWeek(tasks, blocks);
 
         Assert.True(SessionViewModel(window, elapsed).NeedsOutcome);
-        Assert.Contains(
+
+        // Being in the tree is not being on screen. The chip shares the title's row, and
+        // whichever of them is laid out first takes the width — so when the title went
+        // first this assertion passed over a chip arranged at 0px, and the copy an earlier
+        // task existed to unify was invisible on any block with a longish title. The small
+        // fixed-width items get their space first now; the title trims, which is what
+        // trimming is for.
+        var chip = Assert.Single(
             SessionView(window, elapsed).GetVisualDescendants().OfType<TextBlock>(),
             t => t.Text == "Needs outcome");
+        Assert.True(chip.IsEffectivelyVisible);
+        Assert.True(
+            chip.Bounds.Width > 0,
+            $"the chip is arranged at {chip.Bounds.Width}px wide, so it is in the visual tree "
+            + "and nowhere on screen");
+
         Assert.DoesNotContain(
             window.GetVisualDescendants().OfType<TextBlock>(),
             t => t.Text == "outcome?");
     }
+
+    // The lock icon beside the title has no test of its own, and that is a finding rather
+    // than an omission. One was written — a long-titled external event, asserting the lock
+    // is arranged wider than 0px — and it passed against the very layout that starved the
+    // chip to 0px, so it could not fail for the reason it claimed. The asymmetry is
+    // structural: the lock is a Path with an explicit Width="11", which is arranged at its
+    // own size even out of a starved slot, while the chip is a Border sized by its content
+    // and collapses. So the lock was never actually at risk and the chip always was. If
+    // the lock ever loses that fixed Width, it joins the chip's case and wants the chip's
+    // test.
 }
